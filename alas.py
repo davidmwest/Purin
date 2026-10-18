@@ -33,8 +33,8 @@ def failed_task_delay(previous=None):
     return min(previous * 2, 240)
 
 
-# Optimization_WhenTaskQueueEmpty=close_emulator stops the emulator only for a wait this long or longer,
-# starting it and the game again takes about 2 minutes
+# Optimization_WhenTaskQueueEmpty=close_emulator stops the game and the emulator only for a wait this long or longer,
+# starting them again takes about 2 minutes. A shorter wait is spent at the main page.
 CLOSE_EMULATOR_MIN_WAIT = timedelta(minutes=10)
 
 
@@ -724,8 +724,9 @@ class AzurLaneAutoScript:
                 method = self.config.Optimization_WhenTaskQueueEmpty
                 if method == 'close_emulator' and not self.emulator_closed \
                         and task.next_run - datetime.now() < CLOSE_EMULATOR_MIN_WAIT:
-                    logger.info(f'Wait is shorter than {CLOSE_EMULATOR_MIN_WAIT}, close the game only')
-                    method = 'close_game'
+                    # Not worth a restart of the game either, it takes half a minute every time
+                    logger.info(f'Wait is shorter than {CLOSE_EMULATOR_MIN_WAIT}, goto main page only')
+                    method = 'goto_main'
                 if method in ['close_game', 'close_emulator']:
                     # Nothing to close if the emulator was closed already, and the device is gone with it
                     if not self.emulator_closed:

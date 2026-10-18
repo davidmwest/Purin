@@ -181,7 +181,7 @@ class Waiting(SimpleNamespace):
                                  Optimization_WhenTaskQueueEmpty=method, pause_requested=False)
         super().__init__(config=config, emulator_closed=emulator_closed, is_first_task=False,
                          wait_while_paused=Mock(), wait_while_logged_out=Mock(),
-                         wait_until=Mock(return_value=True))
+                         wait_until=Mock(return_value=True), run=Mock())
         if not emulator_closed:
             self.device = SimpleNamespace(app_stop=Mock(), release_during_wait=Mock(),
                                           emulator_stop=Mock(return_value=emulator_stops))
@@ -216,15 +216,17 @@ def test_long_wait_closes_the_game_and_the_emulator(waiting):
     scheduler.config.task_call.assert_called_once_with('Restart')
 
 
-def test_short_wait_closes_the_game_only(waiting):
+def test_short_wait_is_spent_at_the_main_page(waiting):
     scheduler = waiting(timedelta(minutes=5))
 
-    assert AzurLaneAutoScript.get_next_task(scheduler) == 'Restart'
+    # Not worth a restart of the game
+    assert AzurLaneAutoScript.get_next_task(scheduler) == 'Event'
 
-    scheduler.device.app_stop.assert_called_once_with()
+    scheduler.run.assert_called_once_with('goto_main')
+    scheduler.device.app_stop.assert_not_called()
     scheduler.device.emulator_stop.assert_not_called()
     assert scheduler.emulator_closed is False
-    scheduler.config.task_call.assert_called_once_with('Restart')
+    scheduler.config.task_call.assert_not_called()
 
 
 def test_closed_emulator_is_not_started_just_to_close_it(waiting):
