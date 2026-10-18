@@ -174,15 +174,15 @@ class Waiting(SimpleNamespace):
     A scheduler whose next task `Event` is due after the given wait.
     """
 
-    def __init__(self, wait, method='close_emulator', emulator_stops=True, emulator_closed=False):
+    def __init__(self, wait, method='close_emulator', emulator_stops=True, device=True):
         tasks = [SimpleNamespace(command='Event', next_run=datetime.now() + wait),
                  SimpleNamespace(command='Restart', next_run=datetime.now() - timedelta(seconds=1))]
         config = SimpleNamespace(get_next=lambda: tasks.pop(0), bind=Mock(), task=None, task_call=Mock(),
                                  Optimization_WhenTaskQueueEmpty=method, pause_requested=False)
-        super().__init__(config=config, emulator_closed=emulator_closed, is_first_task=False,
+        super().__init__(config=config, is_first_task=False,
                          wait_while_paused=Mock(), wait_while_logged_out=Mock(),
                          wait_until=Mock(return_value=True), run=Mock())
-        if not emulator_closed:
+        if device:
             self.device = SimpleNamespace(app_stop=Mock(), release_during_wait=Mock(),
                                           emulator_stop=Mock(return_value=emulator_stops))
         self.close_emulator = lambda: AzurLaneAutoScript.close_emulator(self)
@@ -212,7 +212,6 @@ def test_long_wait_closes_the_game_and_the_emulator(waiting):
     device.emulator_stop.assert_called_once_with()
     # The device of the next task starts the emulator again
     assert 'device' not in scheduler.__dict__
-    assert scheduler.emulator_closed is True
     scheduler.config.task_call.assert_called_once_with('Restart')
 
 
@@ -225,17 +224,19 @@ def test_short_wait_is_spent_at_the_main_page(waiting):
     scheduler.run.assert_called_once_with('goto_main')
     scheduler.device.app_stop.assert_not_called()
     scheduler.device.emulator_stop.assert_not_called()
-    assert scheduler.emulator_closed is False
     scheduler.config.task_call.assert_not_called()
 
 
-def test_closed_emulator_is_not_started_just_to_close_it(waiting):
-    # Waiting again after the config changed, there is no device to close the game with
-    scheduler = waiting(timedelta(minutes=5), emulator_closed=True)
+@pytest.mark.parametrize('wait', [timedelta(minutes=5), timedelta(hours=1)])
+def test_closed_emulator_is_not_started_just_to_close_it(waiting, wait):
+    # Waiting again after the config changed, or the first wait since the scheduler started:
+    # there is no device, and creating one would start the emulator
+    scheduler = waiting(wait, device=False)
 
     assert AzurLaneAutoScript.get_next_task(scheduler) == 'Restart'
 
-    assert scheduler.emulator_closed is True
+    assert 'device' not in scheduler.__dict__
+    scheduler.run.assert_not_called()
     scheduler.config.task_call.assert_called_once_with('Restart')
 
 
@@ -247,7 +248,7 @@ def test_emulator_that_can_not_be_stopped_stays_with_the_game_closed(waiting):
 
     scheduler.device.app_stop.assert_called_once_with()
     scheduler.device.emulator_stop.assert_called_once_with()
-    assert scheduler.emulator_closed is False
+    assert 'device' in scheduler.__dict__
     scheduler.config.task_call.assert_called_once_with('Restart')
 
 

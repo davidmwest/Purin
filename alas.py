@@ -42,8 +42,6 @@ class AzurLaneAutoScript:
     stop_event: threading.Event = None
     # Logged out during a task, most likely by a log in on another device: no log in before this time
     logged_out_until = None
-    # The emulator was stopped during a wait, the next device to be created starts it again
-    emulator_closed = False
 
     def __init__(self, config_name='alas'):
         logger.hr('Start', level=0)
@@ -74,7 +72,6 @@ class AzurLaneAutoScript:
             from module.device.device import Device
             # Starts the emulator if it is not running
             device = Device(config=self.config)
-            self.emulator_closed = False
             return device
         except RequestHumanTakeover:
             logger.critical('Request human takeover')
@@ -558,7 +555,6 @@ class AzurLaneAutoScript:
             logger.warning('Emulator is not closed, close the game only')
             return False
         del_cached_property(self, 'device')
-        self.emulator_closed = True
         return True
 
     def wait_until(self, future):
@@ -722,14 +718,16 @@ class AzurLaneAutoScript:
                 logger.info(f'Wait until {task.next_run} for task `{task.command}`')
                 self.is_first_task = False
                 method = self.config.Optimization_WhenTaskQueueEmpty
-                if method == 'close_emulator' and not self.emulator_closed \
+                # Without a device, the emulator was closed, or nothing connected to it since the scheduler started.
+                # It is not started only to be closed, the device of the next task starts it.
+                emulator_closed = method == 'close_emulator' and 'device' not in self.__dict__
+                if method == 'close_emulator' and not emulator_closed \
                         and task.next_run - datetime.now() < CLOSE_EMULATOR_MIN_WAIT:
                     # Not worth a restart of the game either, it takes half a minute every time
                     logger.info(f'Wait is shorter than {CLOSE_EMULATOR_MIN_WAIT}, goto main page only')
                     method = 'goto_main'
                 if method in ['close_game', 'close_emulator']:
-                    # Nothing to close if the emulator was closed already, and the device is gone with it
-                    if not self.emulator_closed:
+                    if not emulator_closed:
                         logger.info('Close game during wait')
                         self.device.app_stop()
                         release_resources()
