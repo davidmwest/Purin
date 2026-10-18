@@ -588,10 +588,11 @@
     },
     "WhenTaskQueueEmpty": {
       "name": "当任务队列清空后",
-      "help": "无任务时关闭游戏，能在收菜期间降低 CPU 占用",
+      "help": "无任务时关闭游戏，能在收菜期间降低 CPU 占用\n关闭模拟器会在等待 10 分钟或更久时同时关闭模拟器，并在下一个任务前重新启动。支持 macOS 上的 BlueStacks Air 和 Alas 在 Windows 上能启动的模拟器，其他情况下只关闭游戏",
       "stay_there": "停在原处",
       "goto_main": "前往主界面",
-      "close_game": "关闭游戏"
+      "close_game": "关闭游戏",
+      "close_emulator": "关闭模拟器"
     }
   },
   "DropRecord": {

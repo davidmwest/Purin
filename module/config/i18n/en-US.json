@@ -588,10 +588,11 @@
     },
     "WhenTaskQueueEmpty": {
       "name": "When Task Queue is Empty",
-      "help": "Close AL when there are no pending tasks, can help reduce CPU",
+      "help": "Close AL when there are no pending tasks, can help reduce CPU.\nClose Emulator also stops the emulator for a wait of 10 minutes or longer, and starts it again for the next task. Works with BlueStacks Air on macOS and with the emulators Alas can start on Windows, elsewhere it closes the game only",
       "stay_there": "Stay There",
       "goto_main": "Goto Main Page",
-      "close_game": "Close Game"
+      "close_game": "Close Game",
+      "close_emulator": "Close Emulator"
     }
   },
   "DropRecord": {
