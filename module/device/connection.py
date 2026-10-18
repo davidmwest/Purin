@@ -818,7 +818,9 @@ class Connection(ConnectionAttr):
                 raise RequestHumanTakeover
             # cannot connect to 127.0.0.1:55555:
             # No connection could be made because the target machine actively refused it. (10061)
-            elif '(10061)' in msg:
+            # On macOS:
+            # failed to connect to '127.0.0.1:5675': Connection refused
+            elif '(10061)' in msg or (IS_MACINTOSH and 'Connection refused' in msg):
                 # MuMu12 may switch serial if port is occupied
                 # Brute force connect nearby ports to handle serial switches
                 if self.is_mumu12_family:
