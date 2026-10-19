@@ -18,7 +18,7 @@ class ManualConfig:
     > ShopFrequent > EventShop > ShopGuild > ShopMonthly > ShopOnce > Shipyard > Freebies
     > PrivateQuarters
     > OpsiExplore
-    > Minigame > Awaken > EnhanceShips > RetireShips
+    > Minigame > Awaken > EnhanceShips > RetireShips > Inventory
     > OpsiAshBeacon
     > OpsiDaily > OpsiShop > OpsiVoucher
     > OpsiAbyssal > OpsiStronghold > OpsiObscure > OpsiArchive

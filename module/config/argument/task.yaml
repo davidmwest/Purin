@@ -244,6 +244,8 @@ Reward:
       - Scheduler
     RetireShips:
       - Scheduler
+    Inventory:
+      - Scheduler
 
 # ==================== DailyMission ====================
 

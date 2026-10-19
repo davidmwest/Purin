@@ -259,3 +259,24 @@ def test_close_game_never_stops_the_emulator(waiting):
 
     scheduler.device.app_stop.assert_called_once_with()
     scheduler.device.emulator_stop.assert_not_called()
+
+
+def test_every_task_is_in_the_scheduler_priority():
+    import re
+    import yaml
+    from module.config.config_manual import ManualConfig
+
+    listed = set(re.findall(r'[A-Za-z0-9]+', ManualConfig.SCHEDULER_PRIORITY))
+    with open('module/config/argument/task.yaml', encoding='utf-8') as f:
+        groups = yaml.safe_load(f)
+    # Tasks left out of the priority are never run by the scheduler
+    missing = []
+    for name, group in groups.items():
+        if name in ['Alas', 'Tool'] or not isinstance(group, dict):
+            continue
+        for task, settings in (group.get('tasks') or {}).items():
+            if task.endswith('General'):
+                continue
+            if 'Scheduler' in (settings or []) and task not in listed:
+                missing.append(task)
+    assert missing == []

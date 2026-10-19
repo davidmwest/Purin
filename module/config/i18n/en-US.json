@@ -170,6 +170,10 @@
       "name": "Retire Ships",
       "help": "Retires ships on the retire page of the build menu, with one-click retire and the quick retire options you set in the game, or with the old retire options, as the retirement mode in Alas, General says. Nothing is retired with Do Not Retire. The quick retire options of the game are never changed. Runs every day, after Enhance Ships"
     },
+    "Inventory": {
+      "name": "Inventory",
+      "help": "Goes through the cards of the dock, opens the locked ships one by one and saves what their Info tab shows to ./config/inventory/<config name>.json: name, hull, stars, level, EXP, power, stats with what gear adds to them, armor, gear enhancement, skill levels, affinity and favorite. For an algorithm to tell which ship to level next.\nA run takes about 6 seconds a locked ship, about 45 minutes for 500, and other tasks wait meanwhile. Runs once a week"
+    },
     "Daily": {
       "name": "Daily",
       "help": ""

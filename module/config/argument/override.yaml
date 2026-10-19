@@ -311,6 +311,12 @@ RetireShips:
     SuccessInterval: 30
     FailureInterval: 120
     ServerUpdate: 00:00
+Inventory:
+  Scheduler:
+    # Once a week, a run goes through the whole dock, a run that stopped halfway is done again the next day
+    SuccessInterval: 10080
+    FailureInterval: 1440
+    ServerUpdate: 00:00
 Meowfficer:
   Scheduler:
     SuccessInterval: 30

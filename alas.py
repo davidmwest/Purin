@@ -260,6 +260,10 @@ class AzurLaneAutoScript:
         from module.mood.dorm_rest import DormRest
         DormRest(config=self.config, device=self.device).run()
 
+    def inventory(self):
+        from module.inventory.inventory import Inventory
+        Inventory(config=self.config, device=self.device).run()
+
     def meowfficer(self):
         from module.meowfficer.meowfficer import RewardMeowfficer
         RewardMeowfficer(config=self.config, device=self.device).run()

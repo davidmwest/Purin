@@ -59,7 +59,8 @@
       "Reward",
       "Awaken",
       "EnhanceShips",
-      "RetireShips"
+      "RetireShips",
+      "Inventory"
     ]
   },
   "DailyMission": {
