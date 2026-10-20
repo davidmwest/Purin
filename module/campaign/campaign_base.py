@@ -37,12 +37,21 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
         with the stage still in progress. Like the list of stages, the main page ends the run, the next one
         withdraws from the stage and enters it again.
 
+        A battle lost with ships left brings the fleet back to the map, beside the enemy. After a boss the task
+        waits for the list of stages, which does not come, so the map is left from here.
+
         Raises:
-            CampaignEnd: On the main page, or on the list of stages.
+            CampaignEnd: On the main page, on the list of stages, or after leaving the map once a battle is lost.
         """
         if self.ui_page_appear(page_main):
             logger.info('Left the map for page_main')
             raise CampaignEnd('Main page')
+        if self.combat_lost and self.is_in_map():
+            logger.warning('Battle lost, back on the map, leave it')
+            # withdraw() looks for the list of stages through here too
+            self.combat_lost = False
+            self.run_lost = True
+            self.withdraw()
         return super().handle_in_stage()
 
     def handle_combat_low_emotion(self):
@@ -209,6 +218,8 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
     def run(self):
         logger.hr(self.ENTRANCE, level=2)
         self.run_lost = False
+        # The battle lost in the run before, its map is not this one
+        self.combat_lost = False
 
         # Enter map
         self.emotion.check_reduce(self._map_battle)
