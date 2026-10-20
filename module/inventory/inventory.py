@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import typing as t
@@ -9,12 +10,13 @@ import cv2
 import numpy as np
 
 from module.base.button import Button
+from module.base.decorator import del_cached_property
 from module.base.timer import Timer
 from module.base.utils import crop, load_image
 from module.equipment.assets import EQUIPMENT_OPEN
 from module.inventory.info import InfoReader, NAME_WINDOW, NameScroll
 from module.logger import logger
-from module.ocr.ocr import DigitCounter
+from module.ocr.ocr import OCR_MODEL, DigitCounter
 from module.retire.assets import DOCK_AMOUNT, DOCK_CHECK, SHIP_DETAIL_CHECK
 from module.retire.dock import Dock
 from module.ui.assets import BACK_ARROW
@@ -230,6 +232,30 @@ def save_inventory(config_name, data, partial=False):
         except FileNotFoundError:
             pass
     logger.info(f'Inventory saved: {file}')
+
+
+# OCR models cached in module.ocr.models
+OCR_MODELS = ['azur_lane', 'azur_lane_jp', 'cnocr', 'jp', 'tw']
+
+
+def release_ocr_models():
+    for model in OCR_MODELS:
+        del_cached_property(OCR_MODEL, model)
+    # Models in a reference cycle too
+    gc.collect()
+
+
+def ocr_pool_shutdown(pool):
+    """
+    MXNet aborts the process freeing an OCR model after a thread that used it has ended,
+    "mutex lock failed: Invalid argument", and release_resources() frees models before the next task.
+    The models are freed on the thread of the OCR while it lives, the next task loads them again.
+
+    Args:
+        pool (ThreadPoolExecutor):
+    """
+    pool.submit(release_ocr_models).result()
+    pool.shutdown()
 
 
 class Inventory(Dock):
@@ -562,13 +588,13 @@ class Inventory(Dock):
         except Exception:
             # Keep what was read, the next run starts again from the first ship
             unread += self.inventory_collect(reading, ships, amount, wait=True)
-            pool.shutdown()
+            ocr_pool_shutdown(pool)
             save_inventory(self.config.config_name,
                            self.inventory_result(start, amount, seen, 'error', unread, ships), partial=True)
             raise
 
         unread += self.inventory_collect(reading, ships, amount, wait=True)
-        pool.shutdown()
+        ocr_pool_shutdown(pool)
         logger.info(f'Inventory ended at {end}, {seen} ships seen of {amount}')
         if unread:
             logger.warning(f'{unread} ships could not be read')

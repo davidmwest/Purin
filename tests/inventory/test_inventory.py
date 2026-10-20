@@ -1,6 +1,9 @@
 import json
 import os
-from concurrent.futures import Future
+import subprocess
+import sys
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -347,3 +350,57 @@ def test_whole_run_replaces_the_partial_one(monkeypatch, tmp_path):
     folder = tmp_path / 'config' / 'inventory'
     assert [file.name for file in folder.iterdir()] == ['alas.json']
     inv.config.task_delay.assert_called_once_with(success=True)
+
+
+def test_ocr_models_are_freed_on_the_thread_that_used_them(monkeypatch):
+    freed = []
+    monkeypatch.setattr(inventory_module, 'release_ocr_models', lambda: freed.append(threading.get_ident()))
+    pool = ThreadPoolExecutor(max_workers=1)
+    ocr_thread = pool.submit(threading.get_ident).result()
+
+    inventory_module.ocr_pool_shutdown(pool)
+
+    assert freed == [ocr_thread]
+    assert ocr_thread != threading.get_ident()
+
+
+def test_release_ocr_models_drops_the_cached_ones(monkeypatch):
+    models = SimpleNamespace(cnocr=object(), azur_lane=object(), other='kept')
+    monkeypatch.setattr(inventory_module, 'OCR_MODEL', models)
+
+    inventory_module.release_ocr_models()
+
+    assert vars(models) == {'other': 'kept'}
+
+
+# The OCR of a scan on its thread, then the release of models before the next task, on the main thread
+NEXT_TASK = """
+import gc
+from concurrent.futures import ThreadPoolExecutor
+
+import numpy as np
+
+from module.base.resource import release_resources
+from module.inventory.inventory import ocr_pool_shutdown
+from module.ocr.ocr import Ocr
+
+image = np.zeros((720, 1280, 3), np.uint8)
+image[20:40, 20:120] = 255
+pool = ThreadPoolExecutor(max_workers=1)
+pool.submit(Ocr((10, 10, 300, 50), lang='cnocr', name='TEST').ocr, image).result()
+ocr_pool_shutdown(pool)
+release_resources(next_task='Commission')
+gc.collect()
+print('survived')
+"""
+
+
+def test_next_task_after_a_scan_does_not_abort():
+    # With pool.shutdown() alone, MXNet aborted the process: "mutex lock failed: Invalid argument"
+    root = os.path.join(os.path.dirname(__file__), '..', '..')
+    env = dict(os.environ, OMP_NUM_THREADS='1')
+    result = subprocess.run([sys.executable, '-c', NEXT_TASK], cwd=root, env=env, capture_output=True, text=True,
+                            timeout=300)
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert 'survived' in result.stdout
