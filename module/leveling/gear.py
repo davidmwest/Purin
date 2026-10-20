@@ -45,6 +45,8 @@ DEPOT_CARDS = [area_button((x + 6, y + 6, x + 124, y + 126), f'DEPOT_CARD_{row}_
 DEPOT_TAGS = [area_button((x + 2, y + 80, x + 48, y + 102), f'DEPOT_TAG_{row}_{column}')
               for row, y in enumerate(DEPOT_CARD_TOPS) for column, x in enumerate(DEPOT_CARD_LEFTS)]
 FIRST_ITEM = DEPOT_CARDS[0]
+# What Digit reads for the plus of a tag, or for the point at its right
+TAG_MISREAD = '41'
 ITEM_MEAN = 100
 ITEM_STD = 30
 # Gear slots of the Info tab, their enhancement
@@ -131,18 +133,26 @@ def tag_level(digit):
         digit (int): What Digit read on the tag of a card, "+10"
 
     Returns:
-        int: Enhancement, 0 to 13. Digit can take the plus of the tag, or the point at its right, for a 4:
-            "+11" reads 411, "+10" reads 410 or 104.
+        int: Enhancement, 0 to 13. Digit can take the plus of the tag for a 4 or a 1, and the point at its right
+            too: "+11" reads 411, "+10" 410, 104 or 101, "+6" 464. A tag read as none of these is taken as +0,
+            rather than as the most enhanced gear.
     """
     if digit <= 13:
         return digit
     text = str(digit)
-    for start in range(len(text) - 1):
-        if 10 <= int(text[start:start + 2]) <= 13:
-            return int(text[start:start + 2])
-    # "+2" read as 42
-    rest = text.replace('4', '', 1)
-    return min(int(rest), 13) if rest else 4
+    point = text[-1] in TAG_MISREAD
+    plus = text[0] in TAG_MISREAD
+    candidates = []
+    if point:
+        candidates.append(text[:-1])
+    if plus:
+        candidates.append(text[1:])
+    if point and plus:
+        candidates.append(text[1:-1])
+    for candidate in candidates:
+        if candidate and int(candidate) <= 13:
+            return int(candidate)
+    return 0
 
 
 def depot_card_levels(image):

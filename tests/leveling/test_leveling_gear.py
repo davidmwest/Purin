@@ -118,7 +118,11 @@ def test_enhancement_of_her_gear():
 @pytest.mark.parametrize('digit, level', [
     (10, 10), (13, 13), (2, 2), (0, 0),
     # The plus of the tag read as a 4, or its point
-    (411, 11), (410, 10), (413, 13), (104, 10), (101, 10), (42, 2),
+    (411, 11), (410, 10), (413, 13), (104, 10), (101, 10), (42, 2), (110, 10),
+    # Both: a +6 Advanced Sonar was taken for +13 over gear at +10
+    (464, 6), (461, 6), (4104, 10),
+    # Unreadable, not the most enhanced
+    (416, 0), (99, 0),
 ])
 def test_level_of_a_tag(digit, level):
     assert tag_level(digit) == level
