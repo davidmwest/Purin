@@ -356,6 +356,16 @@ class Connection(ConnectionAttr):
             return True
         return False
 
+    @property
+    def droidcast_available(self):
+        """
+        DroidCast is available on SDK 23 (Android 6.0) to SDK 32 (Android 12),
+        and on the Android 13 of BlueStacks Air, where DroidCast_raw takes 0.035s a screenshot, ADB_nc 0.217s.
+        """
+        if self.is_bluestacks_air:
+            return True
+        return 23 <= self.sdk_ver <= 32
+
     @cached_property
     @retry
     def is_mumu_pro(self):

@@ -124,8 +124,15 @@ class Device(Screenshot, Control, AppControl):
         self.resolution_check_uiautomator2()
         # Perform benchmark
         from module.daemon.benchmark import Benchmark
+        disabled = self.is_stuck_detection_disabled
         bench = Benchmark(config=self.config, device=self)
-        method = bench.run_simple_screenshot_benchmark()
+        try:
+            method = bench.run_simple_screenshot_benchmark()
+        finally:
+            # The benchmark is a daemon, which turns off stuck detection of the device it uses.
+            # This device goes on to run tasks, where a stuck game has to be noticed.
+            if not disabled:
+                self.enable_stuck_detection()
         # Set
         with self.config.multi_set():
             self.config.Emulator_ScreenshotMethod = method
@@ -161,9 +168,9 @@ class Device(Screenshot, Control, AppControl):
             if not (self.is_emulator and self.is_ldplayer_bluestacks_family):
                 logger.warning('ScreenshotMethod ldopengl is available on LD Player only, fallback to auto')
                 self.config.Emulator_ScreenshotMethod = 'auto'
-        # DroidCast is available on SDK 23 (Android 6.0) to SDK 32 (Android 12)
+        # DroidCast is available on SDK 23 (Android 6.0) to SDK 32 (Android 12), and on BlueStacks Air
         if self.config.Emulator_ScreenshotMethod in ['DroidCast', 'DroidCast_raw']:
-            if self.sdk_ver < 23 or self.sdk_ver > 32:
+            if not self.droidcast_available:
                 logger.warning(f'ScreenshotMethod {self.config.Emulator_ScreenshotMethod} is available on '
                                f'Android 6.0 to 12 only (current sdk_ver={self.sdk_ver}), fallback to auto')
                 self.config.Emulator_ScreenshotMethod = 'auto'
@@ -356,6 +363,21 @@ class Device(Screenshot, Control, AppControl):
 
         self.click_record_check = empty_function
         self.stuck_record_check = empty_function
+
+    def enable_stuck_detection(self):
+        """
+        Undo disable_stuck_detection().
+        """
+        logger.info('Enable stuck detection')
+        # The empty functions of this instance cover the checks of the class
+        self.__dict__.pop('click_record_check', None)
+        self.__dict__.pop('stuck_record_check', None)
+        self.stuck_record_clear()
+        self.click_record_clear()
+
+    @property
+    def is_stuck_detection_disabled(self):
+        return 'stuck_record_check' in self.__dict__
 
     # If the game was seen logged in since Alas started or stopped it. A login page after that
     # means the account was logged out, like by a log in on another device.

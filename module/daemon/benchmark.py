@@ -194,16 +194,14 @@ class Benchmark(DaemonBase, CampaignUI):
         if device == 'android_phone_vmos':
             screenshot = ['ADB', 'aScreenCap', 'DroidCast', 'DroidCast_raw']
             click = ['ADB', 'Hermit', 'MaaTouch']
-        # Droidcast on SDK 23 (Android 6.0) to SDK 32 (Android 12)
-        if not (23 <= sdk <= 32):
+        # Droidcast on SDK 23 (Android 6.0) to SDK 32 (Android 12), and on BlueStacks Air
+        if not self.device.droidcast_available:
             screenshot = remove('DroidCast', 'DroidCast_raw')
 
         if self.device.nemu_ipc_available():
             screenshot.append('nemu_ipc')
         if self.device.ldopengl_available():
             screenshot.append('ldopengl')
-        if self.device.is_bluestacks_air:
-            screenshot = [l for l in screenshot if 'DroidCast' not in l]
 
         scene = self.config.Benchmark_TestScene
         if 'screenshot' not in scene:
@@ -237,6 +235,9 @@ class Benchmark(DaemonBase, CampaignUI):
         logger.info(f'sdk_ver: {sdk}')
         if not (21 <= sdk <= 28):
             screenshot = remove('aScreenCap', 'aScreenCap_nc')
+        # A method that method_check() turns down would be benchmarked again at every start
+        if not self.device.droidcast_available:
+            screenshot = remove('DroidCast', 'DroidCast_raw')
         if self.device.is_chinac_phone_cloud:
             screenshot = remove('ADB_nc', 'aScreenCap_nc')
         if self.device.nemu_ipc_available():
