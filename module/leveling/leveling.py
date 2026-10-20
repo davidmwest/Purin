@@ -134,7 +134,8 @@ class Leveling(LevelingFleet):
         self.leveling_log_queue(queue)
         # The boss fleet first, ships it lets go may level in the mob fleet
         plans = plan_carries([slot for slot in slots if slot.fleet in boss], slots, carry_targets(ships, data), data)
-        plans += plan_swaps([slot for slot in slots if slot.fleet in mob], queue, data)
+        plans += plan_swaps([slot for slot in slots if slot.fleet in mob], queue, data,
+                            others=[slot for slot in slots if slot.fleet not in mob])
         swapped = self.leveling_execute(plans, slots)
         logger.info(f'Leveling: {swapped} ships came in, {changed} levels went up')
         if changed or swapped:

@@ -346,3 +346,13 @@ def test_boss_fleet_takes_carries_for_ships_below_100(data):
         ((2, 1), ['Eldridge (Retrofit)']),
         ((2, 2), ['Eldridge (Retrofit)']),
     ]
+
+
+def test_ships_of_the_boss_fleet_are_not_taken_into_the_mob_fleet(data):
+    queue = queue_of(('Haruna', 'main', True), ('Gangut', 'main', True), ('Hiei', 'main', True),
+                     ('Kansas', 'main', True), ('Akashi', 'main', True))
+    mob = slots_of(1, 'main', 'Hakuhou', 'Gangut', 'Kansas')
+    boss = slots_of(2, 'main', 'victorious META', 'Hiei', 'Haruna')
+
+    # Hakuhou is not in this queue, Akashi is the one free
+    assert plan_names(plan_swaps(mob, queue, data, others=boss)) == [((1, 0), ['Akashi'])]

@@ -449,7 +449,7 @@ def update_levels(ships, slots, data=None):
     return changed
 
 
-def plan_swaps(slots, queue, data=None):
+def plan_swaps(slots, queue, data=None, others=()):
     """
     Which slots of the fleets take which ships of the queue.
 
@@ -462,12 +462,18 @@ def plan_swaps(slots, queue, data=None):
         slots (list[Slot]): Slots of the fleets that level, as read
         queue (list[Target]): leveling_queue()
         data (dict[str, ShipData]):
+        others (list[Slot]): Slots of the other fleets read, their ships are not free to come in
 
     Returns:
         list[tuple[Slot, list[Target]]]: Slots to change, with the ships to try in them, the best first.
             The same ship may be listed for several slots, she goes in the first one she can.
     """
     matcher = ShipMatcher(data if data is not None else load_ship_data())
+    elsewhere = set()
+    for slot in others:
+        match = matcher.match(slot.name) if slot.name else None
+        if match is not None:
+            elsewhere.add(match.character)
     plans = []
     for row in ('main', 'vanguard'):
         ranked = [target for target in queue if target.row == row and target.geared]
@@ -482,7 +488,7 @@ def plan_swaps(slots, queue, data=None):
             match = matcher.match(slot.name)
             occupants[slot.fleet, slot.index] = match.character if match is not None else None
         seated = {character for character in occupants.values() if character}
-        candidates = [target for target in ranked if target.character not in seated]
+        candidates = [target for target in ranked if target.character not in seated | elsewhere]
 
         for slot in row_slots:
             occupant = occupants[slot.fleet, slot.index]
