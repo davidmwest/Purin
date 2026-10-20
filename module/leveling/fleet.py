@@ -44,6 +44,7 @@ FLEET_FORMATION = area_button((1045, 645, 1240, 690), 'FLEET_FORMATION')
 
 DOCK_SEARCH = area_button((652, 10, 688, 46), 'DOCK_SEARCH')
 DOCK_SEARCH_FIELD = area_button((712, 14, 968, 42), 'DOCK_SEARCH_FIELD')
+DOCK_TITLE = area_button((125, 15, 180, 40), 'DOCK_TITLE')
 # The magnifier is blue, about (89, 100, 125), and gold, about (186, 143, 92), with the search bar open
 SEARCH_ICON = (654, 12, 686, 44)
 # OK of the input bar of Android. The bar is white and covers the bottom of the screen while typing.
@@ -265,6 +266,8 @@ class LevelingFleet(Formation):
         else:
             logger.warning('The input bar did not close')
             return False
+        # Searches typed before are listed under the bar and take the next tap, a tap on the title closes them
+        self.device.click(DOCK_TITLE)
         # The cards of the ships found are drawn
         self.device.sleep(0.5)
         self.device.screenshot()

@@ -356,3 +356,16 @@ def test_ships_of_the_boss_fleet_are_not_taken_into_the_mob_fleet(data):
 
     # Hakuhou is not in this queue, Akashi is the one free
     assert plan_names(plan_swaps(mob, queue, data, others=boss)) == [((1, 0), ['Akashi'])]
+
+
+def test_gear_from_storage_counts():
+    # Gear at +0 reads as no gear, the Leveling task marks the ships it gave gear to
+    assert is_geared({'gear_levels': [0, 0, 0, 0, 0], 'equipped': True})
+
+
+def test_ships_without_gear_are_planned_in(data):
+    queue = queue_of(('Isokaze', 'vanguard', False), ('Hasty', 'vanguard', True), ('Ping Hai (Retrofit)', 'vanguard', True))
+    slots = slots_of(1, 'vanguard', 'Hasty', 'Ping Hai Retrofit')
+
+    # Isokaze gets gear from storage as she comes in
+    assert plan_names(plan_swaps(slots, queue, data)) == [((1, 1), ['Isokaze'])]

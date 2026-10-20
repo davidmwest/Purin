@@ -153,6 +153,9 @@ def is_geared(ship):
     Returns:
         bool: If she has gear to fight with
     """
+    # Gear from storage put on by the Leveling task, at +0 it reads as none
+    if ship.get('equipped'):
+        return True
     levels = ship.get('gear_levels') or []
     return sum(1 for level in levels if (level or 0) >= GEARED_LEVEL) >= GEARED_SLOTS
 
@@ -453,9 +456,9 @@ def plan_swaps(slots, queue, data=None, others=()):
     """
     Which slots of the fleets take which ships of the queue.
 
-    A row of the fleets holds the geared ships at the top of the queue, as many as it has slots.
-    Ships at the top stay where they are, the other slots take the next ships of the top from the dock,
-    the slots of the first fleet first, it fights the most battles. A ship only replaces one below her.
+    A row of the fleets holds the ships at the top of the queue, as many as it has slots. A ship without gear
+    gets gear from storage as she comes in. Ships at the top stay where they are, the other slots take the next
+    ships of the top from the dock. A ship only replaces one below her.
     A slot whose ship can not be read is left as it is.
 
     Args:
@@ -476,7 +479,7 @@ def plan_swaps(slots, queue, data=None, others=()):
             elsewhere.add(match.character)
     plans = []
     for row in ('main', 'vanguard'):
-        ranked = [target for target in queue if target.row == row and target.geared]
+        ranked = [target for target in queue if target.row == row]
         rank = {target.character: index for index, target in enumerate(ranked)}
         row_slots = sorted([slot for slot in slots if slot.row == row], key=lambda slot: (slot.fleet, slot.index))
 
@@ -505,10 +508,11 @@ def plan_swaps(slots, queue, data=None, others=()):
     return plans
 
 
-# A ship below this level rides along in the mob fleet. Its vanguard takes one of them at most:
-# 12-4 sank two of them in the vanguard of the boss fleet, one with two ships at 91 cleared the mobs.
+# A ship below this level rides along in the mob fleet. Its vanguard takes one of them at most, its main fleet two:
+# 12-4 sank two of them in the vanguard of the boss fleet, one with two ships at 91 cleared the mobs,
+# and the main fleet cleared them with Hakuhou at 77 and Kansas at 84.
 PASSENGER_LEVEL = 90
-PASSENGERS = {'vanguard': 1}
+PASSENGERS = {'vanguard': 1, 'main': 2}
 # Ships of the boss fleet are at this level at least, the boss of 12-4 is at 114
 CARRY_LEVEL = 100
 
