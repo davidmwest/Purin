@@ -329,6 +329,9 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 continue
             if self.handle_mission_popup_ack():
                 continue
+            # Tips to improve the fleet, after a battle lost
+            if self.appear_then_click(DEFEAT_TIPS, offset=(20, 20), interval=2):
+                continue
 
             # Handle low emotion combat
             # Combat status
