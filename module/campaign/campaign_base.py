@@ -22,12 +22,17 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
         the ships fought where Alas did not count it, in another task or by hand.
         Cancel, count the fleet as exhausted so the task waits for it to recover, and leave the map.
 
+        A story plays the first time a stage is entered, and skipping it asks to confirm in a popup
+        like this warning. That one is for the story to handle.
+
         Returns:
             bool: If handled, with emotion ignored.
 
         Raises:
             CampaignEnd: After leaving the map, with emotion calculated.
         """
+        if self.story_popup_timeout.started() and not self.story_popup_timeout.reached():
+            return False
         if self.emotion.is_ignore:
             return super().handle_combat_low_emotion()
         if not self.handle_popup_cancel('LOW_EMOTION'):

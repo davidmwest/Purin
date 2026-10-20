@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from module.base.timer import Timer
 from module.campaign.campaign_base import CampaignBase
 from module.combat.emotion import Emotion
 from module.exception import CampaignEnd
@@ -22,6 +23,7 @@ def make_campaign(mode, popup):
     campaign.interval_reset = Mock()
     campaign.emotion_withdraw = Mock()
     campaign.fleet_current_index = 2
+    campaign.story_popup_timeout = Timer(10)
     return campaign
 
 
@@ -44,6 +46,19 @@ def test_no_low_mood_warning_nothing_to_do():
 
     campaign.emotion.set_exhausted.assert_not_called()
     campaign.emotion_withdraw.assert_not_called()
+
+
+@pytest.mark.parametrize('mode', ['calculate', 'ignore'])
+def test_story_skip_popup_is_not_a_low_mood(mode):
+    # A story skipped at the first entry of a stage asks to confirm in the same kind of popup
+    campaign = make_campaign(mode, popup=True)
+    campaign.story_popup_timeout.start()
+
+    assert campaign.handle_combat_low_emotion() is False
+
+    campaign.handle_popup_cancel.assert_not_called()
+    campaign.handle_popup_confirm.assert_not_called()
+    campaign.emotion.set_exhausted.assert_not_called()
 
 
 def test_low_mood_with_emotion_ignored_attacks_anyway():
