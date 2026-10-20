@@ -412,6 +412,9 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                     or self.handle_get_items(drop=drop):
                 break
 
+    # If the last battle was lost, ranked C or D
+    combat_lost = False
+
     def handle_battle_status(self, drop=None):
         """
         Args:
@@ -447,6 +450,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             return True
         if self.appear(BATTLE_STATUS_C, interval=self.battle_status_click_interval):
             logger.warning('Battle Status C')
+            self.combat_lost = True
             # raise GameStuckError('Battle status C')
             if drop:
                 drop.handle_add(self)
@@ -456,6 +460,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             return True
         if self.appear(BATTLE_STATUS_D, interval=self.battle_status_click_interval):
             logger.warning('Battle Status D')
+            self.combat_lost = True
             # raise GameStuckError('Battle Status D')
             if drop:
                 drop.handle_add(self)
@@ -519,9 +524,11 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             return True
         # A battle lost, like a fleet sunk by the boss of a stage too hard for it
         if self.appear_then_click(EXP_INFO_D):
+            self.combat_lost = True
             self.device.sleep((0.25, 0.5))
             return True
         if self.appear_then_click(EXP_INFO_C):
+            self.combat_lost = True
             self.device.sleep((0.25, 0.5))
             return True
 
@@ -569,6 +576,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         """
         logger.info('Combat status')
         logger.attr('expected_end', expected_end.__name__ if callable(expected_end) else expected_end)
+        self.combat_lost = False
         self.device.screenshot_interval_set()
         self.device.stuck_record_clear()
         self.device.click_record_clear()

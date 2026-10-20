@@ -13,6 +13,22 @@ from module.ui.assets import BACK_ARROW
 class CampaignBase(CampaignUI, Map, AutoSearchCombat):
     FUNCTION_NAME_BASE = 'battle_'
     MAP: CampaignMap
+    # If a battle of the last run of the map was lost
+    run_lost = False
+
+    def combat(self, *args, **kwargs):
+        """
+        A battle lost ends the run of the map. The fleet may have sunk, which leaves the map without a fleet,
+        and a stage too hard for the fleet is not worth going on with.
+
+        Raises:
+            CampaignEnd: After leaving the map, if the battle was lost.
+        """
+        super().combat(*args, **kwargs)
+        if self.combat_lost:
+            logger.warning('Battle lost, leave the map')
+            self.run_lost = True
+            self.withdraw()
 
     def handle_combat_low_emotion(self):
         """
@@ -177,6 +193,7 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
 
     def run(self):
         logger.hr(self.ENTRANCE, level=2)
+        self.run_lost = False
 
         # Enter map
         self.emotion.check_reduce(self._map_battle)

@@ -404,6 +404,9 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
 
             if self.handle_popup_confirm('WITHDRAW'):
                 continue
+            # "No available fleets. Unable to battle.", after the only fleet sank
+            if self.handle_popup_single('NO_FLEET'):
+                continue
             if self.appear_then_click(WITHDRAW, interval=5):
                 continue
             if self.handle_auto_search_exit():
