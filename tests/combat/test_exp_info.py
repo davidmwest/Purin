@@ -111,3 +111,43 @@ def test_battle_status_s_marks_a_win():
 
     assert combat.combat_won is True
     assert combat.combat_lost is False
+
+
+def annihilated():
+    """
+    Battle status of a fleet sunk, "ANNIHILATED D", on the F2P account: its 2560x1440 scaled to 1280x720.
+    Only the rank letter is kept, the rest is black.
+    """
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    image[160:340, 590:780] = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'battle_status_d_f2p.png')),
+                                           cv2.COLOR_BGR2RGB)
+    return image
+
+
+def test_a_battle_won_does_not_hide_the_loss_of_the_next_one():
+    # 3-1 of the F2P account: S in battles 1 and 2, the fleet sunk in battle 3, whose D was not looked for
+    combat = make_combat(annihilated())
+    shots = []
+
+    def screenshot():
+        shots.append(1)
+        assert len(shots) < 10, 'The battle did not end'
+        return combat.device.image
+
+    combat.device.screenshot = screenshot
+    combat.device.stuck_record_clear = Mock()
+    combat.device.click_record_clear = Mock()
+    combat.battle_status_click_interval = 0
+    for name in ['submarine_call_reset', 'combat_auto_reset', 'combat_manual_reset']:
+        setattr(combat, name, Mock())
+    for name in ['handle_combat_automation_confirm', 'handle_story_skip', 'handle_combat_auto',
+                 'handle_combat_manual', 'handle_submarine_call', 'handle_popup_confirm', 'handle_urgent_commission',
+                 'handle_guild_popup_cancel', 'handle_vote_popup', 'handle_mission_popup_ack', 'handle_get_items']:
+        setattr(combat, name, Mock(return_value=False))
+    # The battle before was won
+    combat.combat_won = True
+
+    combat.combat_execute()
+
+    assert combat.combat_lost is True
+    assert combat.device.click.call_args[0][0].name in ('BATTLE_STATUS_C', 'BATTLE_STATUS_D')

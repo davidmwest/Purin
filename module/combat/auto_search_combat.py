@@ -230,6 +230,9 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             out: combat status
         """
         logger.info('Auto search combat loading')
+        # A new battle: the S of the one before does not hide the C or D of this one
+        self.combat_won = False
+        self.combat_lost = False
         self.device.stuck_record_clear()
         self.device.click_record_clear()
         self.device.screenshot_interval_set('combat')

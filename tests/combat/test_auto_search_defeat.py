@@ -8,6 +8,7 @@ import pytest
 
 import module.config.server as server
 from module.combat.auto_search_combat import AutoSearchCombat
+from module.exception import CampaignEnd
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 
@@ -94,3 +95,23 @@ def test_fleet_switch_after_a_fleet_sank_is_confirmed():
     x1, y1, x2, y2 = combat.device.click.call_args[0][0].button
     # Confirm, in the middle of the popup
     assert 560 < x1 < x2 < 720 and 480 < y1 < y2 < 540
+
+
+def test_a_battle_of_auto_search_forgets_the_rank_of_the_one_before():
+    # The S of the battle before hid the C or D of the next one
+    combat = object.__new__(AutoSearchCombat)
+    combat.device = SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8), stuck_record_clear=Mock(),
+                                    click_record_clear=Mock(), screenshot_interval_set=Mock(),
+                                    stuck_record_add=Mock())
+    combat.interval_timer = {}
+    combat.combat_won = True
+    combat.combat_lost = True
+    for name in ['handle_combat_automation_confirm', 'handle_story_skip', 'handle_vote_popup']:
+        setattr(combat, name, Mock(return_value=False))
+    # Leaves at once, back in the menu of auto search
+    combat.is_in_auto_search_menu = Mock(return_value=True)
+
+    with pytest.raises(CampaignEnd):
+        combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=1)
+
+    assert combat.combat_won is False and combat.combat_lost is False

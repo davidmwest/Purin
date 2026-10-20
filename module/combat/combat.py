@@ -370,6 +370,9 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             drop (DropImage):
         """
         logger.info('Combat execute')
+        # A new battle: the S of the one before does not hide the C or D of this one
+        self.combat_won = False
+        self.combat_lost = False
         self.submarine_call_reset()
         self.combat_auto_reset()
         self.combat_manual_reset()
