@@ -9,7 +9,7 @@ import module.config.server as server
 from module.base.button import Button
 from module.base.utils import crop
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
-from module.mood.dorm_rest import PickerCard, DormShip, picker_drawn, picker_fleets_ended, picker_is_top, \
+from module.mood.dorm_rest import PickerCard, DormShip, dorm_mood, picker_drawn, picker_fleets_ended, picker_is_top, \
     picker_low_mood_ended, picker_row_tops, read_dorm_floor, read_picker_row, ship_list_tab, update_moods
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
 from module.mood.ship import ShipMood, ShipMoods, portrait_signature
@@ -355,3 +355,50 @@ def test_picker_reads_on_while_other_ships_are_low_on_mood():
 
     cards[5] = card(5, 'Another', mood=119)
     assert picker_low_mood_ended(cards, residents)
+
+
+@pytest.mark.parametrize('read, predicted, mood', [
+    # 146 read as 4, or as nothing
+    (4, 146, 146),
+    (0, 146, 146),
+    # Read close to what is followed, or above it
+    (140, 146, 140),
+    (150, 146, 150),
+    # Not followed yet
+    (0, None, 0),
+])
+def test_mood_misread_on_the_dorm_list(read, predicted, mood):
+    assert dorm_mood(read, predicted) == mood
+
+
+def test_resident_without_her_card_keeps_her_mood_on_a_misread():
+    moods = ShipMoods(Config())
+    # On the second floor at 140 six minutes ago, she recovered 5 since
+    moods.ships['Gangut'] = ShipMood('Gangut', mood=140, time=NOW - timedelta(minutes=6), place='rest', speed=50,
+                                     level=97, fleet=1)
+    moods.ships['Kansas'] = ShipMood('Kansas', mood=60, time=NOW - timedelta(minutes=6), place='rest', speed=50,
+                                     level=85, fleet=1)
+    dorm = [
+        DormShip(place='rest', name='Gangut', level=97, mood=4, speed=50),
+        # Read right, below what was followed: she fought where Purin did not count it
+        DormShip(place='rest', name='Kansas', level=85, mood=58, speed=50),
+    ]
+    cards = [card(0, '', remove=True)]
+
+    update_moods(moods, dorm, cards, NOW)
+
+    assert moods.ships['Gangut'].mood == 145
+    assert moods.ships['Kansas'].mood == 58
+
+
+def test_card_tells_the_mood_of_a_resident():
+    moods = ShipMoods(Config())
+    moods.ships['Gangut'] = ShipMood('Gangut', mood=140, time=NOW - timedelta(minutes=6), place='rest', speed=50,
+                                     level=97, fleet=1)
+    dorm = [DormShip(place='rest', name='Gangut', level=97, mood=4, speed=50)]
+    cards = [card(0, '', remove=True), card(1, 'Gangut', fleet=1, mood=120, level=97)]
+
+    update_moods(moods, dorm, cards, NOW)
+
+    # The dock reads moods right, a battle not counted is believed there
+    assert moods.ships['Gangut'].mood == 120

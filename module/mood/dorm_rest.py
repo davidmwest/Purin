@@ -79,6 +79,8 @@ REMOVE_SIMILARITY = 0.8
 LV_SIMILARITY = 0.75
 # A ship not seen in the dorm or in a fleet for this long is no longer followed, unless in a lineup
 FORGET_AFTER = timedelta(days=3)
+# A mood read on the dorm list this far below the one followed is a misread
+MOOD_READ_SLACK = 10
 # Taps on a button of the dorm before giving up, the game may lag
 DORM_TAPS_MAX = 6
 # Share of names misread on the picker from which it is taken for not drawn yet
@@ -462,6 +464,23 @@ def new_ship(moods, names):
     return None
 
 
+def dorm_mood(read, predicted):
+    """
+    The dorm list reads moods badly, 0 or a digit of them, 146 as 4.
+    A ship in the dorm, or moving into it, has fought no battle since her mood was known and can not be much lower.
+
+    Args:
+        read (int): Mood read on the dorm list
+        predicted (int): Her mood as followed, recovered until now, None if not followed yet
+
+    Returns:
+        int:
+    """
+    if predicted is not None and read < predicted - MOOD_READ_SLACK:
+        return predicted
+    return read
+
+
 def update_moods(moods, dorm, cards, now):
     """
     Remember what has been read.
@@ -499,6 +518,7 @@ def update_moods(moods, dorm, cards, now):
             continue
         taken.add(known.name)
         ship.known = known.name
+        predicted = known.at(now) if known.name in moods.ships else None
         known.mood, known.time, known.place, known.speed = ship.mood, now, ship.place, ship.speed
         if ship.level:
             known.level = ship.level
@@ -509,6 +529,8 @@ def update_moods(moods, dorm, cards, now):
             known.fleet = 0 if card.submarine else card.fleet
             # Both screens show her mood, OCR rather drops a digit than adds one
             known.mood = max(known.mood, card.mood)
+        else:
+            known.mood = dorm_mood(known.mood, predicted)
 
     # Ships in fleets, out of the dorm
     for card in listed:
@@ -1005,7 +1027,8 @@ class DormRest(Dock):
             for ship in rest:
                 known = identify(moods, [ship.name], ship.level, dorm_sig=ship.sig, taken=resting)
                 if known is not None:
-                    known.place, known.speed, known.mood, known.time = 'rest', ship.speed, ship.mood, now
+                    mood = dorm_mood(ship.mood, known.at(now))
+                    known.place, known.speed, known.mood, known.time = 'rest', ship.speed, mood, now
                     resting.add(known.name)
             logger.attr('Rest now', sorted(resting))
             for name in rest_names:
