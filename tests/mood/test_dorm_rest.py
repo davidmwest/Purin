@@ -437,3 +437,22 @@ def test_dorm_out_of_food_is_ignored():
     assert not is_dorm_food_popup(np.zeros((720, 1280, 3), dtype=np.uint8))
     assert rest.handle_dorm_food_popup()
     assert rest.device.click.call_args[0][0].name == 'DORM_FOOD_IGNORE'
+
+
+def test_fleet_missed_on_a_card_not_read_well_is_kept():
+    # Hakuhou of fleet 1, whose level reads 0 on her card, was read in no fleet on the second floor
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', mood=147, time=NOW - timedelta(minutes=15), place='rest', speed=50,
+                                      fleet=1, level=82)
+    moods.ships['Tiger'] = ShipMood('Tiger', mood=119, time=NOW - timedelta(minutes=15), fleet=2, level=100)
+    moods.ships['Hasty'] = ShipMood('Hasty', mood=122, time=NOW - timedelta(minutes=15), fleet=1, level=74)
+    dorm = [DormShip(place='rest', name='Hakuhou', level=82, mood=150, speed=50)]
+    cards = [card(0, 'Hakuhou', fleet=0, level=0),
+             # Levels read: these ships left their fleets
+             card(1, 'Tiger', fleet=0, level=100), card(2, 'Hasty', fleet=0, level=74)]
+
+    update_moods(moods, dorm, cards, NOW)
+
+    assert moods.ships['Hakuhou'].fleet == 1
+    assert moods.ships['Tiger'].fleet == 0
+    assert moods.ships['Hasty'].fleet == 0

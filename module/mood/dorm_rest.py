@@ -517,6 +517,21 @@ def dorm_mood(read, predicted):
     return read
 
 
+def card_misses_fleet(card, known):
+    """
+    The badge of a card OCR can not read, like the shimmering frame of an ultra rare whose level reads 0, is missed
+    at times: Hakuhou of fleet 1 was read in no fleet, and left out of the mood of her fleet.
+
+    Args:
+        card (PickerCard): Read with no fleet
+        known (ShipMood): Her ship as followed
+
+    Returns:
+        bool: If she stays in the fleet she was in
+    """
+    return not card.level and bool(known.fleet)
+
+
 def update_moods(moods, dorm, cards, now):
     """
     Remember what has been read.
@@ -562,7 +577,9 @@ def update_moods(moods, dorm, cards, now):
         if card is not None:
             card.ship = known.name
             known.card_sig = card.sig or known.card_sig
-            known.fleet = 0 if card.submarine else card.fleet
+            fleet = 0 if card.submarine else card.fleet
+            if fleet or not card_misses_fleet(card, known):
+                known.fleet = fleet
             # Both screens show her mood, OCR rather drops a digit than adds one
             known.mood = max(known.mood, card.mood)
         else:
@@ -595,7 +612,9 @@ def update_moods(moods, dorm, cards, now):
         taken.add(known.name)
         card.ship = known.name
         known.mood, known.time, known.place, known.speed = card.mood, now, 'dock', DOCK_SPEED
-        known.level, known.fleet = card.level or known.level, 0
+        if not card_misses_fleet(card, known):
+            known.fleet = 0
+        known.level = card.level or known.level
         known.sig = known.sig or card.sig
         known.card_sig = card.sig or known.card_sig
     # Those not followed yet, known by level and portrait
