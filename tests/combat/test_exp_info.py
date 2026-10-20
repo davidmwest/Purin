@@ -86,3 +86,28 @@ def test_gray_screen_coming_in_is_not_a_battle_lost():
 
     combat.device.click.assert_not_called()
     assert combat.combat_lost is False
+
+
+def test_battle_won_is_not_lost_on_a_fading_frame():
+    # Fading out of S, a frame took the gray of D, and a run won was left as lost
+    combat = make_combat(lost_battle())
+    combat.battle_status_click_interval = 0
+    combat.combat_won = True
+    lost = ['BATTLE_STATUS_C', 'BATTLE_STATUS_D', 'EXP_INFO_C', 'EXP_INFO_D']
+    combat.appear = Mock(side_effect=lambda button, **kwargs: button.name in lost)
+
+    assert combat.handle_battle_status() is False
+    assert combat.handle_exp_info() is False
+    assert combat.combat_lost is False
+    combat.device.click.assert_not_called()
+
+
+def test_battle_status_s_marks_a_win():
+    combat = make_combat(np.zeros((720, 1280, 3), dtype=np.uint8))
+    combat.battle_status_click_interval = 0
+    combat.appear = Mock(side_effect=lambda button, **kwargs: button.name == 'BATTLE_STATUS_S')
+
+    assert combat.handle_battle_status() is True
+
+    assert combat.combat_won is True
+    assert combat.combat_lost is False

@@ -414,6 +414,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
 
     # If the last battle was lost, ranked C or D
     combat_lost = False
+    # If the last battle was won, ranked S, A or B
+    combat_won = False
 
     def handle_battle_status(self, drop=None):
         """
@@ -431,6 +433,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             else:
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_S)
+            self.combat_won = True
             return True
         if self.appear(BATTLE_STATUS_A, interval=self.battle_status_click_interval):
             logger.warning('Battle status A')
@@ -439,6 +442,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             else:
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_A)
+            self.combat_won = True
             return True
         if self.appear(BATTLE_STATUS_B, interval=self.battle_status_click_interval):
             logger.warning('Battle Status B')
@@ -447,7 +451,11 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             else:
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_B)
+            self.combat_won = True
             return True
+        # Won already: fading out of S, the screen may take the color of C or D for a frame
+        if self.combat_won:
+            return False
         if self.appear(BATTLE_STATUS_C, interval=self.battle_status_click_interval):
             logger.warning('Battle Status C')
             self.combat_lost = True
@@ -524,7 +532,9 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             return True
         # A battle lost, like a fleet sunk by the boss of a stage too hard for it.
         # The color of C and D is the gray of some screens coming in, like the one of a new ship,
-        # the letter has to be there too.
+        # the letter has to be there too. A battle won is not lost.
+        if self.combat_won:
+            return False
         for button in [EXP_INFO_D, EXP_INFO_C]:
             if self.appear(button) and self.appear(button, offset=(20, 20)):
                 self.device.click(button)
@@ -577,6 +587,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         logger.info('Combat status')
         logger.attr('expected_end', expected_end.__name__ if callable(expected_end) else expected_end)
         self.combat_lost = False
+        self.combat_won = False
         self.device.screenshot_interval_set()
         self.device.stuck_record_clear()
         self.device.click_record_clear()
