@@ -170,10 +170,10 @@ StopCondition:
   StageRetreat: 0
   RetreatFrom:
     value: ''
-    display: hide
+    display: disabled
   RetreatRemain:
     value: 0
-    display: hide
+    display: disabled
   GetNewShip: false
   ReachLevel: 0
 Fleet:

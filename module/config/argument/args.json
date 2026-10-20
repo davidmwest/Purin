@@ -545,12 +545,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -1016,12 +1016,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -1487,12 +1487,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -2113,12 +2113,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -2636,12 +2636,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -3155,12 +3155,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -3665,12 +3665,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -3849,12 +3849,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -4112,12 +4112,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -4649,12 +4649,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -5183,12 +5183,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -5719,12 +5719,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -6255,12 +6255,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -6791,12 +6791,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -7317,12 +7317,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -7821,12 +7821,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -8082,12 +8082,12 @@
       "RetreatFrom": {
         "type": "input",
         "value": "",
-        "display": "hide"
+        "display": "disabled"
       },
       "RetreatRemain": {
         "type": "input",
         "value": 0,
-        "display": "hide"
+        "display": "disabled"
       },
       "GetNewShip": {
         "type": "checkbox",

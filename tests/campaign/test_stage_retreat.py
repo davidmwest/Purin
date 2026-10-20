@@ -84,3 +84,16 @@ def test_map_achievement_is_not_a_stop_while_levelling():
 
     handler.config.StopCondition_RetreatRemain = 0
     assert handler.triggered_map_stop() is True
+
+
+def test_retreat_survives_loading_the_config():
+    # Hidden arguments go back to their default at every load of the config. The task run next, on the stage to
+    # level on, forgot the retreat and increased the stage back to the one lost.
+    from module.config.config_updater import ConfigUpdater
+    from module.config.deep import deep_get
+
+    old = {'Main': {'StopCondition': {'StageIncrease': True, 'StageRetreat': 3, 'RetreatFrom': '2-4', 'RetreatRemain': 3}}}
+    new = ConfigUpdater().config_update(old)
+
+    assert deep_get(new, 'Main.StopCondition.RetreatFrom') == '2-4'
+    assert deep_get(new, 'Main.StopCondition.RetreatRemain') == 3
