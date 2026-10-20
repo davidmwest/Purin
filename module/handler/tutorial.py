@@ -16,9 +16,18 @@ TUTORIAL_HAND_TIP = (3, 3)
 TUTORIAL_TAP_OFFSETS = [(0, 0), (0, 35), (-35, 35), (35, 35), (0, -35), (-40, 0), (40, 0)]
 # Pixels the hand may move between two frames of the same step
 TUTORIAL_SAME_STEP = 15
-# The voice wave at the lower left of a dialog of the guide
+# The voice wave at the lower left of a dialog of the guide, some dialogs are see-through
 TUTORIAL_DIALOG_TEMPLATE = './assets/tutorial/dialog_voice.png'
-TUTORIAL_DIALOG_SIMILARITY = 0.85
+TUTORIAL_DIALOG_SIMILARITY = 0.75
+# The hand turns from a step to another, and the template of its blue misses it over a blue icon.
+# With a dialog of the guide on screen, it is found by its color instead: light blue, hue 103 to 108 of 180
+HAND_HUE = (100, 112)
+HAND_SATURATION = (25, 120)
+HAND_VALUE = 200
+# Pixels of the hand of that color, and the share of its box they fill
+HAND_AREA = (900, 4000)
+HAND_SIZE = (30, 110)
+HAND_FILL = (0.35, 0.8)
 
 
 def blueness(image):
@@ -49,6 +58,41 @@ def tutorial_hand(image, template):
     return location[0] + TUTORIAL_HAND_TIP[0], location[1] + TUTORIAL_HAND_TIP[1]
 
 
+def hand_by_color(image):
+    """
+    Args:
+        image (np.ndarray): Screenshot, RGB
+
+    Returns:
+        tuple[int, int]: The tip of the finger, the top of the hand, or None
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+    hue, saturation, value = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    mask = (hue >= HAND_HUE[0]) & (hue <= HAND_HUE[1]) \
+        & (saturation >= HAND_SATURATION[0]) & (saturation <= HAND_SATURATION[1]) & (value >= HAND_VALUE)
+    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    # The outline of the fingers splits the hand
+    merged = cv2.dilate(mask, np.ones((9, 9), np.uint8))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(merged, connectivity=8)
+    height, width = mask.shape
+    best = None
+    for label in range(1, count):
+        x, y, w, h, _ = stats[label]
+        # The sea and the sky of a page go to its edges
+        if x == 0 or y == 0 or x + w >= width or y + h >= height:
+            continue
+        if not (HAND_SIZE[0] <= w <= HAND_SIZE[1] and HAND_SIZE[0] <= h <= HAND_SIZE[1]):
+            continue
+        inside = (labels == label) & (mask > 0)
+        area = int(inside.sum())
+        if not (HAND_AREA[0] <= area <= HAND_AREA[1] and HAND_FILL[0] <= area / (w * h) <= HAND_FILL[1]):
+            continue
+        if best is None or area > best[0]:
+            ys, xs = np.where(inside)
+            best = area, (int(xs[np.argmin(ys)]), int(ys.min()))
+    return best[1] if best else None
+
+
 def tutorial_dialog(image, template):
     """
     Args:
@@ -75,3 +119,26 @@ def is_same_step(point, previous):
     if previous is None:
         return False
     return abs(point[0] - previous[0]) <= TUTORIAL_SAME_STEP and abs(point[1] - previous[1]) <= TUTORIAL_SAME_STEP
+
+
+def tutorial_target(image, hand_template, dialog_template):
+    """
+    Args:
+        image (np.ndarray): Screenshot, RGB
+        hand_template (np.ndarray): TUTORIAL_HAND_TEMPLATE
+        dialog_template (np.ndarray): TUTORIAL_DIALOG_TEMPLATE
+
+    Returns:
+        tuple[str, tuple[int, int]]: ('hand', where it points) or ('dialog', a point in the dialog), or None
+    """
+    dialog = tutorial_dialog(image, dialog_template)
+    if dialog is not None:
+        hand = hand_by_color(image)
+        if hand is not None:
+            return 'hand', hand
+        return 'dialog', dialog
+    # A hand without a dialog, it has to look like the one of the template
+    hand = tutorial_hand(image, hand_template)
+    if hand is not None:
+        return 'hand', hand
+    return None

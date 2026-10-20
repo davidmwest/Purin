@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from module.handler.info_handler import InfoHandler
-from module.handler.tutorial import TUTORIAL_DIALOG_TEMPLATE, TUTORIAL_HAND_TEMPLATE, tutorial_dialog, tutorial_hand
+from module.handler.tutorial import TUTORIAL_DIALOG_TEMPLATE, TUTORIAL_HAND_TEMPLATE, tutorial_dialog, tutorial_hand, \
+    tutorial_target
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 ROOT = os.path.join(os.path.dirname(__file__), '..')
@@ -145,3 +146,15 @@ def test_dialog_alone_is_tapped():
     assert handler.handle_tutorial() is True
 
     assert handler.device.click.call_args[0][0].name == 'TUTORIAL_DIALOG'
+
+
+def test_hand_over_a_blue_icon_with_its_dialog():
+    # "How about some Oxy-cola?", the hand stands up over the blue icon of the snack, its blue is not the template's
+    image = screen(os.path.join(DATA, 'tutorial_hand_snack.png'), 380, 290)
+
+    assert tutorial_hand(image, template()) is None
+    kind, (x, y) = tutorial_target(image, template(), dialog_template())
+
+    assert kind == 'hand'
+    # The tip of the finger, on the icon of Snacks1000
+    assert 455 < x < 490 and 430 < y < 460

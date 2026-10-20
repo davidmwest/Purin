@@ -7,7 +7,7 @@ from module.base.utils import *
 from module.exception import GameLoggedOutError, GameNotRunningError
 from module.handler.assets import *
 from module.handler.tutorial import TUTORIAL_DIALOG_TEMPLATE, TUTORIAL_HAND_TEMPLATE, TUTORIAL_TAP_OFFSETS, \
-    is_same_step, tutorial_dialog, tutorial_hand
+    is_same_step, tutorial_target
 from module.logger import logger
 from module.os_handler.assets import CLICK_SAFE_AREA as OS_CLICK_SAFE_AREA
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_SINGLE_WHITE
@@ -64,8 +64,9 @@ class InfoHandler(ModuleBase):
             self._tutorial_dialog_interval = Timer(1.5, count=2)
         hand_template, dialog_template = self._tutorial_templates
 
-        point = tutorial_hand(self.device.image, hand_template)
-        if point is not None:
+        target = tutorial_target(self.device.image, hand_template, dialog_template)
+        kind, point = target if target is not None else (None, None)
+        if kind == 'hand':
             if not self._tutorial_hand_seen.started():
                 self._tutorial_hand_seen.start()
                 return False
@@ -89,8 +90,7 @@ class InfoHandler(ModuleBase):
             return True
         self._tutorial_hand_seen.clear()
 
-        point = tutorial_dialog(self.device.image, dialog_template)
-        if point is not None and self._tutorial_dialog_interval.reached():
+        if kind == 'dialog' and self._tutorial_dialog_interval.reached():
             x, y = point
             area = (x - 5, y - 5, x + 5, y + 5)
             logger.info('Tutorial dialog, tap to go on')
