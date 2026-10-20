@@ -77,6 +77,9 @@ HULL_ROW = {
 # the ships that clear 12-4 have +10 in all of their 5 slots.
 GEARED_SLOTS = 4
 GEARED_LEVEL = 6
+# Rows of the mob fleet that take ships without gear, given gear from storage as they come in.
+# None for now: two ships at +0 in the vanguard lost a battle of the mobs of 12-4 that ships at +10 won.
+GEARLESS_ROWS = ()
 # Ships at level 120 and above are done, unless they go to 125
 LEVEL_DONE = 120
 LEVEL_MAX = 125
@@ -153,9 +156,6 @@ def is_geared(ship):
     Returns:
         bool: If she has gear to fight with
     """
-    # Gear from storage put on by the Leveling task, at +0 it reads as none
-    if ship.get('equipped'):
-        return True
     levels = ship.get('gear_levels') or []
     return sum(1 for level in levels if (level or 0) >= GEARED_LEVEL) >= GEARED_SLOTS
 
@@ -456,9 +456,10 @@ def plan_swaps(slots, queue, data=None, others=()):
     """
     Which slots of the fleets take which ships of the queue.
 
-    A row of the fleets holds the ships at the top of the queue, as many as it has slots. A ship without gear
-    gets gear from storage as she comes in. Ships at the top stay where they are, the other slots take the next
-    ships of the top from the dock. A ship only replaces one below her.
+    A row of the fleets holds the geared ships at the top of the queue, as many as it has slots, and in the rows
+    of GEARLESS_ROWS ships without gear too, they get gear from storage as they come in. Ships at the top stay
+    where they are, the other slots take the next ships of the top from the dock. A ship only replaces one below
+    her.
     A slot whose ship can not be read is left as it is.
 
     Args:
@@ -479,7 +480,7 @@ def plan_swaps(slots, queue, data=None, others=()):
             elsewhere.add(match.character)
     plans = []
     for row in ('main', 'vanguard'):
-        ranked = [target for target in queue if target.row == row]
+        ranked = [target for target in queue if target.row == row and (target.geared or row in GEARLESS_ROWS)]
         rank = {target.character: index for index, target in enumerate(ranked)}
         row_slots = sorted([slot for slot in slots if slot.row == row], key=lambda slot: (slot.fleet, slot.index))
 
