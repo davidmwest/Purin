@@ -10,7 +10,8 @@ from module.base.button import Button
 from module.base.utils import crop
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
 from module.mood.dorm_rest import PickerCard, DormShip, dorm_mood, picker_drawn, picker_fleets_ended, picker_is_top, \
-    picker_low_mood_ended, picker_row_tops, read_dorm_floor, read_picker_row, ship_list_tab, update_moods
+    picker_low_mood_ended, picker_name_similarity, picker_row_tops, read_dorm_floor, read_picker_row, ship_list_tab, \
+    update_moods
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
 from module.mood.ship import ShipMood, ShipMoods, portrait_signature
 from module.ocr.ocr import Digit
@@ -402,3 +403,20 @@ def test_card_tells_the_mood_of_a_resident():
 
     # The dock reads moods right, a battle not counted is believed there
     assert moods.ships['Gangut'].mood == 120
+
+
+@pytest.mark.parametrize('read, name, same', [
+    ('Arizona', 'Arizona', True),
+    ('G angut', 'Gangut', True),
+    # Long names cut on the card
+    ('Arizona MET..', 'Arizona META', True),
+    ('Ning Hai (R..', 'Ning Hai (Retrofit', True),
+    ('Maury (Retr..', 'Maury (Retr', True),
+    # Other ships: Arizona META on screen was tapped for Arizona, three times, and the dorm stayed full
+    ('Arizona META..', 'Arizona', False),
+    ('Arizona', 'Arizona META', False),
+    ('Little Illu..', 'Illustrious', False),
+    ('Illustrious', 'Little Illustrious', False),
+])
+def test_names_of_other_ships_on_the_picker(read, name, same):
+    assert (picker_name_similarity(read, name) > 1) is same

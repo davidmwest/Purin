@@ -85,6 +85,9 @@ MOOD_READ_SLACK = 10
 DORM_TAPS_MAX = 6
 # Share of names misread on the picker from which it is taken for not drawn yet
 PICKER_GARBLED_MAX = 0.25
+# The picker cuts long names, it never adds letters: a name read with this many letters more than the one looked
+# for is an other ship, "Arizona META.." for Arizona. A name read whole with this many fewer is one too.
+PICKER_OTHER_SHIP_LETTERS = 3
 # A run that could not read the dorm tries again after this
 DORM_RETRY_MINUTES = 10
 
@@ -163,6 +166,25 @@ def is_truncated(name):
     The dock ends long names with '..'
     """
     return str(name).strip().endswith('.')
+
+
+def picker_name_similarity(read, name):
+    """
+    Args:
+        read (str): Name of a card of the picker, as OCR reads it
+        name (str): Name of the ship looked for
+
+    Returns:
+        float: name_similarity(), 0 for a ship whose name only starts like the one looked for or is in it:
+            "Arizona META.." is not Arizona, "Arizona" is not Arizona META.
+    """
+    clean = clean_name(read)
+    letters, wanted = len(name_key(clean)), len(name_key(name))
+    if letters >= wanted + PICKER_OTHER_SHIP_LETTERS:
+        return 0.
+    if not is_truncated(read) and letters <= wanted - PICKER_OTHER_SHIP_LETTERS:
+        return 0.
+    return name_similarity(clean, name)
 
 
 # Darkness of a card selected on the picker: selected = original * a + b, it washes out the fleet badge
@@ -872,7 +894,8 @@ class DormRest(Dock):
             names = Ocr(card_buttons(top, 4, 163, 134, 186, 'PICKER_NAME'), lang='cnocr', letter=(255, 255, 255),
                         threshold=128, name='OCR_PICKER_NAME').ocr(image)
             for col, read in enumerate(names):
-                similarity = name_similarity(clean_name(read), name)
+                # An other ship of a similar name may be on screen, the one looked for further up
+                similarity = picker_name_similarity(read, name)
                 if similarity > score:
                     best, score = (int(CARD_X + CARD_DELTA_X * col), top), similarity
         return best
