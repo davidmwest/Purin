@@ -1,5 +1,11 @@
-import atexit
 import os
+
+# OpenMP starts a thread a core for the OCR, each one spinning while it waits for work.
+# On a Mac of 24 cores shared with emulators, the OCR of the inventory took 10 cores and ran 20 times slower.
+# Set before anything loads OpenMP. Also for alas.py run by itself.
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+
+import atexit
 import re
 import threading
 import time
