@@ -8,6 +8,7 @@ from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATIO
 from module.map.map import Map
 from module.map.map_base import CampaignMap
 from module.ui.assets import BACK_ARROW
+from module.ui.page import page_main
 
 
 class CampaignBase(CampaignUI, Map, AutoSearchCombat):
@@ -29,6 +30,20 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
             logger.warning('Battle lost, leave the map')
             self.run_lost = True
             self.withdraw()
+
+    def handle_in_stage(self):
+        """
+        A commander level that unlocks a feature takes the game to the main page after a battle, to show it,
+        with the stage still in progress. Like the list of stages, the main page ends the run, the next one
+        withdraws from the stage and enters it again.
+
+        Raises:
+            CampaignEnd: On the main page, or on the list of stages.
+        """
+        if self.ui_page_appear(page_main):
+            logger.info('Left the map for page_main')
+            raise CampaignEnd('Main page')
+        return super().handle_in_stage()
 
     def handle_combat_low_emotion(self):
         """
