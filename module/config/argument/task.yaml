@@ -58,6 +58,8 @@ Farm:
       - Emotion
       - HpControl
       - EnemyPriority
+    Formation:
+      - Scheduler
     GemsFarming:
       - Scheduler
       - GemsFarming

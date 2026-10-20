@@ -62,6 +62,10 @@
       "name": "Main-3",
       "help": ""
     },
+    "Formation": {
+      "name": "Formation",
+      "help": "Fills the empty slots of the fleets that the task Main uses with the best free ships of the dock, by level and rarity: vanguard ships in the vanguard, main fleet ships in the main fleet. A new account starts with a few ships, and the game does not add the ships that drop or are built. Ships already in a fleet stay. Runs every hour"
+    },
     "GemsFarming": {
       "name": "Commission Farming",
       "help": ""

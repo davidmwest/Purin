@@ -311,6 +311,11 @@ RetireShips:
     SuccessInterval: 30
     FailureInterval: 120
     ServerUpdate: 00:00
+Formation:
+  Scheduler:
+    # Ships drop and are built all along, the fleets of a new account fill up slot by slot
+    SuccessInterval: 60
+    FailureInterval: 60
 Inventory:
   Scheduler:
     # Once a week, a run goes through the whole dock, a run that stopped halfway is done again the next day

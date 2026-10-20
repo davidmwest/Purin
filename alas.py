@@ -264,6 +264,10 @@ class AzurLaneAutoScript:
         from module.inventory.inventory import Inventory
         Inventory(config=self.config, device=self.device).run()
 
+    def formation(self):
+        from module.formation.formation import Formation
+        Formation(config=self.config, device=self.device).run()
+
     def meowfficer(self):
         from module.meowfficer.meowfficer import RewardMeowfficer
         RewardMeowfficer(config=self.config, device=self.device).run()
