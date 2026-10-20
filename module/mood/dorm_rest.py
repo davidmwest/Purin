@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 
 from module.base.button import Button
+from module.base.template import Template
 from module.base.timer import Timer
 from module.base.utils import color_similar, crop, get_color
 from module.combat.level import LevelOcr
@@ -85,6 +86,11 @@ MOOD_READ_SLACK = 10
 DORM_TAPS_MAX = 6
 # Share of names misread on the picker from which it is taken for not drawn yet
 PICKER_GARBLED_MAX = 0.25
+# A dorm out of food asks for some as a ship comes in: Ignore, Give Food. Ignore closes it, feeding the dorm is for
+# the Dorm task, when its Feed is on.
+DORM_FOOD_GIVE = Template(file='./assets/mood/dorm_food_give.png')
+DORM_FOOD_AREA = (650, 480, 880, 570)
+DORM_FOOD_IGNORE = Button(area=(440, 505, 600, 540), color=(), button=(440, 505, 600, 540), name='DORM_FOOD_IGNORE')
 # The picker cuts long names, it never adds letters: a name read with this many letters more than the one looked
 # for is an other ship, "Arizona META.." for Arizona. A name read whole with this many fewer is one too.
 PICKER_OTHER_SHIP_LETTERS = 3
@@ -166,6 +172,14 @@ def is_truncated(name):
     The dock ends long names with '..'
     """
     return str(name).strip().endswith('.')
+
+
+def is_dorm_food_popup(image):
+    """
+    Returns:
+        bool: If the dorm asks for food, out of it
+    """
+    return template_score(image, DORM_FOOD_GIVE, DORM_FOOD_AREA) > 0.85
 
 
 def picker_name_similarity(read, name):
@@ -642,6 +656,9 @@ class DormRest(Dock):
             if self.ui_additional(get_ship=False):
                 click_timer.clear()
                 continue
+            if self.handle_dorm_food_popup():
+                click_timer.clear()
+                continue
             if self.dorm_ship_list_tab():
                 break
             if self.appear(DORM_CHECK, offset=(20, 20)) and click_timer.reached():
@@ -739,6 +756,8 @@ class DormRest(Dock):
         for _ in self.loop():
             if self.appear(DOCK_CHECK, offset=(20, 20)):
                 break
+            if self.handle_dorm_food_popup():
+                continue
             if click_timer.reached() and self.dorm_ship_list_tab() == 'rest':
                 if taps >= DORM_TAPS_MAX:
                     raise DormReadError('Dorm picker does not open')
@@ -943,6 +962,10 @@ class DormRest(Dock):
             self.device.click(Button(area=area, color=(), button=area, name=f'PICKER_{name_key(card.name)}'))
             self.device.sleep((0.6, 0.8))
             self.device.screenshot()
+            # Out of food, the dorm asks for some as she comes in
+            if self.handle_dorm_food_popup():
+                self.device.sleep((0.6, 0.8))
+                self.device.screenshot()
             # A popup tells why a ship can not rest, like resting on the first floor already
             self.handle_info_bar()
             after = self.picker_selected_count()
@@ -958,6 +981,20 @@ class DormRest(Dock):
         logger.warning(f'{card.name} did not switch to selected={wanted}')
         return card.selected
 
+    def handle_dorm_food_popup(self):
+        """
+        Returns:
+            bool: If the dorm asks for food, Ignore is tapped
+        """
+        if not is_dorm_food_popup(self.device.image):
+            return False
+        timer = self.get_interval_timer(DORM_FOOD_IGNORE, interval=2, renew=True)
+        if timer.reached():
+            logger.warning('The dorm is out of food, Ignore')
+            self.device.click(DORM_FOOD_IGNORE)
+            timer.reset()
+        return True
+
     def picker_confirm(self, button):
         """
         Args:
@@ -971,6 +1008,8 @@ class DormRest(Dock):
         for _ in self.loop():
             if self.dorm_ship_list_tab() is not None:
                 break
+            if self.handle_dorm_food_popup():
+                continue
             if self.appear_then_click(button, offset=(20, 20), interval=3):
                 continue
             if self.handle_popup_confirm('DORM_PICKER'):

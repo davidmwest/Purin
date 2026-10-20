@@ -1,17 +1,19 @@
 import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import cv2
+import numpy as np
 import pytest
 
 import module.config.server as server
 from module.base.button import Button
 from module.base.utils import crop
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
-from module.mood.dorm_rest import PickerCard, DormShip, dorm_mood, picker_drawn, picker_fleets_ended, picker_is_top, \
-    picker_low_mood_ended, picker_name_similarity, picker_row_tops, read_dorm_floor, read_picker_row, ship_list_tab, \
-    update_moods
+from module.mood.dorm_rest import DormRest, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
+    picker_fleets_ended, picker_is_top, picker_low_mood_ended, picker_name_similarity, picker_row_tops, \
+    read_dorm_floor, read_picker_row, ship_list_tab, update_moods
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
 from module.mood.ship import ShipMood, ShipMoods, portrait_signature
 from module.ocr.ocr import Digit
@@ -420,3 +422,18 @@ def test_card_tells_the_mood_of_a_resident():
 ])
 def test_names_of_other_ships_on_the_picker(read, name, same):
     assert (picker_name_similarity(read, name) > 1) is same
+
+
+def test_dorm_out_of_food_is_ignored():
+    # The dorm asked for food as Maury came in, the picker waited behind the popup until the game was restarted.
+    # A frame of the main account at 1280x720.
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    image[480:570, 400:880] = load('dorm_food_popup.png')
+    rest = DormRest.__new__(DormRest)
+    rest.device = SimpleNamespace(image=image, click=Mock())
+    rest.interval_timer = {}
+
+    assert is_dorm_food_popup(image)
+    assert not is_dorm_food_popup(np.zeros((720, 1280, 3), dtype=np.uint8))
+    assert rest.handle_dorm_food_popup()
+    assert rest.device.click.call_args[0][0].name == 'DORM_FOOD_IGNORE'
