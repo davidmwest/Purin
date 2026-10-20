@@ -158,3 +158,14 @@ def test_hand_over_a_blue_icon_with_its_dialog():
     assert kind == 'hand'
     # The tip of the finger, on the icon of Snacks1000
     assert 455 < x < 490 and 430 < y < 460
+
+
+def test_hand_at_the_bottom_of_the_screen():
+    # "Now we need to find someone that needs some rest", the hand on "Train" goes down to the bottom of the screen
+    image = screen(os.path.join(DATA, 'tutorial_hand_bottom.png'), 40, 360)
+
+    kind, (x, y) = tutorial_target(image, template(), dialog_template())
+
+    assert kind == 'hand'
+    # On "Train 0/2"
+    assert 20 < x < 205 and 655 < y < 700

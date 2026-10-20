@@ -74,12 +74,12 @@ def hand_by_color(image):
     # The outline of the fingers splits the hand
     merged = cv2.dilate(mask, np.ones((9, 9), np.uint8))
     count, labels, stats, _ = cv2.connectedComponentsWithStats(merged, connectivity=8)
-    height, width = mask.shape
+    width = mask.shape[1]
     best = None
     for label in range(1, count):
         x, y, w, h, _ = stats[label]
-        # The sea and the sky of a page go to its edges
-        if x == 0 or y == 0 or x + w >= width or y + h >= height:
+        # The sea and the sky of a page go to its sides and its top. A hand may point at a button at the bottom.
+        if x == 0 or y == 0 or x + w >= width:
             continue
         if not (HAND_SIZE[0] <= w <= HAND_SIZE[1] and HAND_SIZE[0] <= h <= HAND_SIZE[1]):
             continue
