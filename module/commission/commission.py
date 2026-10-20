@@ -49,6 +49,35 @@ def lines_detect(image):
     return np.array(peaks)
 
 
+# A commission unfolded, its requirements between its title and its team, from the top of COMMISSION_ADVICE
+REQUIREMENT_AREA = (310, -109, 1170, -64)
+TEAM_AREA = (225, -37, 825, 53)
+# Pixels of a requirement in red, like "Have at least 1 lv. 10 ship." on a new account: 945 of them.
+# Met requirements are yellow with a green tick.
+REQUIREMENT_RED = 200
+# Portraits make the team colorful. The game bug of ships disappearing after "Recommend" leaves it empty.
+TEAM_STD = 40
+
+
+def requirement_unmet(image, top):
+    """
+    Args:
+        image (np.ndarray): Screenshot of a commission unfolded
+        top (int): Top of COMMISSION_ADVICE
+
+    Returns:
+        bool: If a requirement is red while the team has ships
+    """
+    x1, y1, x2, y2 = REQUIREMENT_AREA
+    requirement = crop(image, (x1, top + y1, x2, top + y2), copy=False).astype(np.int16)
+    red = (requirement[:, :, 0] > 180) & (requirement[:, :, 1] < 110) & (requirement[:, :, 2] < 110)
+    if np.sum(red) < REQUIREMENT_RED:
+        return False
+    x1, y1, x2, y2 = TEAM_AREA
+    team = crop(image, (x1, top + y1, x2, top + y2), copy=False)
+    return float(np.std(team)) > TEAM_STD
+
+
 class RewardCommission(UI, InfoHandler):
     daily: SelectedGrids
     urgent: SelectedGrids
@@ -381,6 +410,10 @@ class RewardCommission(UI, InfoHandler):
                 continue
             # Check if is the right commission
             if self.appear(COMMISSION_ADVICE, offset=(5, 20), interval=7):
+                # Recommended already, and still a requirement no ship can meet, START stays grey
+                if count and requirement_unmet(self.device.image, COMMISSION_ADVICE.button[1]):
+                    logger.warning(f'Requirements of commission {comm} are not met, skip it')
+                    return False
                 area = (0, 0, image_size(self.device.image)[0], COMMISSION_ADVICE.button[1])
                 current = self.commission_detect(area=area)
                 if is_urgent:
