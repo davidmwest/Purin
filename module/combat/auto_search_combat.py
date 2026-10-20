@@ -205,6 +205,17 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         """
         return False
 
+    def is_battle_lost_shown(self):
+        """
+        A battle lost ends at the tips to improve the fleet, then shows its status C or D.
+
+        Returns:
+            bool:
+        """
+        return self.appear(DEFEAT_TIPS, offset=(20, 20)) \
+            or self.appear(BATTLE_STATUS_C) or self.appear(BATTLE_STATUS_D) \
+            or self.appear(EXP_INFO_C) or self.appear(EXP_INFO_D)
+
     def auto_search_combat_execute(self, emotion_reduce, fleet_index):
         """
         Args:
@@ -287,6 +298,10 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                     or self.is_auto_search_running():
                 self.device.screenshot_interval_set()
                 break
+            if self.is_battle_lost_shown():
+                logger.warning('Battle lost in auto search')
+                self.device.screenshot_interval_set()
+                break
             if self.auto_search_combat_end():
                 break
 
@@ -331,7 +346,11 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 continue
             # Tips to improve the fleet, after a battle lost
             if self.appear_then_click(DEFEAT_TIPS, offset=(20, 20), interval=2):
+                # Its status C or D comes next
+                self._auto_search_status_confirm = True
                 continue
+            if not self._auto_search_status_confirm and self.is_battle_lost_shown():
+                self._auto_search_status_confirm = True
 
             # Handle low emotion combat
             # Combat status
