@@ -79,3 +79,18 @@ def test_battle_lost_ends_the_battle_in_auto_search():
 
     combat.device.image = np.zeros((720, 1280, 3), dtype=np.uint8)
     assert not combat.is_battle_lost_shown()
+
+
+def test_fleet_switch_after_a_fleet_sank_is_confirmed():
+    # "Current fleet cannot be formed. Auto switching to Fleet 2.", after the mob fleet of 12-4 sank
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    image[300:560, 340:940] = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'fleet_switch_popup.png')),
+                                           cv2.COLOR_BGR2RGB)
+    combat = object.__new__(AutoSearchCombat)
+    combat.device = SimpleNamespace(image=image, click=Mock(), stuck_record_add=Mock())
+    combat.interval_timer = {}
+
+    assert combat.handle_popup_single('AUTO_SEARCH_MOVING')
+    x1, y1, x2, y2 = combat.device.click.call_args[0][0].button
+    # Confirm, in the middle of the popup
+    assert 560 < x1 < x2 < 720 and 480 < y1 < y2 < 540

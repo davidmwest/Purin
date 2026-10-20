@@ -189,6 +189,9 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 continue
             if self.handle_vote_popup():
                 continue
+            # "Current fleet cannot be formed. Auto switching to Fleet 2.", after a battle lost sank a fleet
+            if self.handle_popup_single('AUTO_SEARCH_MOVING'):
+                continue
 
             # End
             if self.is_combat_loading():
