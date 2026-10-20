@@ -90,6 +90,25 @@ class InfoHandler(ModuleBase):
     Popup info
     """
     _popup_offset = (3, 30)
+    # On an emulator above 1280x720, the screenshot scaled down blurs the thin letters of white popups:
+    # POPUP_CONFIRM_WHITE scores 0.80 at 2560x1440. Its blue has to be right too at this similarity.
+    POPUP_WHITE_SCALED_SIMILARITY = 0.75
+
+    def appear_popup_white(self, button, offset, interval):
+        """
+        Args:
+            button (Button): A button of white popups
+            offset:
+            interval:
+
+        Returns:
+            bool:
+        """
+        if self.appear(button, offset=offset, interval=interval):
+            return True
+        if not button.appear_on(self.device.image):
+            return False
+        return self.appear(button, offset=offset, interval=interval, similarity=self.POPUP_WHITE_SCALED_SIMILARITY)
 
     def handle_popup_confirm(self, name='', offset=None, interval=2):
         if offset is None:
@@ -100,7 +119,7 @@ class InfoHandler(ModuleBase):
             self.device.click(POPUP_CONFIRM)
             POPUP_CONFIRM.name = POPUP_CONFIRM.name[:-len(name) - 1]
             return True
-        if self.appear(POPUP_CONFIRM_WHITE, offset=offset, interval=interval):
+        if self.appear_popup_white(POPUP_CONFIRM_WHITE, offset=offset, interval=interval):
             POPUP_CONFIRM_WHITE.name = POPUP_CONFIRM_WHITE.name + '_' + name
             self.device.click(POPUP_CONFIRM_WHITE)
             POPUP_CONFIRM_WHITE.name = POPUP_CONFIRM_WHITE.name[:-len(name) - 1]
