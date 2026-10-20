@@ -11,21 +11,43 @@ A ship without gear gets gear from storage as she comes in, see module.leveling.
 """
 import json
 from collections import Counter
+from datetime import datetime, timedelta
 
 from module.inventory.inventory import filepath_inventory, save_inventory
 from module.leveling.gear import LevelingGear
-from module.leveling.plan import PASSENGERS, campaign_fleets, carry_targets, is_passenger, leveling_queue, \
-    load_ship_data, plan_carries, plan_swaps, update_levels
+from module.leveling.plan import PASSENGERS, campaign_fleets, carry_targets, is_geared, is_passenger, \
+    leveling_queue, load_ship_data, plan_carries, plan_swaps, update_levels
 from module.logger import logger
 from module.ui.page import page_fleet
 
 # Ships of each row of the queue written to the log
 QUEUE_LOG = 8
-# Ships coming into the mob fleet in a run. The fleet changes a little at a time, a fleet too weak shows
-# in a battle or two.
-MOB_SWAPS = 2
+# Ships coming into the mob fleet in a run. The fleet changes one ship at a time, a fleet too weak shows
+# in a battle or two: two ships changed at once lost battles of the mobs of 12-4.
+MOB_SWAPS = 1
 # Ships without gear tried in a run, each takes a trip to the dock and the depot
 GEAR_TRIES = 3
+# A ship storage could not gear well enough is tried again after this
+GEAR_RETRY = timedelta(days=1)
+TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+
+def gear_tried_recently(ship, now):
+    """
+    Args:
+        ship (dict): Ship of the inventory
+        now (datetime):
+
+    Returns:
+        bool: If storage was tried for her not long ago and did not gear her well enough
+    """
+    tried = ship.get('gear_tried') if ship else None
+    if not tried:
+        return False
+    try:
+        return now - datetime.strptime(tried, TIME_FORMAT) < GEAR_RETRY
+    except ValueError:
+        return False
 
 
 def load_inventory(config_name):
@@ -93,18 +115,22 @@ class Leveling(LevelingGear):
                 if budget is not None and passengers[slot.fleet, slot.row] - leaving + coming > budget:
                     continue
                 if not target.geared:
-                    if geared_tries >= GEAR_TRIES:
+                    record = next((ship for ship in ships if ship.get('name') == target.name
+                                   and ship.get('index', -1) == target.index), None)
+                    if geared_tries >= GEAR_TRIES or gear_tried_recently(record, datetime.now()):
                         continue
                     geared_tries += 1
-                    if not self.gear_ship(target):
+                    levels = self.gear_ship(target)
+                    self.ui_ensure(page_fleet)
+                    self.fleet_formation_ensure()
+                    if levels is not None and record is not None:
+                        record['gear_levels'] = levels
+                        record['gear_tried'] = datetime.now().strftime(TIME_FORMAT)
+                    if levels is None or not is_geared({'gear_levels': levels}):
+                        logger.info(f'{target.ship} can not be geared from storage, gear {levels}')
                         missing.add(target.character)
                         continue
                     target.geared = True
-                    for ship in ships:
-                        if ship.get('name') == target.name and ship.get('index', -1) == target.index:
-                            ship['equipped'] = True
-                    self.ui_ensure(page_fleet)
-                    self.fleet_formation_ensure()
                 self.formation_goto_fleet(slot.fleet)
                 if self.fleet_swap(slot, target):
                     taken.add(target.character)

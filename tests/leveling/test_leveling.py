@@ -1,7 +1,8 @@
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
-from module.leveling.leveling import Leveling
+from module.leveling.leveling import Leveling, gear_tried_recently
 from module.leveling.plan import Slot, Target
 
 
@@ -57,9 +58,12 @@ def test_a_vanguard_takes_one_passenger():
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['London (Retrofit)', 'Gangut']
 
 
+GEARED = [10, 10, 10, 10, 0]
+
+
 def leveling_with(fleet_swap, gear_ship=None):
     return SimpleNamespace(formation_goto_fleet=Mock(), fleet_swap=Mock(side_effect=fleet_swap),
-                           gear_ship=Mock(side_effect=gear_ship or (lambda target: True)), ui_ensure=Mock(),
+                           gear_ship=Mock(side_effect=gear_ship or (lambda target: list(GEARED))), ui_ensure=Mock(),
                            fleet_formation_ensure=Mock())
 
 
@@ -78,19 +82,36 @@ def test_a_ship_without_gear_gets_some_before_she_comes_in():
     # Isokaze in place of Hasty, the one passenger of the vanguard; Hamakaze would be a second, Maury is at 91
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Isokaze', 'Maury (Retrofit)']
     assert [args[0].ship for args, _ in leveling.gear_ship.call_args_list] == ['Isokaze', 'Maury (Retrofit)']
-    assert ships[0]['equipped'] and ships[1]['equipped']
+    # Her gear as read after it
+    assert ships[0]['gear_levels'] == GEARED and ships[1]['gear_levels'] == GEARED
+    assert ships[0]['gear_tried']
 
 
 def test_a_ship_storage_can_not_gear_stays_out():
     slots = [Slot(1, 'vanguard', 0, 'Hasty', 73)]
     isokaze, hamakaze = target('Isokaze'), target('Hamakaze')
     isokaze.geared = False
+    ships = [{'name': 'Isokaze', 'index': 0}]
     plans = [(slots[0], [isokaze, hamakaze])]
-    leveling = leveling_with(lambda slot, ship: True, gear_ship=lambda target: False)
+    # Storage had gear at +10 for 2 slots, her own stays at +0
+    leveling = leveling_with(lambda slot, ship: True, gear_ship=lambda target: [0, 0, 10, 10, 0])
 
-    assert Leveling.leveling_execute(leveling, plans, slots, []) == 1
+    assert Leveling.leveling_execute(leveling, plans, slots, ships) == 1
     # Hamakaze has her gear
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Hamakaze']
+    # Not tried again for a day
+    assert ships[0]['gear_levels'] == [0, 0, 10, 10, 0]
+    leveling = leveling_with(lambda slot, ship: True)
+    Leveling.leveling_execute(leveling, plans, slots, ships)
+    leveling.gear_ship.assert_not_called()
+
+
+def test_gear_tried_a_day_ago_is_tried_again():
+    now = datetime(2026, 10, 20, 12, 0, 0)
+    assert gear_tried_recently({'gear_tried': '2026-10-20 08:00:00'}, now)
+    assert not gear_tried_recently({'gear_tried': '2026-10-19 08:00:00'}, now)
+    assert not gear_tried_recently({}, now)
+    assert not gear_tried_recently(None, now)
 
 
 def test_ships_come_in_a_few_at_a_time():

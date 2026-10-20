@@ -77,9 +77,10 @@ HULL_ROW = {
 # the ships that clear 12-4 have +10 in all of their 5 slots.
 GEARED_SLOTS = 4
 GEARED_LEVEL = 6
-# Rows of the mob fleet that take ships without gear, given gear from storage as they come in.
-# None for now: two ships at +0 in the vanguard lost a battle of the mobs of 12-4 that ships at +10 won.
-GEARLESS_ROWS = ()
+# Rows of the mob fleet that take ships without gear: they get gear from storage as they come in, and come in
+# only if it makes them geared. Two ships at +0 in the vanguard lost a battle of the mobs of 12-4 that ships at +10
+# won.
+GEARLESS_ROWS = ('main', 'vanguard')
 # Ships at level 120 and above are done, unless they go to 125
 LEVEL_DONE = 120
 LEVEL_MAX = 125

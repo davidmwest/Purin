@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 import module.config.server as server
-from module.leveling.gear import LevelingGear, depot_has_item, empty_gear_slots
+from module.leveling.gear import LevelingGear, best_card, depot_card_levels, depot_has_item, \
+    empty_gear_slots, gear_levels
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 
@@ -81,3 +82,34 @@ def test_not_in_depot_on_the_detail_page():
     gear = gear_page(frame(('gear_info_isokaze.png', 690, 160)))
 
     assert not gear.is_in_depot()
+
+
+def test_enhancement_of_the_cards_of_the_depot():
+    # Anti-air guns in storage: +0, +10, +10, +0, +10, +10, +0 on the first row
+    image = frame(('depot_equipped_off_row.png', 137, 84))
+
+    levels = depot_card_levels(image)
+
+    assert levels[:7] == [0, 10, 10, 0, 10, 10, 0]
+    # No cards below, black
+    assert levels[7:] == [-1] * 14
+    assert best_card(levels) == 1
+
+
+@pytest.mark.parametrize('levels, best', [
+    ([0, 10, 11, 10], 2),
+    ([0, 0, 0], 0),
+    ([-1, 0, 10], 2),
+    # A dimmed first card, no card at all
+    ([-1, 6], 1),
+    ([-1, -1], -1),
+])
+def test_best_card(levels, best):
+    assert best_card(levels) == best
+
+
+def test_enhancement_of_her_gear():
+    # Isokaze: a gun and torpedoes at +0, nothing else
+    image = frame(('gear_info_isokaze.png', 690, 160))
+
+    assert gear_levels(image) == [0, 0, 0, 0, 0]

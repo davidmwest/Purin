@@ -363,7 +363,8 @@ def test_gear_from_storage_at_0_is_not_enough():
     assert not is_geared({'gear_levels': [0, 0, 0, 0, 0], 'equipped': True})
 
 
-def test_ships_without_gear_stay_out(data):
+def test_ships_without_gear_stay_out(data, monkeypatch):
+    monkeypatch.setattr('module.leveling.plan.GEARLESS_ROWS', ())
     queue = queue_of(('Isokaze', 'vanguard', False), ('Hasty', 'vanguard', True), ('Ping Hai (Retrofit)', 'vanguard', True))
     slots = slots_of(1, 'vanguard', 'Hasty', 'Ping Hai Retrofit')
 
