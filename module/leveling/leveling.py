@@ -1,8 +1,8 @@
 """
 Keep the fleets of the campaign filled with the ships to level next, in the order of module.leveling.plan.
 
-Ships level in the fleet that fights the mobs, 6 of the 7 battles of 12-4. Its vanguard takes one ship below
-PASSENGER_LEVEL at most. The fleet that fights the boss is kept strong with ships at CARRY_LEVEL and above,
+Ships level in the fleet that fights the mobs, 6 of the 7 battles of 12-4. Its rows take few ships below
+PASSENGER_LEVEL, see PASSENGERS. The fleet that fights the boss is kept strong with ships at CARRY_LEVEL and above,
 the most powerful ones free: two ships at 73 and 77 in its vanguard lost the boss of 12-4.
 
 The queue comes from the dock as the Inventory task read it. The ships of the fleets are the ones whose levels go up,
@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from module.inventory.inventory import filepath_inventory, save_inventory
 from module.leveling.gear import LevelingGear
 from module.leveling.plan import PASSENGERS, campaign_fleets, carry_targets, is_geared, is_passenger, \
-    leveling_queue, load_ship_data, plan_carries, plan_swaps, update_levels
+    leveling_queue, load_ship_data, plan_carries, plan_over_passengers, plan_swaps, update_levels
 from module.logger import logger
 from module.ui.page import page_fleet
 
@@ -174,14 +174,22 @@ class Leveling(LevelingGear):
         changed = update_levels(ships, slots, data)
         queue = leveling_queue(ships, data, ultra_to_125=self.config.Leveling_UltraTo125)
         self.leveling_log_queue(queue)
+        carry_list = carry_targets(ships, data)
+        mob_slots = [slot for slot in slots if slot.fleet in mob]
+        other_slots = [slot for slot in slots if slot.fleet not in mob]
         # The boss fleet first, ships it lets go may level in the mob fleet
-        carries = plan_carries([slot for slot in slots if slot.fleet in boss], slots, carry_targets(ships, data), data)
+        carries = plan_carries([slot for slot in slots if slot.fleet in boss], slots, carry_list, data)
         swapped = self.leveling_execute(carries, slots, ships)
-        # Then the mob fleet, the swaps that bring in the best ships first
-        plans = plan_swaps([slot for slot in slots if slot.fleet in mob], queue, data,
-                           others=[slot for slot in slots if slot.fleet not in mob])
-        plans.sort(key=lambda plan: -plan[1][0].score)
-        swapped += self.leveling_execute(plans, slots, ships, limit=MOB_SWAPS)
+        # Then a mob fleet with more ships below PASSENGER_LEVEL than its rows take
+        over = plan_over_passengers(mob_slots, queue, carry_list, data, others=other_slots)
+        if over:
+            swapped += self.leveling_execute(over, slots, ships)
+            # The fleet changed, it is read again next run
+        else:
+            # The swaps that bring in the best ships first
+            plans = plan_swaps(mob_slots, queue, data, others=other_slots)
+            plans.sort(key=lambda plan: -plan[1][0].score)
+            swapped += self.leveling_execute(plans, slots, ships, limit=MOB_SWAPS)
         logger.info(f'Leveling: {swapped} ships came in, {changed} levels went up')
         if changed or swapped:
             save_inventory(self.config.config_name, inventory)

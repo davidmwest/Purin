@@ -2,8 +2,16 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import pytest
+
 from module.leveling.leveling import Leveling, gear_tried_recently
 from module.leveling.plan import Slot, Target
+
+
+@pytest.fixture
+def one_passenger(monkeypatch):
+    # How the limit counts, with a vanguard that takes one ship below 90
+    monkeypatch.setattr('module.leveling.leveling.PASSENGERS', {'vanguard': 1, 'main': 2})
 
 
 def target(name):
@@ -11,7 +19,7 @@ def target(name):
                   arrays=0, gain=0, tech=0, score=0.5, priority=1, geared=True, index=0)
 
 
-def test_each_ship_comes_in_once_and_a_missing_one_is_not_tried_again():
+def test_each_ship_comes_in_once_and_a_missing_one_is_not_tried_again(one_passenger):
     slots = [Slot(1, 'vanguard', 0, 'Dmitri Donskoi', 100), Slot(2, 'vanguard', 1, 'Nana Astar Deviluke', 110),
              Slot(2, 'vanguard', 2, 'Vittorio Cuniberti', 105)]
     candidates = [target('Hasty'), target('Cooper'), target('Vampire')]
@@ -44,7 +52,7 @@ def test_no_inventory_waits_for_the_next_day(monkeypatch):
     leveling.ui_ensure.assert_not_called()
 
 
-def test_a_vanguard_takes_one_passenger():
+def test_a_vanguard_takes_one_passenger(one_passenger):
     # Hasty at 72 stays in the vanguard of fleet 1, Ping Hai at 91 makes room
     slots = [Slot(1, 'vanguard', 0, 'Hasty', 72), Slot(1, 'vanguard', 1, 'Ping Hai Retrofit', 91),
              Slot(1, 'main', 2, 'Kansas', 85)]
@@ -67,7 +75,7 @@ def leveling_with(fleet_swap, gear_ship=None):
                            fleet_formation_ensure=Mock())
 
 
-def test_a_ship_without_gear_gets_some_before_she_comes_in():
+def test_a_ship_without_gear_gets_some_before_she_comes_in(one_passenger):
     slots = [Slot(1, 'vanguard', 0, 'Hasty', 73), Slot(1, 'vanguard', 1, 'Ning Hai(Retrofit', 91)]
     isokaze, hamakaze, maury = target('Isokaze'), target('Hamakaze'), target('Maury (Retrofit)')
     maury.level = 91
@@ -87,7 +95,7 @@ def test_a_ship_without_gear_gets_some_before_she_comes_in():
     assert ships[0]['gear_tried']
 
 
-def test_a_ship_storage_can_not_gear_stays_out():
+def test_a_ship_storage_can_not_gear_stays_out(one_passenger):
     slots = [Slot(1, 'vanguard', 0, 'Hasty', 73)]
     isokaze, hamakaze = target('Isokaze'), target('Hamakaze')
     isokaze.geared = False
@@ -133,3 +141,15 @@ def test_main_fleet_takes_two_passengers():
 
     assert Leveling.leveling_execute(leveling, plans, slots, []) == 1
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Tirpitz']
+
+
+def test_mob_vanguard_takes_no_passenger():
+    # Hasty at 73 sank in the sixth battle of the mobs of 12-4 and lost it
+    slots = [Slot(1, 'vanguard', 0, 'Dmitri Donskoi', 100)]
+    hasty, vittorio = target('Hasty'), target('Vittorio Cuniberti')
+    hasty.level, vittorio.level = 73, 105
+    plans = [(slots[0], [hasty, vittorio])]
+    leveling = leveling_with(lambda slot, ship: True)
+
+    assert Leveling.leveling_execute(leveling, plans, slots, []) == 1
+    assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Vittorio Cuniberti']

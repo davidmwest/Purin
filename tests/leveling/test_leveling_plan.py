@@ -3,7 +3,7 @@ import pytest
 from module.leveling.plan import (
     AWAKEN_CHIPS, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Slot, Target, awaken_cost,
     awakenings_done, campaign_fleets, carry_targets, is_geared, leveling_queue, load_ship_data, name_key, plan_carries,
-    plan_swaps, update_levels,
+    plan_over_passengers, plan_swaps, update_levels,
 )
 
 GEARED = [10, 10, 10, 10, 10]
@@ -378,3 +378,31 @@ def test_ships_without_gear_come_in_where_rows_take_them(data, monkeypatch):
 
     # Isokaze gets gear from storage as she comes in
     assert plan_names(plan_swaps(slots, queue, data)) == [((1, 1), ['Isokaze'])]
+
+
+def test_a_row_over_its_passengers_makes_room(data):
+    # Hasty at 73 in a vanguard that takes no ship below 90
+    queue = queue_of(('Isokaze', 'vanguard', False), ('Hasty', 'vanguard', True), ('Maury (Retrofit)', 'vanguard', True),
+                     ('Ning Hai (Retrofit)', 'vanguard', True))
+    for target, level in zip(queue, [70, 73, 92, 91]):
+        target.level = level
+    slots = slots_of(1, 'vanguard', 'Hasty', 'Ning Hai(Retrofit', 'Ping Hai Retrofit')
+    for slot, level in zip(slots, [73, 91, 91]):
+        slot.level = level
+    carries = [Target(name='Eldridge (Retrofit)', ship='Eldridge (Retrofit)', hull='DD', row='vanguard',
+                      rarity='Super Rare', level=125, goal=125, chips=0, arrays=0, gain=0, tech=0, score=6046,
+                      priority=3, geared=True, index=0)]
+
+    plans = plan_over_passengers(slots, queue, carries, data)
+
+    # Ships at 90 and above of the queue first, then the most powerful ones
+    assert plan_names(plans) == [((1, 0), ['Maury (Retrofit)', 'Eldridge (Retrofit)'])]
+
+
+def test_a_row_within_its_passengers_is_left(data):
+    queue = queue_of(('Tirpitz', 'main', True))
+    slots = slots_of(1, 'main', 'Hakuhou', 'Gangut', 'Kansas')
+    for slot, level in zip(slots, [81, 97, 86]):
+        slot.level = level
+
+    assert plan_over_passengers(slots, queue, [], data) == []

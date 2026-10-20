@@ -510,11 +510,11 @@ def plan_swaps(slots, queue, data=None, others=()):
     return plans
 
 
-# A ship below this level rides along in the mob fleet. Its vanguard takes one of them at most, its main fleet two:
-# 12-4 sank two of them in the vanguard of the boss fleet, one with two ships at 91 cleared the mobs,
-# and the main fleet cleared them with Hakuhou at 77 and Kansas at 84.
+# A ship below this level rides along in the mob fleet. Its main fleet takes two of them at most, as it cleared
+# 12-4 for 626 runs with Hakuhou at 77 and Kansas at 84. Its vanguard takes none: it fights 6 battles a run and
+# the damage adds up, Hasty at 73 with gear at +10 sank in the sixth of them and lost it.
 PASSENGER_LEVEL = 90
-PASSENGERS = {'vanguard': 1, 'main': 2}
+PASSENGERS = {'vanguard': 0, 'main': 2}
 # Ships of the boss fleet are at this level at least, the boss of 12-4 is at 114
 CARRY_LEVEL = 100
 
@@ -601,3 +601,52 @@ def plan_carries(boss_slots, slots, carries, data=None):
 
 def is_passenger(level):
     return 0 < level < PASSENGER_LEVEL
+
+
+def plan_over_passengers(slots, queue, carries, data=None, others=()):
+    """
+    A row of the mob fleet with more ships below PASSENGER_LEVEL than PASSENGERS allows has its lowest ranked of
+    them replaced by the best ships at PASSENGER_LEVEL or above: ships of the queue first, then the most powerful
+    geared ships.
+
+    Args:
+        slots (list[Slot]): Slots of the mob fleet, as read
+        queue (list[Target]): leveling_queue()
+        carries (list[Target]): carry_targets()
+        data (dict[str, ShipData]):
+        others (list[Slot]): Slots of the other fleets read, their ships are not free to come in
+
+    Returns:
+        list[tuple[Slot, list[Target]]]: Slots to change, with the ships to try in them, the best first
+    """
+    matcher = ShipMatcher(data if data is not None else load_ship_data())
+
+    def character(slot):
+        match = matcher.match(slot.name) if slot.name else None
+        return match.character if match is not None else None
+
+    elsewhere = {character(slot) for slot in others} - {None}
+    plans = []
+    for row, budget in PASSENGERS.items():
+        ranked = [target for target in queue if target.row == row and (target.geared or row in GEARLESS_ROWS)]
+        rank = {target.character: index for index, target in enumerate(ranked)}
+        for fleet in sorted({slot.fleet for slot in slots if slot.row == row}):
+            fleet_slots = [slot for slot in slots if slot.fleet == fleet and slot.row == row]
+            passengers = [slot for slot in fleet_slots if slot.name and is_passenger(slot.level)]
+            excess = len(passengers) - budget
+            if excess <= 0:
+                continue
+            seated = {character(slot) for slot in fleet_slots} - {None}
+            candidates = []
+            for target in ranked + [carry for carry in carries if carry.row == row]:
+                if not is_passenger(target.level) and target.character not in seated | elsewhere \
+                        and target.character not in {c.character for c in candidates}:
+                    candidates.append(target)
+            # The lowest ranked passengers make room
+            passengers.sort(key=lambda slot: rank.get(character(slot), len(ranked)), reverse=True)
+            for slot in passengers[:excess]:
+                logger.info(f'Fleet {fleet} {row} has {len(passengers)} ships below {PASSENGER_LEVEL}, '
+                            f'{budget} at most, {slot.name} makes room')
+                if candidates:
+                    plans.append((slot, candidates))
+    return plans
