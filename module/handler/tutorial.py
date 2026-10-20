@@ -2,9 +2,17 @@
 Tutorials of a new account. When a feature unlocks, the game takes the player to it: it points at the button to tap
 with a blue hand in a pulsing ring, says what it is in a dialog of its guide, and takes no other tap until
 the tutorial is done. A step with a dialog alone goes on with a tap.
+
+The game starts them wherever the player is, like on the main page after a battle once the commander level
+unlocks commissions, so Device.screenshot() follows them, whatever a task is waiting for.
 """
 import cv2
 import numpy as np
+
+# Looking for a tutorial takes about 40ms, once a second is soon enough
+TUTORIAL_CHECK_INTERVAL = 1
+# Seconds without a tutorial on screen before the task gets the screen back, the next step may come after a moment
+TUTORIAL_GONE = 2
 
 # The hand as its blue minus its red, the screen shows through it. The pulsing ring is left out.
 TUTORIAL_HAND_TEMPLATE = './assets/tutorial/hand.png'
@@ -16,9 +24,10 @@ TUTORIAL_HAND_TIP = (3, 3)
 TUTORIAL_TAP_OFFSETS = [(0, 0), (0, 35), (-35, 35), (35, 35), (0, -35), (-40, 0), (40, 0)]
 # Pixels the hand may move between two frames of the same step
 TUTORIAL_SAME_STEP = 15
-# The voice wave at the lower left of a dialog of the guide, some dialogs are see-through
+# The voice wave at a lower corner of a dialog of the guide, some dialogs are see-through
 TUTORIAL_DIALOG_TEMPLATE = './assets/tutorial/dialog_voice.png'
-TUTORIAL_DIALOG_SIMILARITY = 0.75
+# Dialogs score 0.93 to 1, the most like one on 205 screenshots of errors 0.54
+TUTORIAL_DIALOG_SIMILARITY = 0.8
 # The hand turns from a step to another, and the template of its blue misses it over a blue icon.
 # With a dialog of the guide on screen, it is found by its color instead: light blue, hue 103 to 108 of 180
 HAND_HUE = (100, 112)
@@ -102,13 +111,15 @@ def tutorial_dialog(image, template):
     Returns:
         tuple[int, int]: A point in a dialog of the guide, or None
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    result = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
+    # The bars of the wave go up and down while the guide talks, a frame of it is no template for the others.
+    # The darkest pixel of each column, whatever the height of its bar, is the same from a frame to another.
+    height, width = template.shape
+    gray = cv2.erode(cv2.cvtColor(image, cv2.COLOR_RGB2GRAY), np.ones((height, 1), np.uint8))
+    result = cv2.matchTemplate(gray, template.min(axis=0, keepdims=True), cv2.TM_CCOEFF_NORMED)
     _, similarity, _, location = cv2.minMaxLoc(result)
     if similarity < TUTORIAL_DIALOG_SIMILARITY:
         return None
-    height, width = template.shape
-    return location[0] + width // 2, location[1] + height // 2
+    return location[0] + width // 2, location[1]
 
 
 def is_same_step(point, previous):

@@ -143,11 +143,6 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                                     "but it's the second time that you are entering")
                     raise RequestHumanTakeover
 
-                # A tutorial takes no other tap, like the one of the operational handover of a stage cleared
-                if self.handle_tutorial():
-                    map_timer.reset()
-                    continue
-
                 # Already in map
                 if not checked_in_map and self.is_in_map():
                     logger.info('Already in map, skip enter_map.')

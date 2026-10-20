@@ -475,10 +475,6 @@ class UI(InfoHandler):
         Args:
             get_ship:
         """
-        # A tutorial takes no other tap
-        if self.handle_tutorial():
-            return True
-
         # Popups appear at page_os
         # Has a popup_confirm variant
         # so must take precedence

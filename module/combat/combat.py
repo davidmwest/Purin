@@ -249,9 +249,6 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
 
         for _ in self.loop():
 
-            # A tutorial takes no other tap
-            if self.handle_tutorial():
-                continue
             if self.appear(BATTLE_PREPARATION, offset=(20, 20)):
                 if self.handle_combat_automation_set(auto=auto == 'combat_auto'):
                     continue
@@ -602,9 +599,6 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                     break
 
             if self.handle_story_skip(drop=drop):
-                continue
-            # A tutorial takes no other tap, like the one of a feature unlocked by the level of the commander
-            if self.handle_tutorial():
                 continue
             # Combat status
             if not exp_info and self.handle_get_ship(drop=drop):

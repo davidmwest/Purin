@@ -12,7 +12,9 @@ from module.device.pkg_resources import get_distribution
 # Just avoid being removed by import optimization
 _ = get_distribution
 
+from module.base.button import Button
 from module.base.timer import Timer
+from module.base.utils import load_image
 from module.config.utils import get_server_next_update
 from module.device.app_control import AppControl
 from module.device.control import Control
@@ -20,6 +22,8 @@ from module.device.screenshot import Screenshot
 from module.exception import (EmulatorNotRunningError, GameNotRunningError, GameStuckError, GameTooManyClickError,
                               RequestHumanTakeover)
 from module.handler.assets import GET_MISSION
+from module.handler.tutorial import TUTORIAL_CHECK_INTERVAL, TUTORIAL_DIALOG_TEMPLATE, TUTORIAL_GONE, \
+    TUTORIAL_HAND_TEMPLATE, TUTORIAL_TAP_OFFSETS, is_same_step, tutorial_target
 from module.logger import logger
 
 
@@ -76,6 +80,14 @@ class Device(Screenshot, Control, AppControl):
     stuck_frozen_seconds = 30
     _frozen_sample = None
     _frozen_since = 0.
+    # Tutorials, see module/handler/tutorial.py
+    _tutorial_templates = None
+    _tutorial_check = None
+    _tutorial_hand_seen = None
+    _tutorial_dialog_interval = None
+    # Where the hand pointed at the last tap, and taps at that step
+    _tutorial_step = None
+    _tutorial_taps = 0
 
     def __init__(self, *args, **kwargs):
         for trial in range(4):
@@ -220,9 +232,98 @@ class Device(Screenshot, Control, AppControl):
 
         if self.handle_night_commission():
             super().screenshot()
+        # A tutorial takes no other tap, the task gets the screen back once it is followed through
+        self.handle_tutorial()
 
         self.frozen_record_update()
         return self.image
+
+    @staticmethod
+    def _tutorial_template(file):
+        image = load_image(file)
+        return image if image.ndim == 2 else image[:, :, 0]
+
+    def tutorial_follow(self):
+        """
+        Tap where the hand of a tutorial points, once it has been there a moment, or the dialog of a step
+        without a hand.
+
+        Returns:
+            bool: If a tutorial is on screen
+        """
+        if self._tutorial_templates is None:
+            Device._tutorial_templates = (
+                self._tutorial_template(TUTORIAL_HAND_TEMPLATE), self._tutorial_template(TUTORIAL_DIALOG_TEMPLATE))
+        if self._tutorial_hand_seen is None:
+            self._tutorial_hand_seen = Timer(0.5, count=1)
+            self._tutorial_dialog_interval = Timer(1.5, count=2)
+        hand_template, dialog_template = self._tutorial_templates
+
+        target = tutorial_target(self.image, hand_template, dialog_template)
+        if target is None:
+            self._tutorial_hand_seen.clear()
+            return False
+        kind, point = target
+        if kind == 'hand':
+            # Seen once, it may be a frame of something else
+            if not self._tutorial_hand_seen.started():
+                self._tutorial_hand_seen.start()
+                return True
+            if not self._tutorial_hand_seen.reached():
+                return True
+            if is_same_step(point, self._tutorial_step):
+                # The tap before did not take
+                self._tutorial_taps += 1
+            else:
+                self._tutorial_step = point
+                self._tutorial_taps = 0
+            dx, dy = TUTORIAL_TAP_OFFSETS[self._tutorial_taps % len(TUTORIAL_TAP_OFFSETS)]
+            x, y = point[0] + dx, point[1] + dy
+            area = (x - 5, y - 5, x + 5, y + 5)
+            # Named by the step, a step tapped all around many times without the tutorial going on is stuck
+            sx, sy = self._tutorial_step
+            button = Button(area=area, color=(), button=area, name=f'TUTORIAL_HAND_{sx}_{sy}')
+            logger.info(f'Tutorial points at {point}, tap {(x, y)}')
+            self.click(button)
+            self._tutorial_hand_seen.clear()
+            return True
+
+        self._tutorial_hand_seen.clear()
+        if self._tutorial_dialog_interval.reached():
+            x, y = point
+            area = (x - 5, y - 5, x + 5, y + 5)
+            logger.info('Tutorial dialog, tap to go on')
+            self.click(Button(area=area, color=(), button=area, name='TUTORIAL_DIALOG'))
+            self._tutorial_dialog_interval.reset()
+        return True
+
+    def handle_tutorial(self):
+        """
+        Follow a tutorial through, if one is on screen. Whatever a task is waiting for, a tutorial would hide it
+        and take no other tap.
+
+        Returns:
+            bool: If a tutorial was followed
+        """
+        if self._tutorial_check is None:
+            self._tutorial_check = Timer(TUTORIAL_CHECK_INTERVAL)
+        if not self._tutorial_check.reached():
+            return False
+        self._tutorial_check.reset()
+        if not self.tutorial_follow():
+            return False
+
+        logger.info('Tutorial on screen, following it')
+        gone = Timer(TUTORIAL_GONE, count=3).start()
+        while 1:
+            self.stuck_record_check()
+            super().screenshot()
+            if self.tutorial_follow():
+                gone.reset()
+            elif gone.reached():
+                break
+        logger.info('Tutorial gone')
+        return True
 
     def frozen_record_update(self):
         """

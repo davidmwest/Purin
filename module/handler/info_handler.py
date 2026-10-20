@@ -6,8 +6,6 @@ from module.base.timer import Timer
 from module.base.utils import *
 from module.exception import GameLoggedOutError, GameNotRunningError
 from module.handler.assets import *
-from module.handler.tutorial import TUTORIAL_DIALOG_TEMPLATE, TUTORIAL_HAND_TEMPLATE, TUTORIAL_TAP_OFFSETS, \
-    is_same_step, tutorial_target
 from module.logger import logger
 from module.os_handler.assets import CLICK_SAFE_AREA as OS_CLICK_SAFE_AREA
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_SINGLE_WHITE
@@ -33,71 +31,6 @@ class InfoHandler(ModuleBase):
     """
     Class to handle all kinds of message.
     """
-    """
-    Tutorial
-    """
-    _tutorial_hand_seen = None
-    _tutorial_dialog_interval = None
-    _tutorial_templates = None
-    # Where the hand pointed at the last tap, and taps at that step
-    _tutorial_step = None
-    _tutorial_taps = 0
-
-    @staticmethod
-    def _tutorial_template(file):
-        image = load_image(file)
-        return image if image.ndim == 2 else image[:, :, 0]
-
-    def handle_tutorial(self):
-        """
-        Tap where the hand of a tutorial points, once it has been there a moment, or the dialog of a step
-        without a hand. A tutorial takes no other tap, following it is the only way on.
-
-        Returns:
-            bool: If handled
-        """
-        if self._tutorial_templates is None:
-            InfoHandler._tutorial_templates = (
-                self._tutorial_template(TUTORIAL_HAND_TEMPLATE), self._tutorial_template(TUTORIAL_DIALOG_TEMPLATE))
-        if self._tutorial_hand_seen is None:
-            self._tutorial_hand_seen = Timer(0.5, count=1)
-            self._tutorial_dialog_interval = Timer(1.5, count=2)
-        hand_template, dialog_template = self._tutorial_templates
-
-        target = tutorial_target(self.device.image, hand_template, dialog_template)
-        kind, point = target if target is not None else (None, None)
-        if kind == 'hand':
-            if not self._tutorial_hand_seen.started():
-                self._tutorial_hand_seen.start()
-                return False
-            if not self._tutorial_hand_seen.reached():
-                return False
-            if is_same_step(point, self._tutorial_step):
-                # The tap before did not take
-                self._tutorial_taps += 1
-            else:
-                self._tutorial_step = point
-                self._tutorial_taps = 0
-            dx, dy = TUTORIAL_TAP_OFFSETS[self._tutorial_taps % len(TUTORIAL_TAP_OFFSETS)]
-            x, y = point[0] + dx, point[1] + dy
-            area = (x - 5, y - 5, x + 5, y + 5)
-            # Named by the step, a step tapped all around many times without the tutorial going on is stuck
-            sx, sy = self._tutorial_step
-            button = Button(area=area, color=(), button=area, name=f'TUTORIAL_HAND_{sx}_{sy}')
-            logger.info(f'Tutorial points at {point}, tap {(x, y)}')
-            self.device.click(button)
-            self._tutorial_hand_seen.clear()
-            return True
-        self._tutorial_hand_seen.clear()
-
-        if kind == 'dialog' and self._tutorial_dialog_interval.reached():
-            x, y = point
-            area = (x - 5, y - 5, x + 5, y + 5)
-            logger.info('Tutorial dialog, tap to go on')
-            self.device.click(Button(area=area, color=(), button=area, name='TUTORIAL_DIALOG'))
-            self._tutorial_dialog_interval.reset()
-            return True
-        return False
     """
     Info bar
     """
