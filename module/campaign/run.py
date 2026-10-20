@@ -8,7 +8,7 @@ from module.campaign.campaign_ui import MODE_SWITCH_1
 from module.campaign.stage import StageNotFound, load_stage, stage_names
 from module.config.config import AzurLaneConfig
 from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
-from module.handler.fast_forward import to_map_file_name
+from module.handler.fast_forward import to_map_file_name, to_map_input_name
 from module.logger import logger
 from module.notify import handle_notify
 from module.ui.page import page_campaign
@@ -348,6 +348,45 @@ class CampaignRun(CampaignEvent):
 
         return self.run_count > 0 and self.campaign.map_is_auto_search
 
+    def handle_stage_retreat(self):
+        """
+        With StageIncrease, a battle lost sends the task back to the stage before, to level the fleet for
+        StopCondition.StageRetreat runs, then it tries the stage again.
+
+        Returns:
+            bool: If the stage to run changed, the task ends and runs it next time.
+        """
+        if not self.config.StopCondition_StageIncrease or self.config.StopCondition_StageRetreat <= 0:
+            return False
+        current = to_map_input_name(self.config.Campaign_Name)
+        if self.campaign.run_lost:
+            before = self.campaign.campaign_name_decrease(current)
+            if before == current:
+                logger.info(f'Battle lost on {current}, no stage before it, try again')
+                return False
+            # Lost again on a stage to level on, keep the stage to come back to
+            target = self.config.StopCondition_RetreatFrom if self.config.StopCondition_RetreatRemain > 0 else current
+            runs = self.config.StopCondition_StageRetreat
+            logger.hr('Stage retreat', level=2)
+            logger.info(f'Battle lost on {current}, run {before} {runs} times to level the fleet, then try {target}')
+            self.config.Campaign_Name = before
+            self.config.StopCondition_RetreatFrom = target
+            self.config.StopCondition_RetreatRemain = runs
+            return True
+        if self.config.StopCondition_RetreatRemain > 0:
+            remain = self.config.StopCondition_RetreatRemain - 1
+            self.config.StopCondition_RetreatRemain = remain
+            if remain > 0:
+                logger.info(f'{remain} runs of {current} left before trying {self.config.StopCondition_RetreatFrom}')
+                return False
+            target = self.config.StopCondition_RetreatFrom
+            logger.hr('Stage retreat end', level=2)
+            logger.info(f'Fleet levelled on {current}, try {target} again')
+            self.config.Campaign_Name = target
+            self.config.StopCondition_RetreatFrom = ''
+            return True
+        return False
+
     def handle_commission_notice(self):
         """
         Check commission notice.
@@ -444,6 +483,9 @@ class CampaignRun(CampaignEvent):
             self.run_count += 1
             if self.config.StopCondition_RunCount:
                 self.config.StopCondition_RunCount -= 1
+            # A stage too hard for the fleet for now
+            if self.handle_stage_retreat():
+                break
             # End
             if self.triggered_stop_condition(oil_check=False):
                 break

@@ -961,6 +961,18 @@
       "name": "Enable Continuous Clear",
       "help": "Suited for 100% Clear, requires sufficient fleet strength and satisfying level attribute restrictions for every level involved\n1-1 to 15-4, A1 to A3, B1 to B3, C1 to C3, D1 to D3, T1 to T6, SP1 to SP4"
     },
+    "StageRetreat": {
+      "name": "Retreat after a battle lost",
+      "help": "With stage increase, a battle lost sends the task to the stage before for this many runs, to level the fleet, then it tries the stage again. 0 to try again at once"
+    },
+    "RetreatFrom": {
+      "name": "Stage to try again",
+      "help": "Set by the retreat, the stage that was lost"
+    },
+    "RetreatRemain": {
+      "name": "Runs left before trying again",
+      "help": "Set by the retreat"
+    },
     "GetNewShip": {
       "name": "New Ship Get",
       "help": "Stop current task if detected new ship has been acquired"

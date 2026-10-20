@@ -103,6 +103,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -189,6 +192,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -275,6 +281,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -385,6 +394,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -472,6 +484,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -558,6 +573,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -648,6 +666,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -685,6 +706,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -733,6 +757,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -796,6 +823,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -886,6 +916,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -976,6 +1009,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -1066,6 +1102,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -1156,6 +1195,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -1242,6 +1284,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -1331,6 +1376,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },
@@ -1379,6 +1427,9 @@
       "RunCount": 0,
       "MapAchievement": "non_stop",
       "StageIncrease": false,
+      "StageRetreat": 0,
+      "RetreatFrom": null,
+      "RetreatRemain": 0,
       "GetNewShip": false,
       "ReachLevel": 0
     },

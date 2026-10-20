@@ -961,6 +961,18 @@
       "name": "StopCondition.StageIncrease.name",
       "help": "StopCondition.StageIncrease.help"
     },
+    "StageRetreat": {
+      "name": "敗北後の後退",
+      "help": "ステージ進行が有効なとき、戦闘に敗北すると前のステージをこの回数周回して艦隊を育て、その後同じステージに再挑戦します。0 ですぐに再挑戦"
+    },
+    "RetreatFrom": {
+      "name": "再挑戦するステージ",
+      "help": "後退で設定される、敗北したステージ"
+    },
+    "RetreatRemain": {
+      "name": "再挑戦までの残り回数",
+      "help": "後退で設定されます"
+    },
     "GetNewShip": {
       "name": "StopCondition.GetNewShip.name",
       "help": "StopCondition.GetNewShip.help"

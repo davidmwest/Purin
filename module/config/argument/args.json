@@ -538,6 +538,20 @@
         "type": "checkbox",
         "value": false
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false
@@ -995,6 +1009,20 @@
         "type": "checkbox",
         "value": false
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false
@@ -1451,6 +1479,20 @@
       "StageIncrease": {
         "type": "checkbox",
         "value": false
+      },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
       },
       "GetNewShip": {
         "type": "checkbox",
@@ -2064,6 +2106,20 @@
         "value": false,
         "display": "hide"
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false,
@@ -2573,6 +2629,20 @@
         "type": "checkbox",
         "value": false
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false
@@ -3078,6 +3148,20 @@
         "type": "checkbox",
         "value": false
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false
@@ -3574,6 +3658,20 @@
         "value": false,
         "display": "hide"
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false,
@@ -3742,6 +3840,20 @@
       "StageIncrease": {
         "type": "checkbox",
         "value": false,
+        "display": "hide"
+      },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
         "display": "hide"
       },
       "GetNewShip": {
@@ -3991,6 +4103,20 @@
       "StageIncrease": {
         "type": "checkbox",
         "value": false,
+        "display": "hide"
+      },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
         "display": "hide"
       },
       "GetNewShip": {
@@ -4516,6 +4642,20 @@
         "type": "checkbox",
         "value": false
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false
@@ -5034,6 +5174,20 @@
       "StageIncrease": {
         "type": "checkbox",
         "value": false,
+        "display": "hide"
+      },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
         "display": "hide"
       },
       "GetNewShip": {
@@ -5558,6 +5712,20 @@
         "value": false,
         "display": "hide"
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false,
@@ -6078,6 +6246,20 @@
       "StageIncrease": {
         "type": "checkbox",
         "value": false,
+        "display": "hide"
+      },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
         "display": "hide"
       },
       "GetNewShip": {
@@ -6602,6 +6784,20 @@
         "value": false,
         "display": "hide"
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false,
@@ -7114,6 +7310,20 @@
         "value": false,
         "display": "hide"
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false,
@@ -7604,6 +7814,20 @@
         "value": false,
         "display": "hide"
       },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
       "GetNewShip": {
         "type": "checkbox",
         "value": false,
@@ -7849,6 +8073,20 @@
       "StageIncrease": {
         "type": "checkbox",
         "value": false,
+        "display": "hide"
+      },
+      "StageRetreat": {
+        "type": "input",
+        "value": 0
+      },
+      "RetreatFrom": {
+        "type": "input",
+        "value": "",
+        "display": "hide"
+      },
+      "RetreatRemain": {
+        "type": "input",
+        "value": 0,
         "display": "hide"
       },
       "GetNewShip": {

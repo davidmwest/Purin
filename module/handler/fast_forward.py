@@ -421,11 +421,34 @@ class FastForwardHandler(AutoSearchHandler):
 
         return name
 
+    def campaign_name_decrease(self, name):
+        """
+        Decrease name to its previous stage.
+
+        Args:
+            name (str): Such as `6-1`, `a1`, `campaign_6_1`
+
+        Returns:
+            str: Name of the previous stage in upper case, or origin name if it is the first one.
+        """
+        name = to_map_input_name(name)
+        for increase in self.STAGE_INCREASE:
+            increase = [i.strip(' \t\r\n') for i in increase.split('>')]
+            if name in increase:
+                index = increase.index(name)
+                if index > 0:
+                    return increase[index - 1]
+                return name
+        return name
+
     def triggered_map_stop(self):
         """
         Returns:
             bool:
         """
+        # Runs of the stage before the one lost, to level the fleet
+        if self.config.StopCondition_RetreatRemain > 0:
+            return False
 
         if self.config.StopCondition_MapAchievement == '100_percent_clear':
             if self.map_is_100_percent_clear:
