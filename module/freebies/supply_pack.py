@@ -129,11 +129,14 @@ class SupplyPack_250814(SupplyPack):
             out: page_supply_pack, supply pack tab
         """
         logger.info('Goto supply pack')
+        # The check is the tab "Akashi Recommends"
+        similarity = self.text_similarity
         for _ in self.loop():
 
-            if self.match_template_color(page_supply_pack.check_button, offset=(20, 20)):
+            if self.match_template_color(page_supply_pack.check_button, offset=(20, 20), similarity=similarity):
                 logger.info('At supply pack')
                 break
 
-            elif self.appear_then_click(page_supply_pack.check_button, offset=(20, 20), interval=3):
+            elif self.appear_then_click(page_supply_pack.check_button, offset=(20, 20), interval=3,
+                                        similarity=similarity):
                 continue

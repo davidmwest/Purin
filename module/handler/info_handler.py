@@ -90,14 +90,11 @@ class InfoHandler(ModuleBase):
     Popup info
     """
     _popup_offset = (3, 30)
-    # On an emulator above 1280x720, the screenshot scaled down blurs the thin letters of white popups:
-    # POPUP_CONFIRM_WHITE scores 0.80 at 2560x1440. Its blue has to be right too at this similarity.
-    POPUP_WHITE_SCALED_SIMILARITY = 0.75
 
     def appear_popup_white(self, button, offset, interval):
         """
         Args:
-            button (Button): A button of white popups
+            button (Button): A button of white popups, its letters on its blue
             offset:
             interval:
 
@@ -106,9 +103,11 @@ class InfoHandler(ModuleBase):
         """
         if self.appear(button, offset=offset, interval=interval):
             return True
-        if not button.appear_on(self.device.image):
+        # The letters scaled down from a larger screen, see text_similarity. The blue has to be right too.
+        similarity = self.text_similarity
+        if similarity >= 0.85 or not button.appear_on(self.device.image):
             return False
-        return self.appear(button, offset=offset, interval=interval, similarity=self.POPUP_WHITE_SCALED_SIMILARITY)
+        return self.appear(button, offset=offset, interval=interval, similarity=similarity)
 
     def handle_popup_confirm(self, name='', offset=None, interval=2):
         if offset is None:

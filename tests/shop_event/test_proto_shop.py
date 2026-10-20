@@ -83,7 +83,9 @@ def test_buy_popup_is_confirmed():
     Its buttons sit a few pixels aside of the other popups.
     """
     shop = proto_shop()
-    shop.device = SimpleNamespace(image=load('proto_buy_popup.png'), click=Mock(), stuck_record_add=Mock())
+    # A screenshot at 1280x720
+    shop.device = SimpleNamespace(image=load('proto_buy_popup.png'), click=Mock(), stuck_record_add=Mock(),
+                                  display_scale=1.0)
     shop.interval_timer = {}
 
     assert not ProtoShop_250814.handle_popup_confirm(shop, 'DEFAULT_OFFSET')

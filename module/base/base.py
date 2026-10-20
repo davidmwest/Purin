@@ -209,6 +209,21 @@ class ModuleBase:
                 self.device.dump_hierarchy()
             yield self.device.image, self.device.hierarchy
 
+    # The game draws letters at the resolution of the emulator. Scaled down from above 1280x720, they are not
+    # quite those of the assets, cut at 1280x720: at 2560x1440, the tab "Akashi Recommends" of the shop scores
+    # 0.78, "Confirm" of white popups 0.80. Shapes without letters score as usual.
+    SCALED_TEXT_SIMILARITY = 0.75
+
+    @property
+    def text_similarity(self):
+        """
+        Returns:
+            float: Similarity for a template of letters
+        """
+        if self.device.display_scale > 1:
+            return self.SCALED_TEXT_SIMILARITY
+        return 0.85
+
     def appear(self, button, offset=0, interval=0, similarity=0.85, threshold=10):
         """
         Args:
