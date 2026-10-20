@@ -1,0 +1,55 @@
+import os
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import cv2
+import numpy as np
+import pytest
+
+import module.config.server as server
+from module.combat.combat import Combat
+
+DATA = os.path.join(os.path.dirname(__file__), 'data')
+
+
+@pytest.fixture(autouse=True)
+def en():
+    previous = server.server
+    server.set_server('en')
+    yield
+    server.set_server(previous)
+
+
+def lost_battle():
+    """
+    EXP info of a battle lost, "ANNIHILATED D", of the EN client at 1280x720.
+    Only the rank letter is kept, the rest is black.
+    """
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    crop = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'exp_info_d.png')), cv2.COLOR_BGR2RGB)
+    image[30:140, 300:420] = crop
+    return image
+
+
+def make_combat(image):
+    combat = object.__new__(Combat)
+    combat.device = SimpleNamespace(image=image, click=Mock(), sleep=Mock(), stuck_record_add=Mock())
+    combat.interval_timer = {}
+    combat.is_combat_executing = lambda: False
+    return combat
+
+
+def test_exp_info_of_a_battle_lost_is_closed():
+    # It used to wait there forever
+    combat = make_combat(lost_battle())
+
+    assert combat.handle_exp_info() is True
+
+    assert combat.device.click.call_args[0][0].name == 'EXP_INFO_D'
+
+
+def test_nothing_to_close_without_exp_info():
+    combat = make_combat(np.zeros((720, 1280, 3), dtype=np.uint8))
+
+    assert combat.handle_exp_info() is False
+    combat.device.click.assert_not_called()
