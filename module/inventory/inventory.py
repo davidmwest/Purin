@@ -12,7 +12,7 @@ from module.base.button import Button
 from module.base.timer import Timer
 from module.base.utils import crop, load_image
 from module.equipment.assets import EQUIPMENT_OPEN
-from module.inventory.info import InfoReader
+from module.inventory.info import InfoReader, NAME_WINDOW, NameScroll
 from module.logger import logger
 from module.ocr.ocr import DigitCounter
 from module.retire.assets import DOCK_AMOUNT, DOCK_CHECK, SHIP_DETAIL_CHECK
@@ -54,6 +54,8 @@ DRAG_X = 640
 DRAG_SPEED = 380
 # Docks are not larger than this
 DOCK_LIMIT = 5000
+# Ships read between two saves of a run not done yet
+CHECKPOINT = 50
 
 # Still parts of the Info tab: gear, power, level and stats.
 # Not the name, which META ships animate, nor the rest of the row of the level, whose "Awakening" and
@@ -71,6 +73,8 @@ SIGNATURE_PIXEL_DIFF = 60
 SIGNATURE_STILL = 0.001
 # Seconds on a detail page without the Info tab before opening it again
 INFO_TAB_LOST = 3
+# Seconds for a long name to scroll to its end
+NAME_SCROLL_TIMEOUT = 12
 
 
 def signature(image):
@@ -196,21 +200,35 @@ class DockReader:
         return out
 
 
-def filepath_inventory(config_name):
-    # Not ./config/<config name>.<name>.json, the GUI would take it as the config of a mod
-    return f'./config/inventory/{config_name}.json'
+def filepath_inventory(config_name, partial=False):
+    """
+    Args:
+        config_name (str):
+        partial (bool): The file of a run that did not reach the end of the dock
+
+    Returns:
+        str: Not ./config/<config name>.<name>.json, the GUI would take it as the config of a mod
+    """
+    name = f'{config_name}.partial' if partial else config_name
+    return f'./config/inventory/{name}.json'
 
 
-def save_inventory(config_name, data):
+def save_inventory(config_name, data, partial=False):
     """
-    Write the inventory at once, a run ended halfway leaves the previous one as it was
+    Write the inventory at once. A run that did not reach the end of the dock goes to <config name>.partial.json
+    and leaves the last whole one as it was.
     """
-    file = filepath_inventory(config_name)
+    file = filepath_inventory(config_name, partial=partial)
     os.makedirs(os.path.dirname(file), exist_ok=True)
     tmp = f'{file}.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1, ensure_ascii=False)
     os.replace(tmp, file)
+    if not partial:
+        try:
+            os.remove(filepath_inventory(config_name, partial=True))
+        except FileNotFoundError:
+            pass
     logger.info(f'Inventory saved: {file}')
 
 
@@ -257,9 +275,13 @@ class Inventory(Dock):
             lost_timer.clear()
         return False
 
-    def inventory_wait_info(self, skip_first_screenshot=True):
+    def inventory_wait_info(self, scroll, skip_first_screenshot=True):
         """
         Wait until the Info tab is drawn and stays still.
+
+        Args:
+            scroll (NameScroll): Frames of the name, added to
+            skip_first_screenshot (bool):
 
         Returns:
             bool: If drawn, False on timeout
@@ -283,10 +305,31 @@ class Inventory(Dock):
             if not self.inventory_info_shown(lost):
                 previous = None
                 continue
+            scroll.add(crop(self.device.image, NAME_WINDOW))
             current = signature(self.device.image)
             if previous is not None and signature_still(previous, current):
                 return True
             previous = current
+
+    def inventory_name_scroll(self, scroll):
+        """
+        A long name scrolls in its window, take frames until it is known in full.
+
+        Args:
+            scroll (NameScroll): Frames of the name, added to
+
+        Pages:
+            in: SHIP_DETAIL_CHECK
+        """
+        timeout = Timer(NAME_SCROLL_TIMEOUT, count=NAME_SCROLL_TIMEOUT * 2).start()
+        while not scroll.done:
+            if timeout.reached():
+                logger.warning('Name did not scroll to its end')
+                return
+            self.device.screenshot()
+            if not self.appear(SHIP_DETAIL_CHECK, offset=(20, 20)):
+                return
+            scroll.add(crop(self.device.image, NAME_WINDOW))
 
     def inventory_open_card(self, card):
         """
@@ -296,8 +339,8 @@ class Inventory(Dock):
             card (DockCard):
 
         Returns:
-            tuple[np.ndarray, int]: Screenshot of the Info tab and the tabs of the page,
-                or None if the page could not be taken
+            tuple[np.ndarray, NameScroll, int]: Screenshot of the Info tab, the name put together from its frames,
+                and the tabs of the page, or None if the page could not be taken
 
         Pages:
             in: page_dock
@@ -321,10 +364,18 @@ class Inventory(Dock):
                 click_timer.reset()
 
         taken = None
-        # The power counts up when the page arrives
-        self.device.sleep(0.6)
-        if self.inventory_wait_info(skip_first_screenshot=False):
-            taken = self.device.image, self._ship_side_navbar.get_total(main=self)
+        # A long name starts to scroll a moment after the page arrives
+        scroll = NameScroll()
+        scroll.add(crop(self.device.image, NAME_WINDOW))
+        # The power counts up when the page arrives, take frames of the name meanwhile
+        arrive = Timer(0.6).start()
+        while not arrive.reached():
+            self.device.screenshot()
+            scroll.add(crop(self.device.image, NAME_WINDOW))
+        if self.inventory_wait_info(scroll, skip_first_screenshot=False):
+            image, tabs = self.device.image, self._ship_side_navbar.get_total(main=self)
+            self.inventory_name_scroll(scroll)
+            taken = image, scroll, tabs
         self.device.click(BACK_ARROW)
         if not self.inventory_back_to_dock():
             self.ui_ensure(page_dock)
@@ -395,12 +446,15 @@ class Inventory(Dock):
         distance = int(min(max(distance, 20), LIST_BOTTOM - LIST_TOP - 120))
         start_y = LIST_BOTTOM - 60
         duration = max(distance / DRAG_SPEED, 0.5)
+        # Drags follow one another through the ships not locked, that are not opened
+        self.device.click_record_clear()
         self.device.swipe((DRAG_X, start_y), (DRAG_X, start_y - distance), duration=(duration, duration + 0.05),
                           name='INVENTORY_DRAG')
         # The list settles
         self.device.sleep(0.8)
 
     def inventory_drag_back(self):
+        self.device.click_record_clear()
         self.device.swipe((DRAG_X, LIST_TOP + 80), (DRAG_X, LIST_TOP + 80 + ROW_DELTA),
                           duration=(0.8, 0.85), name='INVENTORY_DRAG_BACK')
         self.device.sleep(0.8)
@@ -413,6 +467,7 @@ class Inventory(Dock):
             in: page_dock
         """
         for _ in range(3):
+            self.device.click_record_clear()
             self.device.swipe((1243, 400), (1243, 60), duration=(0.5, 0.55), name='INVENTORY_SCROLL_TOP')
             self.device.sleep(1)
             self.device.screenshot()
@@ -454,50 +509,63 @@ class Inventory(Dock):
         last = None
         lost = 0
         end = 'dock'
-        while rows_done * 7 < DOCK_LIMIT:
-            self.device.screenshot()
-            image = self.device.image
-            rows = dock_reader.rows(image)
-            if last is not None:
-                last_top = find_row(image, last)
-                if last_top is None:
-                    # Dragged too far, the last row read is above the screen
+        checkpoint = CHECKPOINT
+        try:
+            while rows_done * 7 < DOCK_LIMIT:
+                self.device.screenshot()
+                image = self.device.image
+                rows = dock_reader.rows(image)
+                if last is not None:
+                    last_top = find_row(image, last)
+                    if last_top is None:
+                        # Dragged too far, the last row read is above the screen
+                        lost += 1
+                        if lost > 3:
+                            logger.warning('Last row read is not found, stop')
+                            end = 'lost'
+                            break
+                        logger.warning('Last row read is not on the screen, drag back')
+                        self.inventory_drag_back()
+                        continue
+                    rows = [row for row in rows if row.top > last_top + ROW_DELTA // 2]
+                if not rows:
+                    # The end of the dock, or a drag that did nothing
                     lost += 1
-                    if lost > 3:
-                        logger.warning('Last row read is not found, stop')
-                        end = 'lost'
+                    if seen >= amount or lost > 3:
                         break
-                    logger.warning('Last row read is not on the screen, drag back')
-                    self.inventory_drag_back()
+                    self.inventory_drag(ROW_DELTA * 2)
                     continue
-                rows = [row for row in rows if row.top > last_top + ROW_DELTA // 2]
-            if not rows:
-                # The end of the dock, or a drag that did nothing
-                lost += 1
-                if seen >= amount or lost > 3:
-                    break
-                self.inventory_drag(ROW_DELTA * 2)
-                continue
-            lost = 0
+                lost = 0
 
-            for row in rows:
-                rows_done += 1
-                for card in row.cards:
-                    seen += 1
-                    if not card.locked:
-                        continue
-                    self.device.stuck_record_clear()
-                    taken = self.inventory_open_card(card)
-                    if taken is None:
-                        unread += 1
-                        continue
-                    image, tabs = taken
-                    index = (rows_done - 1) * 7 + card.column + 1
-                    reading.append((index, tabs, pool.submit(reader.read, image)))
-                    unread += self.inventory_collect(reading, ships, amount)
-                last = row.signature
-            # The last row read up below the bar of the dock, with room for a drag that goes a bit further
-            self.inventory_drag(rows[-1].top - ROW_AFTER_DRAG)
+                for row in rows:
+                    rows_done += 1
+                    for card in row.cards:
+                        seen += 1
+                        if not card.locked:
+                            continue
+                        self.device.stuck_record_clear()
+                        taken = self.inventory_open_card(card)
+                        if taken is None:
+                            unread += 1
+                            continue
+                        image, name, tabs = taken
+                        index = (rows_done - 1) * 7 + card.column + 1
+                        reading.append((index, tabs, pool.submit(reader.read, image, name)))
+                        unread += self.inventory_collect(reading, ships, amount)
+                    last = row.signature
+                if len(ships) >= checkpoint:
+                    checkpoint += CHECKPOINT
+                    save_inventory(self.config.config_name,
+                                   self.inventory_result(start, amount, seen, 'running', unread, ships), partial=True)
+                # The last row read up below the bar of the dock, with room for a drag that goes a bit further
+                self.inventory_drag(rows[-1].top - ROW_AFTER_DRAG)
+        except Exception:
+            # Keep what was read, the next run starts again from the first ship
+            unread += self.inventory_collect(reading, ships, amount, wait=True)
+            pool.shutdown()
+            save_inventory(self.config.config_name,
+                           self.inventory_result(start, amount, seen, 'error', unread, ships), partial=True)
+            raise
 
         unread += self.inventory_collect(reading, ships, amount, wait=True)
         pool.shutdown()
@@ -505,15 +573,29 @@ class Inventory(Dock):
         if unread:
             logger.warning(f'{unread} ships could not be read')
         self.inventory_list_top()
-        complete = end == 'dock' and seen >= amount
+        return self.inventory_result(start, amount, seen, end, unread, ships)
 
+    @staticmethod
+    def inventory_result(start, amount, seen, end, unread, ships):
+        """
+        Args:
+            start (datetime): When the scan started
+            amount (int): Ships in the dock
+            seen (int): Cards gone through
+            end (str): Why the scan ended, "dock" at the end of the dock, "lost", or "running" and "error" if not
+            unread (int): Locked ships that could not be read
+            ships (list[dict]):
+
+        Returns:
+            dict: The inventory
+        """
         return {
             'time': start.isoformat(sep=' '),
             'duration': int((datetime.now() - start).total_seconds()),
             'dock_amount': amount,
             'seen': seen,
             'end': end,
-            'complete': complete and not unread,
+            'complete': end == 'dock' and seen >= amount and not unread,
             'unread': unread,
             'locked': len(ships),
             'ships': ships,
@@ -527,10 +609,11 @@ class Inventory(Dock):
         """
         data = self.inventory_scan()
         logger.info(f'Inventory: {data["locked"]} locked ships of {data["seen"]} seen, in {data["duration"]}s')
+        reached = data['end'] == 'dock' and data['seen'] >= data['dock_amount']
         if data['seen']:
-            save_inventory(self.config.config_name, data)
-        if data['complete']:
+            save_inventory(self.config.config_name, data, partial=not reached)
+        if reached:
             self.config.task_delay(success=True)
         else:
-            logger.warning('Inventory not complete, saved as it is and tried again later')
+            logger.warning('Inventory did not reach the end of the dock, saved as partial and tried again later')
             self.config.task_delay(success=False)

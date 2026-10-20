@@ -4,6 +4,7 @@ Areas are of a 1280x720 screenshot.
 """
 import os
 import re
+import time
 
 import cv2
 import numpy as np
@@ -46,6 +47,27 @@ BONUS_COLOR = (148, 255, 99)
 # Oathed ships have a pencil to rename them on the left of the name
 NAME_AREA = (220, 88, 420, 116)
 NAME_AREA_OATH = (248, 88, 420, 116)
+# The name is drawn in a window, in its middle if it fits.
+# A longer one starts at the left of the window, stays there about half a second, scrolls to the left
+# at about 13 pixels a second until its end is 5 pixels from the right of the window, stays there
+# about half a second, and starts again.
+NAME_WINDOW = (246, 88, 409, 116)
+# Columns at the edges of the window, a name with letters there is cut
+NAME_EDGE = 2
+# Empty columns at the right of the window once a long name has scrolled to its end, more than between 2 letters
+NAME_END_GAP = 4
+# Pixels a name scrolls from a frame to the next one
+NAME_SHIFT_MAX = 40
+# Two frames of a name scrolling are this similar where they overlap
+NAME_SHIFT_SIMILARITY = 0.6
+# A name back at its start is this similar to its first frame
+NAME_START_SIMILARITY = 0.8
+# Seconds a name stays still before it is taken as one that fits, longer than a long name stays at its start
+NAME_STILL_TIME = 1.5
+# Black margin around a name put together from frames, the OCR model needs some
+NAME_MARGIN = 10
+# Words of names in lower case
+NAME_PARTICLES = ['da', 'de', 'degli', 'der', 'di', 'von']
 HULL_AREA = (152, 86, 212, 118)
 HULL_COLOR = (255, 215, 80)
 HULLS = ['DD', 'CL', 'CA', 'CB', 'BB', 'BC', 'BM', 'BBV', 'CV', 'CVL', 'SS', 'SSV', 'AR', 'AE', 'IX']
@@ -172,13 +194,18 @@ def parse_hull(text):
         str: Hull type, or the text as it is if unknown
     """
     text = re.sub(r'[^A-Z0-9]', '', text.upper())
-    # The OCR model of digits reads "DD" as "22", "BC" as "3C"
-    for digit, letter in [('2', 'D'), ('3', 'B'), ('8', 'B'), ('5', 'S'), ('1', 'I'), ('0', 'O')]:
+    # The OCR model of digits reads "DD" as "22", "BC" as "3C", "AR" as "4R"
+    for digit, letter in [('2', 'D'), ('3', 'B'), ('8', 'B'), ('5', 'S'), ('1', 'I'), ('0', 'O'), ('4', 'A')]:
         text = text.replace(digit, letter)
+    # "M" of "BM" reads as "IV"
+    text = text.replace('IV', 'M')
     if text in HULLS:
         return text
     if text.startswith('I') and len(text) == 2:
         return 'IX'
+    # A "D" of "DD" missed
+    if text == 'D':
+        return 'DD'
     return text
 
 
@@ -186,7 +213,8 @@ def tidy_name(text):
     """
     The OCR of the big font of the name cuts words, like "T ige r", "Shim ak aze", "U-55 7".
     A part that starts in lower case or with a digit belongs to the word before it,
-    words of a name start in upper case, like "Dmitri Donskoi", "Ning Hai (Retrofit)".
+    words of a name start in upper case, like "Dmitri Donskoi", "Ning Hai (Retrofit)",
+    but for particles, like "Conte di Cavour", "Friedrich der Grosse".
 
     Args:
         text (str):
@@ -199,13 +227,170 @@ def tidy_name(text):
         # "II" of "Yorktown II" reads as "lI"
         if re.fullmatch(r'[lI1|]{2,3}', word):
             word = 'I' * len(word)
-        if words and (word[0].islower() or word[0].isdigit()):
+        if words and (word[0].islower() or word[0].isdigit()) and word not in NAME_PARTICLES:
             words[-1] += word
         else:
             words.append(word)
     name = ' '.join(words)
     # Leftover of a letter cut at the edge of the name box, like ".ondon (Retrofit"
-    return name.lstrip('.,\'`-_~ ')
+    name = name.lstrip('.,\'`-_~ ')
+    # "I" of submarines like "I-404" reads as "1" or "l"
+    return re.sub(r'^[1lI|]-(?=\d)', 'I-', name)
+
+
+def name_letters(window):
+    """
+    Args:
+        window (np.ndarray): NAME_WINDOW of a screenshot
+
+    Returns:
+        np.ndarray: Mask of the white letters
+    """
+    window = window.astype(np.int16)
+    return (window.min(axis=2) > 200) & (window.max(axis=2) - window.min(axis=2) < 40)
+
+
+def name_gaps(window):
+    """
+    Returns:
+        tuple[int, int]: Empty columns between the name and the left of its window, the right of its window,
+            or None if no name
+    """
+    columns = np.where(name_letters(window).any(axis=0))[0]
+    if not len(columns):
+        return None
+    return int(columns[0]), int(window.shape[1] - 1 - columns[-1])
+
+
+def name_shift(before, after):
+    """
+    Args:
+        before (np.ndarray): NAME_WINDOW of a frame
+        after (np.ndarray): NAME_WINDOW of a later frame
+
+    Returns:
+        tuple[int, float]: Pixels the name has scrolled to the left, and how similar the frames are where they overlap
+    """
+    a, b = name_letters(before), name_letters(after)
+    width = a.shape[1]
+    best = 0, 0.
+    for shift in range(0, NAME_SHIFT_MAX + 1):
+        x, y = a[:, shift:], b[:, :width - shift]
+        union = (x | y).sum()
+        if not union:
+            continue
+        similarity = (x & y).sum() / union
+        if similarity > best[1]:
+            best = shift, similarity
+    return best
+
+
+class NameScroll:
+    """
+    Puts the name of a ship together from its window in frames one after the other, from the page arriving,
+    until the name is known in full. Frames are added until done.
+    """
+
+    def __init__(self):
+        # (time, window) of the frame before
+        self.previous = None
+        # Frames added
+        self.count = 0
+        # Parts of the image of the name, from the first frame of the chain
+        self.pieces = []
+        # Time of the first frame of the chain
+        self.since = 0.
+        # If the chain began at the start of the name
+        self.start = False
+        self.moved = False
+        self.done = False
+        self.whole = False
+
+    def begin(self, window, now):
+        gaps = name_gaps(window)
+        self.pieces = [window]
+        self.since = now
+        self.moved = False
+        # A long name stays at its start a moment
+        self.start = gaps is not None and gaps[0] >= NAME_EDGE
+
+    def is_start(self, window):
+        """
+        Returns:
+            bool: If the window shows the name at its start, as the first frame of the chain
+        """
+        shift, similarity = name_shift(self.pieces[0], window)
+        return shift <= NAME_EDGE and similarity > NAME_START_SIMILARITY
+
+    def finish(self, whole, window=None):
+        if window is not None:
+            # A name that fits, the latest frame is drawn to its end
+            self.pieces = [window]
+        self.done = True
+        self.whole = whole
+
+    def add(self, window, now=None):
+        """
+        Args:
+            window (np.ndarray): NAME_WINDOW of a frame
+            now (float): Time of the frame, now if None
+        """
+        if self.done:
+            return
+        now = time.time() if now is None else now
+        self.count += 1
+        previous, self.previous = self.previous, (now, window)
+        if previous is None:
+            return
+        shift, similarity = name_shift(previous[1], window)
+        if not self.pieces:
+            # The first frame that the next one follows, earlier ones may be of the page arriving
+            if similarity >= NAME_SHIFT_SIMILARITY:
+                self.begin(previous[1], previous[0])
+                # Only the first frames of the page show the start of a long name for sure
+                self.start = self.start and self.count <= 3
+            else:
+                return
+        elif similarity < NAME_SHIFT_SIMILARITY:
+            if self.moved and self.start and self.is_start(window):
+                # The name started again, the frame before showed its end
+                self.finish(whole=True)
+            else:
+                # The page changed, the game skipped some scrolling, or the start of the name was missed
+                # and it starts again now
+                self.begin(window, now)
+            return
+
+        if shift:
+            self.moved = True
+            # Columns the window has scrolled to
+            self.pieces.append(window[:, -shift:])
+            return
+        gaps = name_gaps(window)
+        if gaps is None:
+            return
+        if self.moved:
+            if gaps[0] < NAME_EDGE and gaps[1] >= NAME_END_GAP:
+                # Stays at its end
+                self.finish(whole=self.start)
+        elif now - self.since >= NAME_STILL_TIME and gaps[0] >= NAME_EDGE and gaps[1] >= NAME_EDGE:
+            # A name that fits, a long one would have scrolled by now
+            self.finish(whole=True, window=window)
+
+    @property
+    def image(self):
+        """
+        Returns:
+            np.ndarray: Image of the name, with a black margin, or None if no frame
+        """
+        if self.pieces:
+            image = np.concatenate(self.pieces, axis=1)
+        elif self.previous is not None:
+            image = self.previous[1]
+        else:
+            return None
+        margin = np.zeros((image.shape[0], NAME_MARGIN, 3), dtype=image.dtype)
+        return np.concatenate([margin, image, margin], axis=1)
 
 
 def count_stars(image):
@@ -373,10 +558,32 @@ class InfoReader:
             stats[key] = [value, parse_bonus(next(bonuses)) if g else 0]
         return stats, armor
 
-    def read(self, image):
+    def read_name(self, image, affinity, name=None):
         """
         Args:
             image (np.ndarray): Screenshot of the Info tab
+            affinity (str):
+            name (NameScroll): The name put together from its frames, or None to read it on the screenshot
+
+        Returns:
+            tuple[str, bool]: Name, and if it is whole, None if not known
+        """
+        if name is not None and name.image is not None:
+            whole = name.whole
+            name = tidy_name(self.ocr_name.ocr([name.image], direct_ocr=True))
+            # Names start in upper case, "C" may read as "c"
+            if whole:
+                name = name[:1].upper() + name[1:]
+            return name, whole
+        if affinity == 'oath':
+            return tidy_name(self.ocr_name_oath.ocr(image)), None
+        return tidy_name(self.ocr_name.ocr(image)), None
+
+    def read(self, image, name=None):
+        """
+        Args:
+            image (np.ndarray): Screenshot of the Info tab
+            name (NameScroll): The name put together from its frames, or None to read it on the screenshot
 
         Returns:
             dict:
@@ -384,13 +591,14 @@ class InfoReader:
         hull = parse_hull(self.ocr_hull.ocr(image))
         stats, armor = self.read_stats(image, hull)
         affinity = self.read_affinity(image)
-        name = self.ocr_name_oath.ocr(image) if affinity == 'oath' else self.ocr_name.ocr(image)
+        name, whole = self.read_name(image, affinity, name)
         exp, exp_next = parse_exp(self.ocr_exp.ocr(image))
         gear = [parse_trailing_number(text, maximum=13) for text in self.ocr_gear.ocr(image)]
         skills = [parse_trailing_number(text, maximum=10) for text in self.ocr_skills.ocr(image)]
 
         return {
-            'name': tidy_name(name),
+            'name': name,
+            'name_whole': whole,
             'hull': hull,
             'stars': count_stars(image),
             'affinity': affinity,

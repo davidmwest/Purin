@@ -1,5 +1,6 @@
 import json
 import os
+from concurrent.futures import Future
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -8,6 +9,7 @@ import numpy as np
 import pytest
 
 import module.config.server as server
+from module.exception import GameTooManyClickError
 from module.inventory import inventory as inventory_module
 from module.inventory.inventory import DockCard, DockReader, DockRow, Inventory, LIST_TOP, ROW_DELTA, \
     ROW_TOP_MAX, find_row, save_inventory, signature, signature_still
@@ -140,17 +142,39 @@ class FakeDock:
         index = (card.top + self.offset - self.first_top) // ROW_DELTA
         self.opened.append((index, card.column))
         # The "screenshot" of the page is the card it is of
-        return (index, card.column), 4
+        return (index, card.column), None, 4
 
 
 class FakeReader:
-    def read(self, image):
+    def read(self, image, name=None):
         index, column = image
         return {'name': f'{index}-{column}', 'hull': 'DD', 'level': 100, 'power': 4000, 'stars': 5,
                 'affinity': 'love'}
 
 
+class SyncPool:
+    """
+    Does the OCR at once, tests do not depend on when a thread runs
+    """
+
+    def __init__(self, max_workers=1):
+        pass
+
+    @staticmethod
+    def submit(func, *args, **kwargs):
+        future = Future()
+        try:
+            future.set_result(func(*args, **kwargs))
+        except Exception as e:
+            future.set_exception(e)
+        return future
+
+    def shutdown(self, wait=True):
+        pass
+
+
 def make_inventory(monkeypatch, dock):
+    monkeypatch.setattr(inventory_module, 'ThreadPoolExecutor', SyncPool)
     monkeypatch.setattr(inventory_module, 'DockReader', lambda: SimpleNamespace(rows=lambda image: dock.screen_rows()))
     monkeypatch.setattr(inventory_module, 'InfoReader', FakeReader)
     monkeypatch.setattr(inventory_module, 'find_row', lambda image, index: dock.find(index))
@@ -250,10 +274,10 @@ def test_ship_whose_ocr_fails_is_counted(monkeypatch):
     inv = make_inventory(monkeypatch, dock)
     read = FakeReader.read
 
-    def fail_once(self, image):
+    def fail_once(self, image, name=None):
         if image == (0, 3):
             raise ValueError('OCR failed')
-        return read(self, image)
+        return read(self, image, name)
 
     monkeypatch.setattr(FakeReader, 'read', fail_once)
 
@@ -261,3 +285,65 @@ def test_ship_whose_ocr_fails_is_counted(monkeypatch):
 
     assert data['unread'] == 1
     assert (0, 3) in dock.opened and '0-3' not in [ship['name'] for ship in data['ships']]
+
+
+def test_drags_do_not_count_as_clicks_on_a_button():
+    # At the end of the dock, many drags follow one another without a card opened
+    inv = object.__new__(Inventory)
+    calls = []
+    inv.device = SimpleNamespace(click_record_clear=lambda: calls.append('clear'),
+                                 swipe=lambda *args, **kwargs: calls.append('swipe'), sleep=lambda second: None)
+
+    for _ in range(20):
+        inv.inventory_drag(ROW_DELTA)
+    inv.inventory_drag_back()
+
+    assert calls == ['clear', 'swipe'] * 21
+
+
+def test_failed_scan_keeps_what_was_read(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    dock = FakeDock(dock_rows())
+    inv = make_inventory(monkeypatch, dock)
+    inv.config = SimpleNamespace(config_name='alas')
+    opened = dock.open
+
+    def open_and_fail(card):
+        if len(dock.opened) == 5:
+            raise GameTooManyClickError('Too many click for a button: INVENTORY_DRAG')
+        return opened(card)
+
+    inv.inventory_open_card = open_and_fail
+
+    with pytest.raises(GameTooManyClickError):
+        inv.inventory_scan()
+
+    folder = tmp_path / 'config' / 'inventory'
+    data = json.loads((folder / 'alas.partial.json').read_text(encoding='utf-8'))
+    assert (data['end'], data['locked'], data['complete']) == ('error', 5, False)
+    # The last whole inventory is left as it was
+    assert not (folder / 'alas.json').exists()
+
+
+def test_whole_run_replaces_the_partial_one(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(inventory_module, 'CHECKPOINT', 5)
+    dock = FakeDock(dock_rows())
+    inv = make_inventory(monkeypatch, dock)
+    inv.config = SimpleNamespace(config_name='alas', task_delay=Mock())
+    saved = []
+    save = inventory_module.save_inventory
+
+    def save_and_record(name, data, partial=False):
+        saved.append((data['end'], partial))
+        save(name, data, partial=partial)
+
+    monkeypatch.setattr(inventory_module, 'save_inventory', save_and_record)
+
+    inv.run()
+
+    # Saved while it goes, then whole
+    assert ('running', True) in saved and saved[-1] == ('dock', False)
+    folder = tmp_path / 'config' / 'inventory'
+    assert [file.name for file in folder.iterdir()] == ['alas.json']
+    inv.config.task_delay.assert_called_once_with(success=True)
