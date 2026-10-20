@@ -75,3 +75,14 @@ def test_defeat_tips_are_closed_with_their_close_button():
     x1, y1, x2, y2 = button.button
     # "Close" in the middle at the bottom
     assert 500 < x1 < x2 < 760 and 580 < y1 < y2 < 650
+
+
+def test_gray_screen_coming_in_is_not_a_battle_lost():
+    # A screen coming in, like the one of a new ship, may have the gray of the D where it is, without the D
+    image = np.full((720, 1280, 3), (199, 208, 199), dtype=np.uint8)
+    combat = make_combat(image)
+
+    assert combat.handle_exp_info() is False
+
+    combat.device.click.assert_not_called()
+    assert combat.combat_lost is False

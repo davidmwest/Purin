@@ -522,15 +522,15 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         if self.appear_then_click(EXP_INFO_B):
             self.device.sleep((0.25, 0.5))
             return True
-        # A battle lost, like a fleet sunk by the boss of a stage too hard for it
-        if self.appear_then_click(EXP_INFO_D):
-            self.combat_lost = True
-            self.device.sleep((0.25, 0.5))
-            return True
-        if self.appear_then_click(EXP_INFO_C):
-            self.combat_lost = True
-            self.device.sleep((0.25, 0.5))
-            return True
+        # A battle lost, like a fleet sunk by the boss of a stage too hard for it.
+        # The color of C and D is the gray of some screens coming in, like the one of a new ship,
+        # the letter has to be there too.
+        for button in [EXP_INFO_D, EXP_INFO_C]:
+            if self.appear(button) and self.appear(button, offset=(20, 20)):
+                self.device.click(button)
+                self.combat_lost = True
+                self.device.sleep((0.25, 0.5))
+                return True
 
         return False
 
