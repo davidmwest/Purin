@@ -6,6 +6,7 @@ from module.base.timer import Timer
 from module.base.utils import *
 from module.exception import GameLoggedOutError, GameNotRunningError
 from module.handler.assets import *
+from module.handler.tutorial import TUTORIAL_HAND_TEMPLATE, tutorial_hand
 from module.logger import logger
 from module.os_handler.assets import CLICK_SAFE_AREA as OS_CLICK_SAFE_AREA
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_SINGLE_WHITE
@@ -31,6 +32,44 @@ class InfoHandler(ModuleBase):
     """
     Class to handle all kinds of message.
     """
+    """
+    Tutorial
+    """
+    _tutorial_hand_seen = None
+    _tutorial_hand_template = None
+
+    def handle_tutorial(self):
+        """
+        Tap where the hand of a tutorial points, once it has been there a moment.
+        A tutorial takes no other tap, following it is the only way on.
+
+        Returns:
+            bool: If handled
+        """
+        if self._tutorial_hand_template is None:
+            template = load_image(TUTORIAL_HAND_TEMPLATE)
+            InfoHandler._tutorial_hand_template = template if template.ndim == 2 else template[:, :, 0]
+        if self._tutorial_hand_seen is None:
+            self._tutorial_hand_seen = Timer(0.5, count=1)
+
+        point = tutorial_hand(self.device.image, self._tutorial_hand_template)
+        if point is None:
+            self._tutorial_hand_seen.clear()
+            return False
+        if not self._tutorial_hand_seen.started():
+            self._tutorial_hand_seen.start()
+            return False
+        if not self._tutorial_hand_seen.reached():
+            return False
+
+        x, y = point
+        area = (x - 5, y - 5, x + 5, y + 5)
+        # Named by where it is, a step tapped many times without the tutorial going on is a step stuck
+        button = Button(area=area, color=(), button=area, name=f'TUTORIAL_HAND_{x}_{y}')
+        logger.info(f'Tutorial points at {point}')
+        self.device.click(button)
+        self._tutorial_hand_seen.clear()
+        return True
     """
     Info bar
     """
