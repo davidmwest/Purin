@@ -56,7 +56,7 @@ class SupplyPack(CampaignStatus):
                     continue
 
             # End
-            if self.appear(page_supply_pack.check_button, offset=(20, 20)) \
+            if self.appear(page_supply_pack.check_button, offset=(20, 20), similarity=self.text_similarity) \
                     and not self.appear(supply_pack, offset=(20, 20)):
                 if confirm_timer.reached():
                     break
