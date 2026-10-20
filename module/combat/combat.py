@@ -620,6 +620,9 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             # bunch of popup handlers
             if self.handle_popup_confirm('COMBAT_STATUS'):
                 continue
+            # Tips to improve the fleet, after a battle lost
+            if self.appear_then_click(DEFEAT_TIPS, offset=(20, 20), interval=2):
+                continue
             if self.handle_urgent_commission(drop=drop):
                 continue
             if self.handle_guild_popup_cancel():

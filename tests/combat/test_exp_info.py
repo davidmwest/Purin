@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import module.config.server as server
+from module.combat.assets import DEFEAT_TIPS
 from module.combat.combat import Combat
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
@@ -53,3 +54,24 @@ def test_nothing_to_close_without_exp_info():
 
     assert combat.handle_exp_info() is False
     combat.device.click.assert_not_called()
+
+
+def defeat_tips():
+    """
+    "Improve your fleet in the following ways", shown after the EXP info of a battle lost.
+    Only its banner is kept, the rest is black.
+    """
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    image[128:200, 385:892] = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'defeat_tips.png')), cv2.COLOR_BGR2RGB)
+    return image
+
+
+def test_defeat_tips_are_closed_with_their_close_button():
+    combat = make_combat(defeat_tips())
+
+    assert combat.appear_then_click(DEFEAT_TIPS, offset=(20, 20), interval=2) is True
+
+    button = combat.device.click.call_args[0][0]
+    x1, y1, x2, y2 = button.button
+    # "Close" in the middle at the bottom
+    assert 500 < x1 < x2 < 760 and 580 < y1 < y2 < 650
