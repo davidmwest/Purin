@@ -83,13 +83,15 @@ class Leveling(LevelingGear):
         self.fleet_formation_ensure()
         return slots
 
-    def leveling_execute(self, plans, slots=(), ships=(), limit=None):
+    def leveling_execute(self, plans, slots=(), ships=(), limit=None, save=None):
         """
         Args:
             plans: plan_swaps() or plan_carries()
             slots (list[Slot]): All the slots read, for the ships below PASSENGER_LEVEL in them
             ships (list[dict]): Ships of the inventory, those given gear are marked as equipped
             limit (int): Ships to come in at most, None for all
+            save (callable): Writes the inventory, before a ship is given gear: if the trip to the depot ends in an
+                error, she is not taken there again and again
 
         Returns:
             int: Ships that came in
@@ -120,12 +122,17 @@ class Leveling(LevelingGear):
                     if geared_tries >= GEAR_TRIES or gear_tried_recently(record, datetime.now()):
                         continue
                     geared_tries += 1
+                    if record is not None:
+                        record['gear_tried'] = datetime.now().strftime(TIME_FORMAT)
+                        if save is not None:
+                            save()
                     levels = self.gear_ship(target)
                     self.ui_ensure(page_fleet)
                     self.fleet_formation_ensure()
                     if levels is not None and record is not None:
                         record['gear_levels'] = levels
-                        record['gear_tried'] = datetime.now().strftime(TIME_FORMAT)
+                        if save is not None:
+                            save()
                     if levels is None or not is_geared({'gear_levels': levels}):
                         logger.info(f'{target.ship} can not be geared from storage, gear {levels}')
                         missing.add(target.character)
@@ -177,19 +184,23 @@ class Leveling(LevelingGear):
         carry_list = carry_targets(ships, data)
         mob_slots = [slot for slot in slots if slot.fleet in mob]
         other_slots = [slot for slot in slots if slot.fleet not in mob]
+
+        def save():
+            save_inventory(self.config.config_name, inventory)
+
         # The boss fleet first, ships it lets go may level in the mob fleet
         carries = plan_carries([slot for slot in slots if slot.fleet in boss], slots, carry_list, data)
-        swapped = self.leveling_execute(carries, slots, ships)
+        swapped = self.leveling_execute(carries, slots, ships, save=save)
         # Then a mob fleet with more ships below PASSENGER_LEVEL than its rows take
         over = plan_over_passengers(mob_slots, queue, carry_list, data, others=other_slots)
         if over:
-            swapped += self.leveling_execute(over, slots, ships)
+            swapped += self.leveling_execute(over, slots, ships, save=save)
             # The fleet changed, it is read again next run
         else:
             # The swaps that bring in the best ships first
             plans = plan_swaps(mob_slots, queue, data, others=other_slots)
             plans.sort(key=lambda plan: -plan[1][0].score)
-            swapped += self.leveling_execute(plans, slots, ships, limit=MOB_SWAPS)
+            swapped += self.leveling_execute(plans, slots, ships, limit=MOB_SWAPS, save=save)
         logger.info(f'Leveling: {swapped} ships came in, {changed} levels went up')
         if changed or swapped:
             save_inventory(self.config.config_name, inventory)

@@ -114,6 +114,23 @@ def test_a_ship_storage_can_not_gear_stays_out(one_passenger):
     leveling.gear_ship.assert_not_called()
 
 
+def test_gear_tried_is_written_before_the_trip_to_the_depot(one_passenger):
+    # A trip that ends in an error does not take her there again and again
+    slots = [Slot(1, 'vanguard', 0, 'Hasty', 73)]
+    isokaze = target('Isokaze')
+    isokaze.geared = False
+    ships = [{'name': 'Isokaze', 'index': 0}]
+    events = []
+    save = Mock(side_effect=lambda: events.append(('save', dict(ships[0]))))
+    leveling = leveling_with(lambda slot, ship: True,
+                             gear_ship=lambda target: events.append(('gear', dict(ships[0]))) or list(GEARED))
+
+    assert Leveling.leveling_execute(leveling, [(slots[0], [isokaze])], slots, ships, save=save) == 1
+    assert [event for event, _ in events] == ['save', 'gear', 'save']
+    assert 'gear_tried' in events[0][1] and 'gear_levels' not in events[0][1]
+    assert events[2][1]['gear_levels'] == GEARED
+
+
 def test_gear_tried_a_day_ago_is_tried_again():
     now = datetime(2026, 10, 20, 12, 0, 0)
     assert gear_tried_recently({'gear_tried': '2026-10-20 08:00:00'}, now)
