@@ -41,3 +41,17 @@ def test_no_inventory_waits_for_the_next_day(monkeypatch):
 
     leveling.config.task_delay.assert_called_once_with(server_update=True)
     leveling.ui_ensure.assert_not_called()
+
+
+def test_a_vanguard_takes_one_passenger():
+    # Hasty at 72 stays in the vanguard of fleet 1, Ping Hai at 91 makes room
+    slots = [Slot(1, 'vanguard', 0, 'Hasty', 72), Slot(1, 'vanguard', 1, 'Ping Hai Retrofit', 91),
+             Slot(1, 'main', 2, 'Kansas', 85)]
+    cooper, london = target('Cooper'), target('London (Retrofit)')
+    london.level = 118
+    plans = [(slots[1], [cooper, london]), (slots[2], [target('Gangut')])]
+    leveling = SimpleNamespace(formation_goto_fleet=Mock(), fleet_swap=Mock(return_value=True))
+
+    assert Leveling.leveling_execute(leveling, plans, slots) == 2
+    # Cooper at 70 would be a second passenger there, London comes in
+    assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['London (Retrofit)', 'Gangut']

@@ -147,13 +147,16 @@ def test_dock_filter_takes_the_rarity_asked_for():
     run.dock_filter_set.assert_called_once_with(index='dd', faction='all', rarity='ultra', extra=['can_awaken_plus'])
 
 
-@pytest.mark.parametrize('only, fleets', [
-    (False, None),
-    # Submarine fleet 1 shows on the dock as fleet 1
-    (True, [1, 2]),
+@pytest.mark.parametrize('only, order, submarine, fleets', [
+    (False, 'fleet1_mob_fleet2_boss', 1, None),
+    # The mob fleet levels, the boss fleet holds ships done. Submarine fleet 1 shows on the dock as fleet 1.
+    (True, 'fleet1_mob_fleet2_boss', 1, [1]),
+    (True, 'fleet1_mob_fleet2_boss', 2, [1, 2]),
+    (True, 'fleet1_boss_fleet2_mob', 0, [2]),
 ])
-def test_fleets_of_the_campaign(only, fleets):
-    keys = {'Main.Fleet.Fleet1': 1, 'Main.Fleet.Fleet2': 2, 'Main.Submarine.Fleet': 1}
+def test_fleets_of_the_campaign(only, order, submarine, fleets):
+    keys = {'Main.Fleet.Fleet1': 1, 'Main.Fleet.Fleet2': 2, 'Main.Fleet.FleetOrder': order,
+            'Main.Submarine.Fleet': submarine}
     awaken = SimpleNamespace(config=SimpleNamespace(
         Awaken_OnlyFleets=only, cross_get=lambda keys_, default=None: keys.get(keys_, default)))
 

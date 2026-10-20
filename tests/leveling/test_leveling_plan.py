@@ -2,7 +2,8 @@ import pytest
 
 from module.leveling.plan import (
     AWAKEN_CHIPS, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Slot, Target, awaken_cost,
-    awakenings_done, is_geared, leveling_queue, load_ship_data, name_key, plan_swaps, update_levels,
+    awakenings_done, campaign_fleets, carry_targets, is_geared, leveling_queue, load_ship_data, name_key, plan_carries,
+    plan_swaps, update_levels,
 )
 
 GEARED = [10, 10, 10, 10, 10]
@@ -300,4 +301,48 @@ def test_swaps_of_empty_unknown_and_done_slots(data):
         ((1, 0), ['Hasty', 'Cooper']),
         # A name not read stays, a ship done or not in the queue makes room
         ((1, 2), ['Hasty', 'Cooper']),
+    ]
+
+
+@pytest.mark.parametrize('fleet1, fleet2, order, fleets', [
+    (1, 2, 'fleet1_mob_fleet2_boss', ([1], [2])),
+    (1, 2, 'fleet1_all_fleet2_standby', ([1], [2])),
+    (1, 2, 'fleet1_boss_fleet2_mob', ([2], [1])),
+    (3, 0, 'fleet1_mob_fleet2_boss', ([3], [])),
+])
+def test_mob_and_boss_fleets(fleet1, fleet2, order, fleets):
+    assert campaign_fleets(fleet1, fleet2, order) == fleets
+
+
+def test_carries_are_the_most_powerful_geared_ships(data):
+    dock = [
+        ship('Eldridge (Retrofit)', 125, exp_next=0, gear=GEARED, power=6046),
+        ship('Plymouth', 125, exp_next=0, gear=GEARED, power=5780),
+        # Without gear, or below 100
+        ship('Juneau (Retrofit)', 125, exp_next=0, power=5828),
+        ship('Hasty', 72, gear=GEARED, power=3691),
+        ship('Lion', 125, exp_next=0, gear=GEARED, power=6215),
+    ]
+    carries = carry_targets(dock, data)
+
+    assert [(target.ship, target.row) for target in carries] == \
+           [('Lion', 'main'), ('Eldridge (Retrofit)', 'vanguard'), ('Plymouth', 'vanguard')]
+
+
+def test_boss_fleet_takes_carries_for_ships_below_100(data):
+    dock = [ship(name, 125, exp_next=0, gear=GEARED, power=power)
+            for name, power in [('Eldridge (Retrofit)', 6046), ('Plymouth', 5780), ('London (Retrofit)', 4554),
+                                ('Lion', 6215)]]
+    boss = slots_of(2, 'vanguard', 'London (Retrofit)', 'Cooper', 'Vampire') + slots_of(2, 'main', '', 'Hiei', 'Haruna')
+    for slot, level in zip(boss, [118, 73, 77, 0, 108, 102]):
+        slot.level = level
+    mob = slots_of(1, 'vanguard', 'Hasty', 'Plymouth', 'Ping Hai Retrofit')
+
+    plans = plan_carries(boss, boss + mob, carry_targets(dock, data), data)
+
+    # Plymouth is in fleet 1 and London in fleet 2 already, an empty slot takes a carry too
+    assert plan_names(plans) == [
+        ((2, 0), ['Lion']),
+        ((2, 1), ['Eldridge (Retrofit)']),
+        ((2, 2), ['Eldridge (Retrofit)']),
     ]

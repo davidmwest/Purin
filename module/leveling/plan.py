@@ -497,3 +497,95 @@ def plan_swaps(slots, queue, data=None):
             if better:
                 plans.append((slot, better))
     return plans
+
+
+# A ship below this level rides along in the mob fleet. Its vanguard takes one of them at most:
+# 12-4 sank two of them in the vanguard of the boss fleet, one with two ships at 91 cleared the mobs.
+PASSENGER_LEVEL = 90
+PASSENGERS = {'vanguard': 1}
+# Ships of the boss fleet are at this level at least, the boss of 12-4 is at 114
+CARRY_LEVEL = 100
+
+
+def campaign_fleets(fleet1, fleet2, order):
+    """
+    Args:
+        fleet1 (int): Main.Fleet.Fleet1
+        fleet2 (int): Main.Fleet.Fleet2, 0 for none
+        order (str): Main.Fleet.FleetOrder
+
+    Returns:
+        tuple[list[int], list[int]]: The fleet that fights the mobs, where ships level,
+            and the fleet that fights the boss, kept strong: a boss lost loses the run.
+    """
+    if not fleet2:
+        return [fleet1], []
+    if order in ('fleet1_boss_fleet2_mob', 'fleet1_standby_fleet2_all'):
+        return [fleet2], [fleet1]
+    return [fleet1], [fleet2]
+
+
+def carry_targets(ships, data=None):
+    """
+    Args:
+        ships (list[dict]): Ships of the inventory
+        data (dict[str, ShipData]):
+
+    Returns:
+        list[Target]: Ships to fight a boss, geared and at CARRY_LEVEL or above, the most powerful first
+    """
+    matcher = ShipMatcher(data if data is not None else load_ship_data())
+    best = {}
+    for ship in ships:
+        level = ship.get('level') or 0
+        if not CARRY_LEVEL <= level <= LEVEL_MAX or not is_geared(ship):
+            continue
+        match = matcher.match(ship.get('name') or '')
+        if match is None:
+            continue
+        current = best.get(match.character)
+        if current is None or (ship.get('power') or 0) > (current[0].get('power') or 0):
+            best[match.character] = (ship, match)
+
+    targets = [
+        Target(name=ship.get('name'), ship=match.name, hull=match.hull, row=HULL_ROW.get(match.hull, 'vanguard'),
+               rarity=matcher.base_rarity(match), level=ship['level'], goal=ship['level'], chips=0, arrays=0,
+               gain=0., tech=0., score=float(ship.get('power') or 0), priority=3, geared=True,
+               index=ship.get('index', -1))
+        for ship, match in best.values()
+    ]
+    targets.sort(key=lambda target: -target.score)
+    return targets
+
+
+def plan_carries(boss_slots, slots, carries, data=None):
+    """
+    The boss fleet holds ships at CARRY_LEVEL or above, a slot below it takes the most powerful ship free.
+
+    Args:
+        boss_slots (list[Slot]): Slots of the boss fleet
+        slots (list[Slot]): All the slots read, their ships are not free
+        carries (list[Target]): carry_targets()
+        data (dict[str, ShipData]):
+
+    Returns:
+        list[tuple[Slot, list[Target]]]: Slots to change, with the ships to try in them, the best first
+    """
+    matcher = ShipMatcher(data if data is not None else load_ship_data())
+    seated = set()
+    for slot in slots:
+        match = matcher.match(slot.name) if slot.name else None
+        if match is not None:
+            seated.add(match.character)
+    plans = []
+    for slot in sorted(boss_slots, key=lambda slot: (slot.fleet, slot.row != 'main', slot.index)):
+        if slot.name and slot.level >= CARRY_LEVEL:
+            continue
+        candidates = [target for target in carries if target.row == slot.row and target.character not in seated]
+        if candidates:
+            plans.append((slot, candidates))
+    return plans
+
+
+def is_passenger(level):
+    return 0 < level < PASSENGER_LEVEL

@@ -1,6 +1,7 @@
 from module.awaken.assets import *
 from module.base.timer import Timer
 from module.exception import ScriptError
+from module.leveling.plan import campaign_fleets
 from module.logger import logger
 from module.ocr.ocr import Digit
 from module.retire.assets import DOCK_CHECK, SHIP_DETAIL_CHECK
@@ -364,17 +365,19 @@ class Awaken(Dock):
     def awaken_fleets(self):
         """
         Returns:
-            list[int]: Fleets whose ships are awakened, the ones the campaign levels with Awaken_OnlyFleets.
-                None for any ship of the dock.
+            list[int]: Fleets whose ships are awakened with Awaken_OnlyFleets: the fleet of Main that fights the mobs,
+                where ships level, and its submarine fleet. None for any ship of the dock.
         """
         if not self.config.Awaken_OnlyFleets:
             return None
-        fleets = [
+        # Ships level in the fleet that fights the mobs, the boss fleet holds ships done
+        mob, _ = campaign_fleets(
             self.config.cross_get('Main.Fleet.Fleet1', default=1),
             self.config.cross_get('Main.Fleet.Fleet2', default=0),
-            # Cards of the dock show a submarine fleet like the common fleet of its number
-            self.config.cross_get('Main.Submarine.Fleet', default=0),
-        ]
+            self.config.cross_get('Main.Fleet.FleetOrder', default='fleet1_mob_fleet2_boss'),
+        )
+        # Cards of the dock show a submarine fleet like the common fleet of its number
+        fleets = mob + [self.config.cross_get('Main.Submarine.Fleet', default=0)]
         return sorted({fleet for fleet in fleets if fleet})
 
     def awaken_run(self, use_array=False, favourite=False, rarity=None):

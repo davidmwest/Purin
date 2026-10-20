@@ -168,7 +168,7 @@
     },
     "Leveling": {
       "name": "Leveling",
-      "help": "Keeps the fleets of the Main task filled with the ships to level next: the most fleet power for the fewest cognitive chips, counting the stat Fleet Technology gives at level 120 to every ship of her hull type, battleships over support ships, lower rarity first on a tie. Reads the fleets on the fleet page and takes ships with gear from the dock by name. Needs the dock read by the Inventory task"
+      "help": "Keeps the fleet of the Main task that fights the mobs filled with the ships to level next: the most fleet power for the fewest cognitive chips, counting the stat Fleet Technology gives at level 120 to every ship of her hull type, battleships over support ships, lower rarity first on a tie. Its vanguard takes one ship below level 90 at most. The boss fleet is kept strong: a ship below level 100 there is replaced by the most powerful free ship. Reads the fleets on the fleet page and takes ships with gear from the dock by name. Needs the dock read by the Inventory task"
     },
     "EnhanceShips": {
       "name": "Enhance Ships",
@@ -1883,7 +1883,7 @@
     },
     "OnlyFleets": {
       "name": "Awaken the Fleets of Main Only",
-      "help": "Only ships in the fleets of the Main task and in its submarine fleet, the ships Leveling puts there. Chips go to the ships being levelled, not to any ship waiting at a level cap"
+      "help": "Only ships in the fleet of the Main task that fights the mobs and in its submarine fleet, the ships Leveling puts there. Chips go to the ships being levelled, not to the boss fleet nor to any ship waiting at a level cap"
     },
     "ChipReserve": {
       "name": "Cognitive Chips to Keep",
