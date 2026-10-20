@@ -7,6 +7,7 @@ from uiautomator2.exceptions import XPathElementNotFoundError
 from uiautomator2.xpath import XPath, XPathSelector
 
 import module.config.server as server
+from module.base.button import Button
 from module.base.timer import Timer
 from module.base.utils import color_similarity_2d, crop
 from module.handler.assets import *
@@ -15,6 +16,15 @@ from module.map.assets import *
 from module.ui.assets import *
 from module.ui.page import page_campaign_menu
 from module.ui.ui import UI
+
+
+# English 2026-10-08 Capsule Rerun login landing page. Require both title and Home.
+_CAPSULE_TITLE = Button(area=(126, 20, 342, 47), color=(0, 0, 0),
+                        button=(1206, 18, 1250, 64),
+                        file='./assets/en/ui/CAPSULE_RERUN_HOME.png', name='CAPSULE_RERUN_HOME')
+_CAPSULE_HOME = Button(area=(1213, 26, 1245, 55), color=(0, 0, 0),
+                       button=(1206, 18, 1250, 64),
+                       file='./assets/en/ui/CAPSULE_RERUN_HOME.png', name='CAPSULE_RERUN_HOME_CHECK')
 
 
 class LoginHandler(UI):
@@ -98,6 +108,11 @@ class LoginHandler(UI):
             if self.ui_page_main_popups(get_ship=login_success):
                 self.device.logged_in = True
                 return True
+            # New rerun landing page has a different Home icon than GOTO_MAIN.
+            if server.server == 'en' and self.appear(_CAPSULE_TITLE, offset=(5, 5), interval=5) \
+                    and self.appear(_CAPSULE_HOME, offset=(5, 5)):
+                self.device.click(_CAPSULE_TITLE)
+                continue
             # Always goto page_main
             if self.appear_then_click(GOTO_MAIN, offset=(30, 30), interval=5):
                 continue
