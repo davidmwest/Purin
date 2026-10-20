@@ -1,8 +1,8 @@
 import pytest
 
 from module.leveling.plan import (
-    AWAKEN_CHIPS, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Target, awaken_cost,
-    awakenings_done, is_geared, leveling_queue, load_ship_data, name_key,
+    AWAKEN_CHIPS, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Slot, Target, awaken_cost,
+    awakenings_done, is_geared, leveling_queue, load_ship_data, name_key, plan_swaps, update_levels,
 )
 
 GEARED = [10, 10, 10, 10, 10]
@@ -215,3 +215,89 @@ def test_max_stars_of_retrofits(data):
     matcher = ShipMatcher(data)
     nevada = matcher.match('Nevada (Retrofit)')
     assert MAX_STARS[matcher.base_rarity(nevada)] == 4
+
+
+def test_levels_of_the_fleets_go_into_the_dock(data):
+    dock = [ship('Hasty', 72, stars=5), ship('Cooper', 73, stars=5)]
+    slots = [Slot(1, 'vanguard', 0, 'Hasty', 80), Slot(1, 'vanguard', 1, 'C ooper', 73), Slot(1, 'vanguard', 2, '', 0)]
+
+    assert update_levels(dock, slots, data) == 1
+    assert dock[0]['level'] == 80 and dock[0]['exp_next'] == 1
+    assert dock[1]['level'] == 73
+    # At a level cap she waits for her awakening
+    update_levels(dock, [Slot(1, 'vanguard', 0, 'Hasty', 100)], data)
+    assert dock[0]['exp_next'] == 0
+    # A level misread lower does not take her down
+    assert update_levels(dock, [Slot(1, 'vanguard', 0, 'Hasty', 7)], data) == 0
+    assert dock[0]['level'] == 100
+
+
+def queue_of(*rows):
+    """
+    Targets in queue order, (ship, row, geared)
+    """
+    return [Target(name=name, ship=name, hull='DD', row=row, rarity='Elite', level=70, goal=120, chips=1320,
+                   arrays=0, gain=0, tech=0, score=1 - index / 100, priority=1, geared=geared, index=index)
+            for index, (name, row, geared) in enumerate(rows)]
+
+
+def slots_of(fleet, row, *names):
+    return [Slot(fleet, row, index, name, 70) for index, name in enumerate(names)]
+
+
+def plan_names(plans):
+    return [((slot.fleet, slot.index), [target.ship for target in targets]) for slot, targets in plans]
+
+
+def test_swaps_keep_the_top_and_fill_the_first_fleet_first(data):
+    queue = queue_of(
+        ('London (Retrofit)', 'vanguard', True),
+        ('Hasty', 'vanguard', True),
+        ('Cooper', 'vanguard', True),
+        ('Vampire', 'vanguard', True),
+        ('Ping Hai (Retrofit)', 'vanguard', True),
+        ('Ning Hai (Retrofit)', 'vanguard', True),
+        ('Vittorio Cuniberti', 'vanguard', True),
+        ('Dmitri Donskoi', 'vanguard', True),
+        ('Nana Astar Deviluke', 'vanguard', True),
+        # Without gear she is not taken
+        ('Isokaze', 'vanguard', False),
+    )
+    slots = slots_of(1, 'vanguard', 'Dmitri Donskoi', 'Ning Hai(Retrofit', 'Ping Hai Retrofit') \
+        + slots_of(2, 'vanguard', 'London (Retrofit)', 'na Astar Deviluk', 'Vittorio Cuniberti')
+
+    assert plan_names(plan_swaps(slots, queue, data)) == [
+        ((1, 0), ['Hasty', 'Cooper', 'Vampire']),
+        ((2, 1), ['Hasty', 'Cooper', 'Vampire']),
+        ((2, 2), ['Hasty', 'Cooper', 'Vampire']),
+    ]
+
+
+def test_swaps_only_for_better_ships(data):
+    queue = queue_of(
+        ('Hasty', 'vanguard', True),
+        ('Cooper', 'vanguard', True),
+        ('Vampire', 'vanguard', True),
+        ('Dmitri Donskoi', 'vanguard', True),
+    )
+    # Cooper is 2nd, below the top of 2 slots only by Hasty; Donskoi below everyone
+    slots = slots_of(1, 'vanguard', 'Vampire', 'Dmitri Donskoi')
+    assert plan_names(plan_swaps(slots, queue, data)) == [
+        ((1, 0), ['Hasty', 'Cooper']),
+        ((1, 1), ['Hasty', 'Cooper']),
+    ]
+    # The top in the slots, nothing to do
+    slots = slots_of(1, 'vanguard', 'Cooper', 'Hasty')
+    assert plan_swaps(slots, queue, data) == []
+
+
+def test_swaps_of_empty_unknown_and_done_slots(data):
+    queue = queue_of(('Hasty', 'vanguard', True), ('Cooper', 'vanguard', True), ('Gangut', 'main', True))
+    slots = slots_of(1, 'vanguard', '', 'xq#z', 'Craven') + slots_of(1, 'main', 'Gangut', '', '')
+
+    assert plan_names(plan_swaps(slots, queue, data)) == [
+        # An empty slot takes a ship
+        ((1, 0), ['Hasty', 'Cooper']),
+        # A name not read stays, a ship done or not in the queue makes room
+        ((1, 2), ['Hasty', 'Cooper']),
+    ]

@@ -5,6 +5,7 @@ from module.logger import logger
 from module.ocr.ocr import Digit
 from module.retire.assets import DOCK_CHECK, SHIP_DETAIL_CHECK
 from module.retire.dock import CARD_GRIDS, DOCK_EMPTY, Dock
+from module.retire.scanner import ShipScanner
 from module.ui.assets import BACK_ARROW
 from module.ui.page import page_dock, page_main
 
@@ -360,13 +361,30 @@ class Awaken(Dock):
                 self.device.click(page_main.links[page_dock])
                 continue
 
-    def awaken_run(self, use_array=False, favourite=False):
+    def awaken_fleets(self):
+        """
+        Returns:
+            list[int]: Fleets whose ships are awakened, the ones the campaign levels with Awaken_OnlyFleets.
+                None for any ship of the dock.
+        """
+        if not self.config.Awaken_OnlyFleets:
+            return None
+        fleets = [
+            self.config.cross_get('Main.Fleet.Fleet1', default=1),
+            self.config.cross_get('Main.Fleet.Fleet2', default=0),
+            # Cards of the dock show a submarine fleet like the common fleet of its number
+            self.config.cross_get('Main.Submarine.Fleet', default=0),
+        ]
+        return sorted({fleet for fleet in fleets if fleet})
+
+    def awaken_run(self, use_array=False, favourite=False, rarity=None):
         """
         Awaken all ships in dock until resources exhausted
 
         Args:
             use_array: True to awaken to level 125, False to 120
             favourite: True to awaken favourite ships only, False to awaken all ships
+            rarity (str): Rarity of the dock filter, Awaken_Rarity if None
 
         Returns:
             str: 'insufficient', 'finish', 'timeout'
@@ -387,9 +405,12 @@ class Awaken(Dock):
         self.dock_filter_set(
             index=self.config.Awaken_Index,
             faction=self.config.Awaken_Faction,
-            rarity=self.config.Awaken_Rarity,
+            rarity=rarity if rarity is not None else self.config.Awaken_Rarity,
             extra=extra,
         )
+        fleets = self.awaken_fleets()
+        if fleets is not None:
+            logger.info(f'Awaken ships of fleets {fleets} only')
 
         # Ships passed over to keep the chip reserve. They stay in dock, in front of the ships not tried yet.
         skipped = 0
@@ -402,7 +423,10 @@ class Awaken(Dock):
                 break
 
             # page_dock -> SHIP_DETAIL_CHECK
-            entered = self.awaken_enter_ship(skipped)
+            if fleets is None:
+                entered = self.awaken_enter_ship(skipped)
+            else:
+                entered = self.awaken_enter_fleet_ship(fleets, skipped)
             if not entered:
                 logger.info(f'awaken_run finished, no more ships to awaken, {skipped} left for the chip reserve')
                 result = 'finish'
@@ -477,6 +501,46 @@ class Awaken(Dock):
                 self.device.click(button)
                 clicked += 1
 
+    def awaken_enter_fleet_ship(self, fleets, index, skip_first_screenshot=True):
+        """
+        Enter a ship of the fleets, counted from the first one of them in the dock.
+
+        Args:
+            fleets (list[int]):
+            index (int): 0 for the first ship of the fleets
+            skip_first_screenshot:
+
+        Returns:
+            bool: True if success to enter
+                False if there is no such ship on the first screen of the dock
+
+        Pages:
+            in: page_dock
+            out: SHIP_DETAIL_CHECK
+        """
+        if not skip_first_screenshot:
+            self.device.screenshot()
+        scanner = ShipScanner(fleet=fleets, status='any')
+        scanner.disable('emotion', 'rarity')
+        ships = scanner.scan(self.device.image, output=False)
+        if index >= len(ships):
+            logger.info(f'No ship {index} of fleets {fleets} on the first screen of the dock')
+            return False
+
+        button = ships[index].button
+        logger.info(f'Dock enter a ship of fleet {ships[index].fleet} at level {ships[index].level}')
+        self.interval_clear(DOCK_CHECK, interval=5)
+        clicked = 0
+        for _ in self.loop():
+            if self.appear(SHIP_DETAIL_CHECK, offset=(20, 20)):
+                return True
+            if self.appear(DOCK_CHECK, offset=(20, 20), interval=5):
+                if clicked >= 2:
+                    logger.info('The ship of the fleets did not open')
+                    return False
+                self.device.click(button)
+                clicked += 1
+
     def run(self):
         # Run Awakening+ first
         favourite = self.config.Awaken_Favourite
@@ -484,6 +548,11 @@ class Awaken(Dock):
             # Use Cognitive Arrays
             result = self.awaken_run(use_array=True, favourite=favourite)
             # Use Cognitive Chips
+            if result != 'timeout':
+                self.awaken_run(favourite=favourite)
+        elif self.config.Awaken_LevelCap == 'ultra_level125':
+            # Cognitive Arrays for ultra rares only, the other ships stop at 120
+            result = self.awaken_run(use_array=True, favourite=favourite, rarity='ultra')
             if result != 'timeout':
                 self.awaken_run(favourite=favourite)
         elif self.config.Awaken_LevelCap == 'level120':

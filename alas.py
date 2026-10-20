@@ -278,6 +278,10 @@ class AzurLaneAutoScript:
         from module.formation.formation import Formation
         Formation(config=self.config, device=self.device).run()
 
+    def leveling(self):
+        from module.leveling.leveling import Leveling
+        Leveling(config=self.config, device=self.device).run()
+
     def meowfficer(self):
         from module.meowfficer.meowfficer import RewardMeowfficer
         RewardMeowfficer(config=self.config, device=self.device).run()

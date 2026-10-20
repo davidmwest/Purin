@@ -281,14 +281,19 @@ class GeneratedConfig:
     Reward_CollectWeeklyMission = True
 
     # Group `Awaken`
-    Awaken_LevelCap = 'level120'  # level120, level125
+    Awaken_LevelCap = 'level120'  # level120, level125, ultra_level125
     Awaken_Favourite = False
+    Awaken_OnlyFleets = False
     Awaken_ChipReserve = 0
     Awaken_Order = 'highest_level_first'  # highest_level_first, lowest_level_first
     Awaken_Index = 'all'  # all, vanguard, main, dd, cl, ca, bb, cv, repair, ss, others
     Awaken_Faction = 'all'  # all, eagle, royal, sakura, iron, dragon, sardegna, northern, iris, vichya, tulipa, pedreria, meta, tempesta, other
     Awaken_Rarity = 'all'  # all, common, rare, elite, super_rare, ultra
     Awaken_CheckInterval = 0
+
+    # Group `Leveling`
+    Leveling_UltraTo125 = False
+    Leveling_CheckInterval = 180
 
     # Group `GeneralShop`
     GeneralShop_UseGems = False

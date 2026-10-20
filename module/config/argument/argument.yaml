@@ -511,9 +511,10 @@ Reward:
 Awaken:
   LevelCap:
     value: level120
-    option: [ level120, level125 ]
+    option: [ level120, level125, ultra_level125 ]
   Favourite:
     value: false
+  OnlyFleets: false
   ChipReserve: 0
   Order:
     value: highest_level_first
@@ -528,6 +529,9 @@ Awaken:
     value: all
     option: [ all, common, rare, elite, super_rare, ultra ]
   CheckInterval: 0
+Leveling:
+  UltraTo125: false
+  CheckInterval: 180
 GeneralShop:
   UseGems: false
   Refresh: false

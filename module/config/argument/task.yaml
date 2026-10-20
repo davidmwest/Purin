@@ -242,6 +242,9 @@ Reward:
     Awaken:
       - Scheduler
       - Awaken
+    Leveling:
+      - Scheduler
+      - Leveling
     EnhanceShips:
       - Scheduler
     RetireShips:

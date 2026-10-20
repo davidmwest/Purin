@@ -166,6 +166,10 @@
       "name": "Awaken",
       "help": ""
     },
+    "Leveling": {
+      "name": "Leveling",
+      "help": "Keeps the fleets of the Main task filled with the ships to level next: the most fleet power for the fewest cognitive chips, counting the stat Fleet Technology gives at level 120 to every ship of her hull type, battleships over support ships, lower rarity first on a tie. Reads the fleets on the fleet page and takes ships with gear from the dock by name. Needs the dock read by the Inventory task"
+    },
     "EnhanceShips": {
       "name": "Enhance Ships",
       "help": "Enhances the ships of the dock that can still be enhanced, highest level first, with the materials the game recommends. Settings are in Alas, General, Enhance: which ships, and how many of each type. Runs every day, before Retire Ships"
@@ -1870,11 +1874,16 @@
       "name": "To Level Cap",
       "help": "",
       "level120": "Lv.120",
-      "level125": "Lv.125"
+      "level125": "Lv.125",
+      "ultra_level125": "Lv.125 for ultra rares, Lv.120 for the rest"
     },
     "Favourite": {
       "name": "Awaken Favourite Ships Only",
       "help": ""
+    },
+    "OnlyFleets": {
+      "name": "Awaken the Fleets of Main Only",
+      "help": "Only ships in the fleets of the Main task and in its submarine fleet, the ships Leveling puts there. Chips go to the ships being levelled, not to any ship waiting at a level cap"
     },
     "ChipReserve": {
       "name": "Cognitive Chips to Keep",
@@ -1933,6 +1942,20 @@
     "CheckInterval": {
       "name": "Check Every X Minutes",
       "help": "Ships reach their level cap while farming. 0 to check once a day, at server update"
+    }
+  },
+  "Leveling": {
+    "_info": {
+      "name": "Leveling Settings",
+      "help": ""
+    },
+    "UltraTo125": {
+      "name": "Ultra Rares to Lv.125 First",
+      "help": "For a mature account: ultra rares, Bulins aside, go to level 125 before any other ship. Off, they wait in the queue like the others, their awakenings cost the most chips"
+    },
+    "CheckInterval": {
+      "name": "Check Interval (Minutes)",
+      "help": "Minutes between looks at the fleets. 0 to look once a day, at server update"
     }
   },
   "GeneralShop": {

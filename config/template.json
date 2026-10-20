@@ -1638,12 +1638,30 @@
     "Awaken": {
       "LevelCap": "level120",
       "Favourite": false,
+      "OnlyFleets": false,
       "ChipReserve": 0,
       "Order": "highest_level_first",
       "Index": "all",
       "Faction": "all",
       "Rarity": "all",
       "CheckInterval": 0
+    },
+    "Storage": {
+      "Storage": {}
+    }
+  },
+  "Leveling": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "Leveling",
+      "SuccessInterval": 0,
+      "FailureInterval": 120,
+      "ServerUpdate": "00:00"
+    },
+    "Leveling": {
+      "UltraTo125": false,
+      "CheckInterval": 180
     },
     "Storage": {
       "Storage": {}

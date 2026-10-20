@@ -20,6 +20,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from module.logger import logger
+
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'ship_data.json')
 RETROFIT = ' (Retrofit)'
 
@@ -195,6 +197,10 @@ class ShipMatcher:
         # Kongou is found as she is above, "Kongouu" is Kongou µ.
         if key[-1:] in ('u', 'h') and key[:-1] + 'mu' in self.keys:
             return self.keys[key[:-1] + 'mu']
+        # "1-404" is I-404, an I or an l read as a 1
+        for letter in ('i', 'l'):
+            if key.replace('1', letter) in self.keys:
+                return self.keys[key.replace('1', letter)]
         close = difflib.get_close_matches(key, list(self.keys), n=1, cutoff=self.SIMILARITY)
         if close:
             return self.keys[close[0]]
@@ -279,6 +285,12 @@ class Target:
     geared: bool
     # Place in the dock of the scan
     index: int
+
+    @property
+    def character(self):
+        if self.ship.endswith(RETROFIT):
+            return self.ship[:-len(RETROFIT)]
+        return self.ship
 
     def sort_key(self):
         if self.priority == 0:
@@ -366,3 +378,105 @@ def leveling_queue(ships, data=None, ultra_to_125=True):
 
     queue.sort(key=Target.sort_key)
     return queue
+
+
+@dataclass
+class Slot:
+    """
+    A slot of a fleet, as the Info view of the fleet page shows it.
+    """
+    fleet: int
+    # 'main' or 'vanguard'
+    row: str
+    # 0 to 2, the flagship first for the main fleet
+    index: int
+    # As read, '' for an empty slot
+    name: str
+    level: int
+
+
+def update_levels(ships, slots, data=None):
+    """
+    Levels of the ships of the fleets have gone up since the dock was read, the fleet page tells them.
+
+    Args:
+        ships (list[dict]): Ships of the inventory, changed in place
+        slots (list[Slot]):
+        data (dict[str, ShipData]):
+
+    Returns:
+        int: Ships whose level changed
+    """
+    matcher = ShipMatcher(data if data is not None else load_ship_data())
+    by_character = {}
+    for ship in ships:
+        match = matcher.match(ship.get('name') or '')
+        if match is not None:
+            by_character.setdefault(match.character, []).append(ship)
+
+    changed = 0
+    for slot in slots:
+        if not slot.name or not 1 <= slot.level <= LEVEL_MAX:
+            continue
+        match = matcher.match(slot.name)
+        if match is None or match.character not in by_character:
+            continue
+        # A copy of the ship may be in the dock too, the one in the fleet is the best
+        ship = max(by_character[match.character], key=lambda s: s.get('level') or 0)
+        if slot.level > (ship.get('level') or 0):
+            ship['level'] = slot.level
+            # EXP is not shown, a ship at a level cap waits for her awakening
+            ship['exp'] = None
+            ship['exp_next'] = 0 if slot.level >= 100 and slot.level % 5 == 0 else 1
+            changed += 1
+    return changed
+
+
+def plan_swaps(slots, queue, data=None):
+    """
+    Which slots of the fleets take which ships of the queue.
+
+    A row of the fleets holds the geared ships at the top of the queue, as many as it has slots.
+    Ships at the top stay where they are, the other slots take the next ships of the top from the dock,
+    the slots of the first fleet first, it fights the most battles. A ship only replaces one below her.
+    A slot whose ship can not be read is left as it is.
+
+    Args:
+        slots (list[Slot]): Slots of the fleets that level, as read
+        queue (list[Target]): leveling_queue()
+        data (dict[str, ShipData]):
+
+    Returns:
+        list[tuple[Slot, list[Target]]]: Slots to change, with the ships to try in them, the best first.
+            The same ship may be listed for several slots, she goes in the first one she can.
+    """
+    matcher = ShipMatcher(data if data is not None else load_ship_data())
+    plans = []
+    for row in ('main', 'vanguard'):
+        ranked = [target for target in queue if target.row == row and target.geared]
+        rank = {target.character: index for index, target in enumerate(ranked)}
+        row_slots = sorted([slot for slot in slots if slot.row == row], key=lambda slot: (slot.fleet, slot.index))
+
+        occupants = {}
+        for slot in row_slots:
+            if not slot.name:
+                occupants[slot.fleet, slot.index] = ''
+                continue
+            match = matcher.match(slot.name)
+            occupants[slot.fleet, slot.index] = match.character if match is not None else None
+        seated = {character for character in occupants.values() if character}
+        candidates = [target for target in ranked if target.character not in seated]
+
+        for slot in row_slots:
+            occupant = occupants[slot.fleet, slot.index]
+            if occupant is None:
+                logger.warning(f'Fleet {slot.fleet} {row} {slot.index + 1}: "{slot.name}" is not known, left as it is')
+                continue
+            # An empty slot, or a ship done or not in the queue, is below everyone
+            occupant_rank = rank.get(occupant, float('inf')) if occupant else float('inf')
+            if occupant_rank < len(row_slots):
+                continue
+            better = [target for target in candidates if rank[target.character] < occupant_rank]
+            if better:
+                plans.append((slot, better))
+    return plans

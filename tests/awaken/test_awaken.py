@@ -58,14 +58,17 @@ def test_chips_are_not_spent_on_numbers_that_make_no_sense(owned, cost):
     assert Awaken.is_chip_reserve_kept(awaken) is False
 
 
-def make_run(results, order='highest_level_first'):
+def make_run(results, order='highest_level_first', fleets=None):
     """
     Args:
         results (list[str]): Result of awakening the ships entered, one after another.
             There is no ship to enter after them.
+        fleets (list[int]): Fleets whose ships are awakened, None for any ship
     """
     entered = iter([True] * len(results) + [False])
     return SimpleNamespace(
+        awaken_fleets=Mock(return_value=fleets),
+        awaken_enter_fleet_ship=Mock(side_effect=lambda fleets, index: next(entered)),
         config=SimpleNamespace(Awaken_Order=order, Awaken_Index='dd', Awaken_Faction='all', Awaken_Rarity='elite'),
         ui_ensure=Mock(),
         dock_favourite_set=Mock(),
@@ -125,3 +128,50 @@ def test_awaken_is_checked_as_often_as_asked(interval, delay):
     Awaken.run(awaken)
 
     assert awaken.config.task_delay.call_args == delay
+
+
+def test_only_ships_of_the_fleets_are_entered():
+    run = make_run(['reserve', 'no_exp'], fleets=[1, 2])
+
+    assert Awaken.awaken_run(run) == 'finish'
+
+    assert run.awaken_enter_fleet_ship.call_args_list == [call([1, 2], 0), call([1, 2], 1), call([1, 2], 1)]
+    run.awaken_enter_ship.assert_not_called()
+
+
+def test_dock_filter_takes_the_rarity_asked_for():
+    run = make_run([])
+
+    Awaken.awaken_run(run, use_array=True, rarity='ultra')
+
+    run.dock_filter_set.assert_called_once_with(index='dd', faction='all', rarity='ultra', extra=['can_awaken_plus'])
+
+
+@pytest.mark.parametrize('only, fleets', [
+    (False, None),
+    # Submarine fleet 1 shows on the dock as fleet 1
+    (True, [1, 2]),
+])
+def test_fleets_of_the_campaign(only, fleets):
+    keys = {'Main.Fleet.Fleet1': 1, 'Main.Fleet.Fleet2': 2, 'Main.Submarine.Fleet': 1}
+    awaken = SimpleNamespace(config=SimpleNamespace(
+        Awaken_OnlyFleets=only, cross_get=lambda keys_, default=None: keys.get(keys_, default)))
+
+    assert Awaken.awaken_fleets(awaken) == fleets
+
+
+def test_arrays_for_ultra_rares_only():
+    awaken = SimpleNamespace(
+        config=SimpleNamespace(Awaken_Favourite=False, Awaken_LevelCap='ultra_level125', Awaken_CheckInterval=0,
+                               task_delay=Mock()),
+        awaken_run=Mock(return_value='finish'),
+        dock_favourite_set=Mock(),
+        dock_filter_set=Mock(),
+    )
+
+    Awaken.run(awaken)
+
+    assert awaken.awaken_run.call_args_list == [
+        call(use_array=True, favourite=False, rarity='ultra'),
+        call(favourite=False),
+    ]
