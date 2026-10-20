@@ -186,6 +186,43 @@ class LoginHandler(UI):
         # self.ensure_no_unfinished_campaign()
         self.config.task_delay(server_update=True)
 
+    # The network diagnosis SDK of the game may log "send_packets error" in a loop. logd then takes a core of the
+    # emulator and the game loses frames, until it is started again. A healthy start logs single digits of it.
+    LOG_FLOOD_TAG = 'AliNetworkDiagnosis'
+    LOG_FLOOD_LINES = 2000
+    LOG_FLOOD_THRESHOLD = 1000
+    # Once an hour at most, if the flood comes back at once
+    _log_flood_restart = Timer(3600)
+
+    def log_flood_count(self):
+        """
+        Returns:
+            int: Lines of the network diagnosis among the last ones of logcat
+        """
+        output = self.device.adb_shell(['logcat', '-d', '-t', str(self.LOG_FLOOD_LINES)])
+        return output.count(self.LOG_FLOOD_TAG)
+
+    def app_restart_on_log_flood(self):
+        """
+        Returns:
+            bool: If the game was started again
+        """
+        timer = LoginHandler._log_flood_restart
+        if timer.started() and not timer.reached():
+            return False
+        count = self.log_flood_count()
+        if count < self.LOG_FLOOD_THRESHOLD:
+            return False
+
+        logger.warning(f'{self.LOG_FLOOD_TAG} floods logcat, {count} of the last {self.LOG_FLOOD_LINES} lines, '
+                       f'start the game again')
+        # Lines of this flood do not count the next time
+        self.device.adb_shell(['logcat', '-c'])
+        timer.reset()
+        self.app_stop()
+        self.app_start()
+        return True
+
     def ensure_no_unfinished_campaign(self, confirm_wait=3):
         """
         Pages:

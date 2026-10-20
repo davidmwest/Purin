@@ -235,6 +235,10 @@ class AzurLaneAutoScript:
         from module.handler.login import LoginHandler
         LoginHandler(self.config, device=self.device).app_start()
 
+    def log_flood_check(self):
+        from module.handler.login import LoginHandler
+        LoginHandler(self.config, device=self.device).app_restart_on_log_flood()
+
     def goto_main(self):
         from module.handler.login import LoginHandler
         from module.ui.ui import UI
@@ -822,6 +826,9 @@ class AzurLaneAutoScript:
                 logger.info('Skip task `Restart` at scheduler start')
                 self.config.task_delay(server_update=True)
                 del_cached_property(self, 'config')
+                continue
+            # A game slowed down by a flood of logs is started again first. If that fails, run() has called Restart.
+            if task != 'Restart' and not self.run('log_flood_check', skip_first_screenshot=True):
                 continue
 
             # Run
