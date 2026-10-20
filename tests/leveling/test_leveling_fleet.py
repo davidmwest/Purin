@@ -58,6 +58,9 @@ class FakeDevice:
     def screenshot(self):
         return self.image
 
+    def sleep(self, second):
+        pass
+
 
 def fleet_page(image):
     fleet = LevelingFleet.__new__(LevelingFleet)
@@ -142,8 +145,42 @@ def test_search_term(name, term):
     ('London (Ret..', 'London (Retrofit)', True),
     ('Vittorio Cu..', 'Vittorio Cuniberti', True),
     ('Hasty', 'Cooper', False),
+    ('Vampire MET..', 'Vampire', False),
+    ('Vampire MET..', 'Vampire META', True),
     ('Co', 'Cooper', False),
     ('', 'Cooper', False),
 ])
 def test_name_on_a_card(read, name, fits):
     assert name_fits(read, name) is fits
+
+
+def test_a_name_cut_short_by_its_scroll_is_read_again():
+    first = info_view('info_fleet_1')
+    # Names scrolled: Ning Hai and Ping Hai lose their first letters, as close to one as to the other
+    scrolled = first.copy()
+    for left in (873, 1059):
+        scrolled[456:492, left:left + 156] = np.roll(first[456:492, left:left + 156], -14, axis=1)
+    frames = iter([scrolled, scrolled, first, first, first])
+
+    class Scrolling(FakeDevice):
+        def screenshot(self):
+            self.image = next(frames)
+            return self.image
+
+    fleet = LevelingFleet.__new__(LevelingFleet)
+    fleet.device = Scrolling(scrolled)
+    fleet.fleet_info_ensure = Mock()
+
+    slots = fleet.fleet_read_slots(1)
+
+    matcher = ShipMatcher(load_ship_data())
+    assert [matcher.match(slot.name).name for slot in slots[4:]] == ['Ning Hai (Retrofit)', 'Ping Hai (Retrofit)']
+
+
+def test_two_ships_as_close_are_no_match():
+    matcher = ShipMatcher(load_ship_data())
+
+    assert matcher.match('ing Hai Retrofit') is None
+    assert matcher.match_score('Ning Hai(Retrofit') == (matcher.ships['Ning Hai (Retrofit)'], 1.)
+    ship, score = matcher.match_score('na Astar Deviluk')
+    assert ship.name == 'Nana Astar Deviluke' and 0.8 < score < 1

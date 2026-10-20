@@ -17,7 +17,7 @@ from module.base.button import Button
 from module.base.timer import Timer
 from module.equipment.assets import FLEET_DETAIL, FLEET_DETAIL_CHECK
 from module.formation.formation import Formation
-from module.leveling.plan import RETROFIT, Slot, name_key
+from module.leveling.plan import RETROFIT, ShipMatcher, Slot, load_ship_data, name_key
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr
 from module.retire.assets import DOCK_CHECK
@@ -53,6 +53,9 @@ INPUT_BAR = (300, 600, 1100, 720)
 CARD_NAME = (4, 163, 134, 186)
 # Seconds for each step of a search
 SEARCH_TIMEOUT = 10
+# Names of the Info view are read this many times at most, this far apart, long ones scroll
+NAME_READS = 3
+NAME_READ_INTERVAL = 0.7
 
 
 def crop_mean(image, area):
@@ -116,7 +119,8 @@ def name_fits(read, name):
     read, name = name_key(read), name_key(name)
     if len(read) < 3:
         return False
-    return name.startswith(read) or read.startswith(name)
+    # "Vampire MET.." is not Vampire
+    return name.startswith(read)
 
 
 class LevelingFleet(Formation):
@@ -159,7 +163,7 @@ class LevelingFleet(Formation):
             out: Info view of the fleet page
         """
         self.fleet_info_ensure()
-        # Cards are drawn a moment after the view changes, and long names scroll. Read until the levels agree.
+        # Cards are drawn a moment after the view changes. Read until the levels agree.
         previous = None
         for _ in range(6):
             self.device.screenshot()
@@ -168,8 +172,22 @@ class LevelingFleet(Formation):
             if levels == previous:
                 break
             previous = levels
-        names = Ocr(INFO_NAMES, lang='cnocr', letter=(255, 255, 255), threshold=128, name='INFO_NAME').ocr(
-            self.device.image)
+        # A long name scrolls in its banner and reads cut, "ing Hai Retrofit". Keep the read closest to a ship.
+        matcher = ShipMatcher(load_ship_data())
+        names, scores = [''] * len(INFO_NAMES), [-1.] * len(INFO_NAMES)
+        for read in range(NAME_READS):
+            if read:
+                self.device.sleep(NAME_READ_INTERVAL)
+                self.device.screenshot()
+            reads = Ocr(INFO_NAMES, lang='cnocr', letter=(255, 255, 255), threshold=128, name='INFO_NAME').ocr(
+                self.device.image)
+            for index, name in enumerate(reads):
+                name = str(name).strip()
+                score = matcher.match_score(name)[1] if name else 0.
+                if score > scores[index]:
+                    names[index], scores[index] = name, score
+            if all(score == 1. or not name for name, score in zip(names, scores)):
+                break
         slots = [
             Slot(fleet=fleet, row=row, index=index % 3, name=str(name).strip(), level=level)
             for index, (row, name, level) in enumerate(zip(INFO_ROWS, names, levels))

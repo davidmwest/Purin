@@ -188,23 +188,40 @@ class ShipMatcher:
             name (str): Name read on the detail page of a ship
 
         Returns:
-            ShipData: Or None if no ship is close
+            ShipData: Or None if no ship is close, or two are as close
+        """
+        return self.match_score(name)[0]
+
+    def match_score(self, name):
+        """
+        Args:
+            name (str):
+
+        Returns:
+            tuple[ShipData, float]: The ship and how close the name is to hers, 1 for the very name.
+                (None, 0) if no ship is close. A name cut short can be as close to two ships,
+                "ing Hai Retrofit" to Ning Hai and Ping Hai, that is no match either.
         """
         key = name_key(name)
+        if not key:
+            return None, 0.
         if key in self.keys:
-            return self.keys[key]
+            return self.keys[key], 1.
         # OCR reads the µ of a muse ship as "u" or "H": "Clevelandu", "Boise H".
         # Kongou is found as she is above, "Kongouu" is Kongou µ.
         if key[-1:] in ('u', 'h') and key[:-1] + 'mu' in self.keys:
-            return self.keys[key[:-1] + 'mu']
+            return self.keys[key[:-1] + 'mu'], 1.
         # "1-404" is I-404, an I or an l read as a 1
         for letter in ('i', 'l'):
             if key.replace('1', letter) in self.keys:
-                return self.keys[key.replace('1', letter)]
-        close = difflib.get_close_matches(key, list(self.keys), n=1, cutoff=self.SIMILARITY)
-        if close:
-            return self.keys[close[0]]
-        return None
+                return self.keys[key.replace('1', letter)], 1.
+        close = difflib.get_close_matches(key, list(self.keys), n=2, cutoff=self.SIMILARITY)
+        if not close:
+            return None, 0.
+        scores = [difflib.SequenceMatcher(None, key, other).ratio() for other in close]
+        if len(close) > 1 and scores[1] >= scores[0]:
+            return None, 0.
+        return self.keys[close[0]], scores[0]
 
     def base_rarity(self, data):
         """
