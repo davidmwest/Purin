@@ -43,3 +43,28 @@ def test_team_emptied_by_the_game_bug_is_left_to_the_restart():
 
 def test_nothing_unfolded():
     assert requirement_unmet(np.zeros((720, 1280, 3), dtype=np.uint8), TOP) is False
+
+
+def test_commissions_that_can_not_start_give_way_to_the_next_ones():
+    # The F2P account could do none of the 3 daily ones chosen, its slots stayed empty while others it could do were
+    # listed. The chosen ones come first, then the other commissions of the filter, once each.
+    from module.commission.commission import commission_candidates
+    from module.map.map_grids import SelectedGrids
+
+    class Comm:
+        def __init__(self, name):
+            self.name = name
+
+        def __eq__(self, other):
+            return isinstance(other, Comm) and other.name == self.name
+
+        def __repr__(self):
+            return self.name
+
+    iii, ii, i, gear = Comm('Daily Resource Extraction III'), Comm('Daily Resource Extraction II'), \
+        Comm('Daily Resource Extraction I'), Comm('Gear Transport')
+    daily_choose = SelectedGrids([iii, ii])
+    urgent_choose = SelectedGrids([gear])
+    comm_choose = SelectedGrids([iii, ii, gear, 'shortest', Comm('Daily Resource Extraction I')])
+
+    assert commission_candidates(daily_choose, urgent_choose, comm_choose) == [iii, ii, gear, i]

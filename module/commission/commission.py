@@ -78,6 +78,28 @@ def requirement_unmet(image, top):
     return float(np.std(team)) > TEAM_STD
 
 
+# Commissions tried in a run at most, those that can not start included
+COMMISSION_TRIES = 10
+
+
+def commission_candidates(daily_choose, urgent_choose, comm_choose):
+    """
+    Args:
+        daily_choose (SelectedGrids): Daily commissions chosen
+        urgent_choose (SelectedGrids): Urgent commissions chosen
+        comm_choose (SelectedGrids): Every commission the filter takes, in its order, with 'shortest' and the like
+
+    Returns:
+        list[Commission]: The chosen ones first, daily then urgent, then the others of the filter
+    """
+    out = []
+    for comm in list(daily_choose) + list(urgent_choose) + list(comm_choose):
+        if isinstance(comm, str) or any(comm == other for other in out):
+            continue
+        out.append(comm)
+    return out
+
+
 class RewardCommission(UI, InfoHandler):
     daily: SelectedGrids
     urgent: SelectedGrids
@@ -507,24 +529,29 @@ class RewardCommission(UI, InfoHandler):
         self._commission_scan_all()
 
         logger.hr('Commission run', level=1)
-        if self.daily_choose:
-            for comm in self.daily_choose:
-                self._commission_ensure_mode('daily')
-                self._commission_swipe_to_top()
-                self.handle_info_bar()
-                if self._commission_find_and_start(comm, is_urgent=False):
-                    comm.convert_to_running()
-                self._commission_mode_reset()
-        if self.urgent_choose:
-            for comm in self.urgent_choose:
-                self._commission_ensure_mode('urgent')
-                self._commission_swipe_to_top()
-                self.handle_info_bar()
-                if self._commission_find_and_start(comm, is_urgent=True):
-                    comm.convert_to_running()
-                self._commission_mode_reset()
         if not self.daily_choose and not self.urgent_choose:
             logger.info('No commission chose')
+            return
+        # The commissions chosen first, then the others the filter takes, in its order: a young account can not meet
+        # the requirements of some, its slots stayed empty while others it could do were listed
+        slots = self.daily_choose.count + self.urgent_choose.count
+        started = 0
+        tries = 0
+        for comm in commission_candidates(self.daily_choose, self.urgent_choose, self.comm_choose):
+            if started >= slots or tries >= COMMISSION_TRIES:
+                break
+            tries += 1
+            is_urgent = bool(self.urgent.intersect_by_eq(SelectedGrids([comm])).count)
+            self._commission_ensure_mode('urgent' if is_urgent else 'daily')
+            self._commission_swipe_to_top()
+            self.handle_info_bar()
+            if self._commission_find_and_start(comm, is_urgent=is_urgent):
+                comm.convert_to_running()
+                started += 1
+            else:
+                logger.info(f'Commission {comm} did not start, the next one is tried')
+            self._commission_mode_reset()
+        logger.info(f'Commissions started: {started} of {slots}, {tries} tried')
 
     def _commission_receive(self, skip_first_screenshot=True):
         """

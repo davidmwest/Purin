@@ -15,6 +15,10 @@ from module.notify import handle_notify
 from module.ui.page import page_campaign
 
 
+# Oil kept at least, whatever StopCondition.OilLimit says: a run started below it may stop in the middle of a map.
+# Upstream keeps 500. A young account has no reason to keep oil, its OilLimit may be set down to this.
+OIL_FLOOR = 100
+
 class CampaignRun(CampaignEvent):
     folder: str
     name: str
@@ -94,7 +98,7 @@ class CampaignRun(CampaignEvent):
             return True
         # Oil limit
         if oil_check:
-            if self.get_oil() < max(500, self.config.StopCondition_OilLimit):
+            if self.get_oil() < max(OIL_FLOOR, self.config.StopCondition_OilLimit):
                 logger.hr('Triggered stop condition: Oil limit')
                 self.config.task_delay(minute=(120, 240))
                 return True
