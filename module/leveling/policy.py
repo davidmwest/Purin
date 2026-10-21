@@ -18,6 +18,8 @@ gear_good() keeps the gear a ship wears, no trip to the depot, the user's rule: 
 leave it out, if it is a weapon below gold, or below +10. Auxiliaries she wears at +10 stay if gold, or a purple
 that adds 400 HP or more like the Repair Toolkit, ship-specific gear on her among them.
 gear_ideal() ends the look through the popups of the depot: nothing it lists does much better.
+gear_passes() tells if the gear on a ship passes the rules, nothing they leave out remains: a ship is geared only
+then, module.leveling.plan.is_geared(), not with a sonar at +10.
 card_order() is the order the cards of the depot are looked at, guessed from what a card shows: rarity,
 enhancement, and the name cut by the game, "Repair To..".
 
@@ -289,6 +291,33 @@ def gear_good(index, hull, item, other=None):
     if index in WEAPON_SLOTS:
         return False
     return is_toolkit(item.get('name')) or (item.get('stats') or {}).get('HP', 0) >= HP_PURPLE
+
+
+def gear_passes(hull, gear):
+    """
+    Args:
+        hull (str): Hull type of the ship
+        gear (list[dict]): Her gear in slots 0 to 4, None for an empty slot
+
+    Returns:
+        bool: If nothing the rules leave out is on her: her auxiliaries read and allowed, her weapons not against
+            submarines. An auxiliary whose popup was not read could be anything, it does not pass.
+    """
+    if len(gear) < len(WEAPON_SLOTS) + len(AUX_SLOTS):
+        return False
+    for index, item in enumerate(gear):
+        if item is None:
+            return False
+        name = item.get('name') or ''
+        stats = item.get('stats') or {}
+        if index in AUX_SLOTS:
+            if not name and not stats:
+                return False
+            if not aux_allowed(hull, name, stats):
+                return False
+        elif is_asw(name, stats):
+            return False
+    return True
 
 
 def gear_ideal(index, hull, score):

@@ -21,7 +21,7 @@ from module.base.utils import load_image
 from module.equipment.assets import EQUIPMENT_OPEN
 from module.leveling.fleet import area_button
 from module.leveling.gear import LevelingGear, gray, template_score
-from module.leveling.plan import BOOST_CAP, gear_record, is_geared
+from module.leveling.plan import BOOST_CAP, is_geared
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr
 from module.retire.assets import DOCK_CHECK
@@ -351,8 +351,8 @@ class LevelingBoost(LevelingGear):
             spare (bool): If spare packs take her to her level cap, see boost_to()
 
         Returns:
-            tuple[list[int], int]: Enhancement of her 5 gear slots and of her augment after it, None if not geared or
-                the steps did not end well. Her level after, None if not raised.
+            tuple[dict, int]: Her gear after it, as the inventory keeps it, see LevelingGear.gear_fill(), None if not
+                given gear or the steps did not end well. Her level after, None if not raised.
 
         Pages:
             in: any
@@ -367,20 +367,20 @@ class LevelingBoost(LevelingGear):
             return None, None
         self.ship_info_enter(click_button=ship.button, check_button=EQUIPMENT_OPEN, long_click=False,
                              skip_first_screenshot=False)
-        levels = None
+        record = None
         if gear:
-            levels = self.gear_fill(hull=target.hull)
-            if levels is None:
+            record = self.gear_fill(hull=target.hull)
+            if record is None:
                 logger.warning(f'Gear of {target.ship} left unfinished')
                 self.ui_ensure(page_dock)
                 return None, None
-            logger.info(f'{target.ship} has gear at {levels}')
-            if not is_geared(gear_record(levels)):
+            logger.info(f'{target.ship} has gear {record}')
+            if not is_geared(record):
                 # She does not come in, packs would be lost on her
                 self.ui_back(check_button=DOCK_CHECK)
-                return levels, None
+                return record, None
         boosted = None
         if level is not None or spare:
             boosted = self.boost_to(level, spare=spare)
         self.ui_back(check_button=DOCK_CHECK)
-        return levels, boosted
+        return record, boosted

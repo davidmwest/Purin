@@ -7,6 +7,7 @@ import pytest
 import module.config.server as server
 from module.leveling.gear import LevelingGear, augment_depot_layout, best_card, depot_card_levels, depot_cards_read, \
     depot_has_item, empty_gear_slots, gear_levels, gear_rarities, popup_read, tag_level
+from module.leveling.plan import gear_record, is_geared
 from module.leveling.policy import gear_item, name_match
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
@@ -439,6 +440,9 @@ def test_no_augment_better_than_hers(short_steps):
     assert device.screen == 'tab'
 
 
+GEARED_CHECKED = gear_record([10] * 6, checked=True)
+
+
 def gear_stubbed(levels, rarities, worn, picks):
     """
     LevelingGear of which steps are stubs: the Info tab shows levels and rarities, slots wear worn[index],
@@ -472,7 +476,7 @@ def test_gear_of_isokaze():
 
     gear, calls = gear_stubbed([0, 0, 0, 10, -1, 0], ['grey', 'blue', 'gold', 'gold', None], {3: sonar}, picks)
 
-    assert gear.gear_fill(hull='DD') == [10] * 6
+    assert gear.gear_fill(hull='DD') == GEARED_CHECKED
     assert calls == [(0, '', None), (1, '', None), (2, '', None), (3, 'Advanced Sonar', None),
                      (4, None, 'Repair Toolkit'), ('augment', 0)]
 
@@ -486,14 +490,14 @@ def test_a_destroyer_gets_the_toolkit_in_place_of_her_worse_auxiliary():
 
     gear, calls = gear_stubbed([10, 10, 10, 10, -1, 10], ['gold'] * 3 + ['purple', None], {3: autoloader}, picks)
 
-    assert gear.gear_fill(hull='DD') == [10] * 6
+    assert gear.gear_fill(hull='DD') == GEARED_CHECKED
     assert calls == [(4, None, 'Autoloader'), (3, 'Autoloader', 'Repair Toolkit')]
 
 
 def test_gold_auxiliaries_she_wears_stay():
     gear, calls = gear_stubbed([10] * 6, ['gold'] * 5, {3: SEAL, 4: STEERING}, lambda *args: TOOLKIT)
 
-    assert gear.gear_fill(hull='DD') == [10] * 6
+    assert gear.gear_fill(hull='DD') == GEARED_CHECKED
     assert calls == []
 
 
@@ -501,7 +505,7 @@ def test_gear_the_policy_keeps_stays():
     shell = gear_item('Super Heavy Shell', {'FP': 15}, 'gold', 10)
     gear, calls = gear_stubbed([10] * 6, ['gold'] * 5, {3: shell, 4: TOOLKIT}, lambda *args: None)
 
-    assert gear.gear_fill(hull='BB') == [10] * 6
+    assert gear.gear_fill(hull='BB') == GEARED_CHECKED
     assert calls == []
 
 
@@ -525,3 +529,34 @@ def test_no_augments_on_the_depot_of_gear():
 
     assert gear.augment_header_top() is None
     assert depot_card_levels(gear.device.image, [], []) == []
+
+
+
+def test_a_sonar_storage_can_not_replace_fails_the_policy():
+    # The Codex review of 2026-10-21: her levels stay at +10, she is not geared with the sonar
+    sonar = gear_item('Advanced Sonar', {'ASW': 35, 'HIT': 12}, 'gold', 10)
+    gear, calls = gear_stubbed([10] * 6, ['gold'] * 4 + ['purple'], {3: sonar, 4: TOOLKIT}, lambda *args: None)
+
+    record = gear.gear_fill(hull='DD')
+
+    assert calls == [(3, 'Advanced Sonar', 'Repair Toolkit')]
+    assert record == gear_record([10] * 6, checked=False)
+    assert not is_geared(record)
+
+
+def test_torpedoes_on_a_battleship_fail_the_policy():
+    torpedo = gear_item('Homing Torpedo Gear', {'TRP': 20}, 'gold', 10)
+    gear, calls = gear_stubbed([10] * 6, ['gold'] * 4 + ['purple'], {3: torpedo, 4: TOOLKIT}, lambda *args: None)
+
+    assert not is_geared(gear.gear_fill(hull='BB'))
+    assert calls == [(3, 'Homing Torpedo Gear', 'Repair Toolkit')]
+    # On a destroyer it is fine
+    gear, calls = gear_stubbed([10] * 6, ['gold'] * 4 + ['purple'], {3: torpedo, 4: TOOLKIT}, lambda *args: None)
+    assert is_geared(gear.gear_fill(hull='DD'))
+
+
+def test_an_auxiliary_not_read_does_not_pass():
+    # Its popup did not open: it could be anything
+    gear, calls = gear_stubbed([10] * 6, ['gold'] * 5, {3: TOOLKIT}, lambda *args: None)
+
+    assert not is_geared(gear.gear_fill(hull='DD'))

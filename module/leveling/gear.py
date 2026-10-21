@@ -27,9 +27,9 @@ from module.equipment.assets import (EQUIP_TAKE_ON_0, EQUIP_TAKE_ON_1, EQUIP_TAK
 from module.equipment.equipment_change import EQUIPMENT_GRID
 from module.inventory.info import AUGMENT_LEVEL_AREA, GEAR_LEVEL_AREAS, parse_trailing_number
 from module.leveling.fleet import LevelingFleet, area_button
-from module.leveling.plan import GEARED_LEVEL
+from module.leveling.plan import GEARED_LEVEL, gear_record
 from module.leveling.policy import AUX_SLOTS, MAX_LOOKS, WEAPON_SLOTS, card_item, card_order, describe, gear_good, \
-    gear_ideal, gear_item, gear_score, is_better, parse_stats, rarity_of
+    gear_ideal, gear_item, gear_passes, gear_score, is_better, parse_stats, rarity_of
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr
 from module.retire.assets import DOCK_CHECK
@@ -804,7 +804,9 @@ class LevelingGear(LevelingFleet):
             hull (str): Her hull type, 'DD'. None if unknown, auxiliaries go as for a hull of no list.
 
         Returns:
-            list[int]: Enhancement of her 5 gear slots and of her augment after it, 0 for an empty one.
+            dict: Her gear after it, as the inventory keeps it, see module.leveling.plan.gear_record(): the
+                enhancement of her 5 gear slots and of her augment, and if her gear passed the policy, see
+                gear_passes(). Gear it leaves out that storage could not replace stays on her and fails it.
                 None if a step could not come back to the Gear tab.
 
         Pages:
@@ -860,7 +862,11 @@ class LevelingGear(LevelingFleet):
 
         levels = self.gear_read()
         logger.attr('Gear', levels)
-        return [max(level, 0) for level in levels]
+        checked = gear_passes(hull, worn)
+        if not checked:
+            logger.warning('Gear the policy leaves out, or could not read, stays on her: '
+                           + ', '.join(describe(item) for item in worn))
+        return gear_record(levels, checked=checked)
 
     def gear_ship(self, target):
         """
@@ -870,8 +876,7 @@ class LevelingGear(LevelingFleet):
             target (Target):
 
         Returns:
-            list[int]: Enhancement of her 5 gear slots after it, None if she was not found or the gear steps did not
-                end well
+            dict: Her gear after it, see gear_fill(). None if she was not found or the gear steps did not end well
 
         Pages:
             in: any
@@ -886,11 +891,11 @@ class LevelingGear(LevelingFleet):
             return None
         self.ship_info_enter(click_button=ship.button, check_button=EQUIPMENT_OPEN, long_click=False,
                              skip_first_screenshot=False)
-        levels = self.gear_fill(hull=target.hull)
-        if levels is None:
+        gear = self.gear_fill(hull=target.hull)
+        if gear is None:
             logger.warning(f'Gear of {target.ship} left unfinished')
             self.ui_ensure(page_dock)
             return None
-        logger.info(f'{target.ship} has gear at {levels}')
+        logger.info(f'{target.ship} has gear {gear}')
         self.ui_back(check_button=DOCK_CHECK)
-        return levels
+        return gear

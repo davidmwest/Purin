@@ -1,7 +1,8 @@
 import pytest
 
 from module.leveling.plan import (
-    AWAKEN_CHIPS, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Slot, Target, awaken_cost,
+    AWAKEN_CHIPS, GEAR_POLICY, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Slot, Target,
+    awaken_cost, gear_levels_done,
     awakenings_done, campaign_fleets, carry_targets, fleet_average, gear_record, is_geared, level_needed, leveling_queue,
     load_ship_data, name_key, plan_boosts, plan_carries, plan_done, plan_lift, plan_swaps, update_levels,
 )
@@ -16,12 +17,12 @@ def data():
 
 def ship(name, level, stars=6, exp_next=1000, affinity='stranger', gear=None, power=3000, index=0):
     """
-    A ship as the Inventory task saves her, her augment at +10 with gear given
+    A ship as the Inventory task saves her, her augment at +10 with gear given, and her gear checked
     """
     return {
         'name': name, 'level': level, 'stars': stars, 'exp': 0 if exp_next else None, 'exp_next': exp_next,
         'affinity': affinity, 'power': power, 'gear_levels': gear or [0, 0, 0, 0, 0], 'index': index,
-        'augment_level': 10 if gear else 0,
+        'augment_level': 10 if gear else 0, 'gear_policy': GEAR_POLICY if gear else 0,
     }
 
 
@@ -108,22 +109,29 @@ def test_awaken_cost():
 
 
 def test_is_geared():
-    # All 6 slots at +10 or better, the augment too, the user's rule
-    assert is_geared({'gear_levels': GEARED, 'augment_level': 10})
-    assert is_geared({'gear_levels': [13, 10, 11, 10, 10], 'augment_level': 10})
+    checked = {'gear_policy': GEAR_POLICY}
+    # All 6 slots at +10 or better, the augment too, the user's rule, and her gear checked against the policy
+    assert is_geared({'gear_levels': GEARED, 'augment_level': 10, **checked})
+    assert is_geared({'gear_levels': [13, 10, 11, 10, 10], 'augment_level': 10, **checked})
+    # Levels alone: a sonar at +10 reads the same, the Codex review of 2026-10-21
+    assert gear_levels_done({'gear_levels': GEARED, 'augment_level': 10})
+    assert not is_geared({'gear_levels': GEARED, 'augment_level': 10})
+    assert not is_geared({'gear_levels': GEARED, 'augment_level': 10, 'gear_policy': 0})
     # No augment
-    assert not is_geared({'gear_levels': GEARED, 'augment_level': 0})
-    assert not is_geared({'gear_levels': GEARED})
+    assert not is_geared({'gear_levels': GEARED, 'augment_level': 0, **checked})
+    assert not is_geared({'gear_levels': GEARED, **checked})
     # Hasty, and Maury with an auxiliary at +6
-    assert not is_geared({'gear_levels': [10, 10, 10, 7, 10], 'augment_level': 10})
-    assert not is_geared({'gear_levels': [11, 10, 11, 13, 6], 'augment_level': 10})
-    assert not is_geared({'gear_levels': [0, 0, 0, 0, 0], 'augment_level': 10})
+    assert not is_geared({'gear_levels': [10, 10, 10, 7, 10], 'augment_level': 10, **checked})
+    assert not is_geared({'gear_levels': [11, 10, 11, 13, 6], 'augment_level': 10, **checked})
+    assert not is_geared({'gear_levels': [0, 0, 0, 0, 0], 'augment_level': 10, **checked})
     assert not is_geared({})
 
 
 def test_gear_as_the_inventory_keeps_it():
-    assert gear_record([10, 13, -1, 10, 10, 10]) == {'gear_levels': [10, 13, 0, 10, 10], 'augment_level': 10}
-    assert gear_record([10, 10, 10, 10, 10]) == {'gear_levels': [10, 10, 10, 10, 10], 'augment_level': 0}
+    assert gear_record([10, 13, -1, 10, 10, 10]) == {'gear_levels': [10, 13, 0, 10, 10], 'augment_level': 10,
+                                                     'gear_policy': 0}
+    assert gear_record([10, 10, 10, 10, 10], checked=True) == {'gear_levels': [10, 10, 10, 10, 10],
+                                                               'augment_level': 0, 'gear_policy': GEAR_POLICY}
 
 
 def test_ultra_rares_first(data):

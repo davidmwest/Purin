@@ -5,7 +5,7 @@ from unittest.mock import Mock, call
 import pytest
 
 from module.leveling.leveling import Leveling, gear_tried_recently
-from module.leveling.plan import Slot, Target
+from module.leveling.plan import GEAR_POLICY, Slot, Target, gear_record, is_geared, leveling_queue
 
 
 @pytest.fixture(autouse=True)
@@ -57,10 +57,10 @@ GEARED = [10, 10, 10, 10, 10, 10]
 
 def leveling_with(fleet_swap=None, prepare=None):
     """
-    prepare(target, gear, level, spare) -> (gear levels, level), as ship_prepare()
+    prepare(target, gear, level, spare) -> (gear record, level), as ship_prepare()
     """
     def default(target, gear=True, level=None, spare=False):
-        return (list(GEARED) if gear else None), level
+        return (gear_record(GEARED, checked=True) if gear else None), level
 
     return SimpleNamespace(formation_goto_fleet=Mock(), fleet_swap=Mock(side_effect=fleet_swap or (lambda s, t: True)),
                            ship_prepare=Mock(side_effect=prepare or default), ui_ensure=Mock(),
@@ -143,8 +143,9 @@ def test_a_ship_without_gear_gets_some_before_she_comes_in():
     assert [(args[0].ship, kwargs) for args, kwargs in leveling.ship_prepare.call_args_list] == [
         ('Isokaze', {'gear': True, 'level': None, 'spare': False}),
         ('Maury (Retrofit)', {'gear': True, 'level': None, 'spare': False})]
-    # Her gear as read after it
+    # Her gear as read after it, checked against the policy
     assert ships[0]['gear_levels'] == GEARED[:5] and ships[0]['augment_level'] == 10
+    assert ships[0]['gear_policy'] == GEAR_POLICY
     assert ships[1]['gear_levels'] == GEARED[:5]
     assert ships[0]['gear_tried']
 
@@ -155,7 +156,8 @@ def test_a_ship_storage_can_not_gear_stays_out():
     ships = [{'name': 'Isokaze', 'index': 0}]
     plans = [(slots[0], [isokaze, hamakaze])]
     # Storage had gear at +10 for 2 slots, her own stays at +0
-    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False: ([0, 0, 10, 10, 0, 0], None))
+    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False: (
+        gear_record([0, 0, 10, 10, 0, 0], checked=True), None))
 
     assert Leveling.leveling_execute(leveling, plans, slots, ships) == 1
     # Hamakaze has her gear
@@ -178,7 +180,7 @@ def test_gear_tried_is_written_before_the_trip_to_the_depot():
 
     def prepare(target, gear=True, level=None, spare=False):
         events.append(('gear', dict(ships[0])))
-        return list(GEARED), None
+        return gear_record(GEARED, checked=True), None
 
     leveling = leveling_with(prepare=prepare)
 
@@ -207,10 +209,11 @@ def test_ships_come_in_a_few_at_a_time():
 
 def test_ships_of_the_fleets_get_gear_at_10():
     slots = mob_fleet()
-    # Maury has an auxiliary at +6 and no augment, the others are at +10
-    records = {id(slot): {'name': slot.name, 'gear_levels': GEARED[:5], 'augment_level': 10} for slot in slots}
+    # Maury has an auxiliary at +6 and no augment, the others are at +10 and checked
+    records = {id(slot): {'name': slot.name, **gear_record(GEARED, checked=True)} for slot in slots}
     records[id(slots[3])].update(gear_levels=[11, 10, 11, 13, 6], augment_level=0, hull='DD')
-    leveling = SimpleNamespace(leveling_member=Mock(return_value=([11, 10, 11, 13, 10, 10], None)))
+    leveling = SimpleNamespace(leveling_member=Mock(
+        return_value=(gear_record([11, 10, 11, 13, 10, 10], checked=True), None)))
 
     assert Leveling.leveling_gear_members(leveling, slots, records) == 1
     # Her hull type tells her auxiliaries
@@ -330,3 +333,59 @@ def test_ships_at_120_and_above_leave_the_fleets(monkeypatch):
     # No other swap in the run
     assert len(executed) == 2
     assert all(slot.level < 120 for slot in slots)
+
+
+def cooper():
+    # Gear at +10 in her 6 slots, as a scan of the dock reads it: a sonar at +10 would read the same
+    return dict(name='Cooper', index=0, level=110, hull='DD', **gear_record([10] * 6))
+
+
+def test_gear_at_10_not_checked_is_not_geared():
+    # The Codex review of 2026-10-21: levels alone took her as geared
+    record = cooper()
+    target = leveling_queue([record])[0]
+
+    assert not is_geared(record)
+    assert not target.geared and target.gear_done
+
+
+def test_a_ship_coming_in_has_her_gear_checked():
+    slots = [Slot(1, 'vanguard', 0, 'Hasty', 110)]
+    record = cooper()
+    target = leveling_queue([record])[0]
+    # Storage could not replace her sonar, her gear does not pass
+    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False: (
+        gear_record([10] * 6, checked=False), None))
+
+    assert Leveling.leveling_execute(leveling, [(slots[0], [target])], slots, [record], minimum=95) == 0
+    assert leveling.ship_prepare.call_args[1]['gear'] is True
+    leveling.fleet_swap.assert_not_called()
+    assert record['gear_policy'] == 0 and record['gear_tried']
+
+    # Checked and passed, she comes in
+    record = cooper()
+    target = leveling_queue([record])[0]
+    leveling = leveling_with()
+    assert Leveling.leveling_execute(leveling, [(slots[0], [target])], slots, [record], minimum=95) == 1
+    assert is_geared(record)
+
+
+def test_a_ship_of_the_fleets_has_her_gear_checked():
+    slot = Slot(1, 'vanguard', 0, 'Cooper', 110)
+    record = cooper()
+    leveling = SimpleNamespace(leveling_member=Mock(return_value=(gear_record([10] * 6, checked=False), None)))
+
+    assert Leveling.leveling_gear_members(leveling, [slot], {id(slot): record}) == 1
+    assert leveling.leveling_member.call_args == call(slot, gear=True, hull='DD')
+    # The sonar stays, she is tried again in a day
+    assert not is_geared(record)
+    assert Leveling.leveling_gear_members(leveling, [slot], {id(slot): record}) == 0
+
+
+def test_ships_leaving_the_fleets_get_no_gear():
+    slots = [Slot(2, 'vanguard', 0, 'Eldridge (Retrofit)', 125), Slot(1, 'vanguard', 0, 'Cooper', 110)]
+    records = {id(slots[0]): dict(cooper(), name='Eldridge (Retrofit)', level=125), id(slots[1]): cooper()}
+    leveling = SimpleNamespace(leveling_member=Mock(return_value=(gear_record([10] * 6, checked=True), None)))
+
+    assert Leveling.leveling_gear_members(leveling, slots, records) == 1
+    assert leveling.leveling_member.call_args == call(slots[1], gear=True, hull='DD')

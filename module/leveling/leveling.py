@@ -22,7 +22,7 @@ from module.equipment.assets import FLEET_DETAIL_CHECK
 from module.inventory.inventory import filepath_inventory, save_inventory
 from module.leveling.boost import LevelingBoost
 from module.leveling.plan import BOOST_CAP, CARRY_LEVEL, FARM_LEVEL_MAX, ShipMatcher, campaign_fleets, carry_targets, \
-    fleet_average, gear_record, is_geared, level_needed, leveling_queue, load_ship_data, plan_boosts, plan_carries, \
+    fleet_average, is_geared, level_needed, leveling_queue, load_ship_data, plan_boosts, plan_carries, \
     plan_done, plan_lift, plan_swaps, update_levels
 from module.leveling.record import load_record, record_average, save_record
 from module.logger import logger
@@ -183,19 +183,20 @@ class Leveling(LevelingBoost):
                         record['gear_tried'] = datetime.now().strftime(TIME_FORMAT)
                         if save is not None:
                             save()
-                    levels, level = self.ship_prepare(target, gear=not target.geared, level=boost, spare=spare)
+                    gear, level = self.ship_prepare(target, gear=not target.geared, level=boost, spare=spare)
                     self.ui_ensure(page_fleet)
                     self.fleet_formation_ensure()
-                    if record is not None and (levels is not None or level is not None):
-                        if levels is not None:
-                            record.update(gear_record(levels))
+                    if record is not None and (gear is not None or level is not None):
+                        if gear is not None:
+                            record.update(gear)
                         if level is not None:
                             set_level(record, level)
                         if save is not None:
                             save()
                     if not target.geared:
-                        if levels is None or not is_geared(gear_record(levels)):
-                            logger.info(f'{target.ship} can not be geared from storage, gear {levels}')
+                        # Gear at +10 that passes the policy, a sonar storage could not replace keeps her out
+                        if gear is None or not is_geared(gear):
+                            logger.info(f'{target.ship} can not be geared from storage, gear {gear}')
                             missing.add(target.character)
                             continue
                         target.geared = True
@@ -235,7 +236,7 @@ class Leveling(LevelingBoost):
             hull (str): Her hull type, for her gear
 
         Returns:
-            tuple[list[int], int]: As ship_prepare()
+            tuple[dict, int]: As ship_prepare()
 
         Pages:
             in: page_fleet
@@ -245,23 +246,25 @@ class Leveling(LevelingBoost):
         self.fleet_formation_ensure()
         self.formation_goto_fleet(slot.fleet)
         self.fleet_ship_enter(slot)
-        levels = None
+        record = None
         if gear:
-            levels = self.gear_fill(hull=hull)
-            if levels is None:
+            record = self.gear_fill(hull=hull)
+            if record is None:
                 logger.warning(f'Gear of {slot.name} left unfinished')
                 self.ui_ensure(page_fleet)
                 self.fleet_formation_ensure()
                 return None, None
-            logger.info(f'{slot.name} has gear at {levels}')
+            logger.info(f'{slot.name} has gear {record}')
         boosted = self.boost_to(level) if level is not None else None
         self.ui_back(check_button=FLEET_DETAIL_CHECK)
         self.fleet_formation_ensure()
-        return levels, boosted
+        return record, boosted
 
     def leveling_gear_members(self, slots, records, save=None):
         """
-        Ships of the fleets with gear below +10 in a slot get gear from storage, GEAR_TRIES of them at most.
+        Ships of the fleets not geared get gear from storage, GEAR_TRIES of them at most: gear below +10 in a slot,
+        or gear not checked against the policy, see module.leveling.plan.is_geared(). Ships at FARM_LEVEL_MAX and
+        above are left out, they leave the fleets.
 
         Args:
             slots (list[Slot]):
@@ -279,13 +282,15 @@ class Leveling(LevelingBoost):
             record = records.get(id(slot))
             if record is None or is_geared(record) or gear_tried_recently(record, now):
                 continue
+            if slot.level >= FARM_LEVEL_MAX:
+                continue
             trips += 1
             record['gear_tried'] = now.strftime(TIME_FORMAT)
             if save is not None:
                 save()
-            levels, _ = self.leveling_member(slot, gear=True, hull=record.get('hull'))
-            if levels is not None:
-                record.update(gear_record(levels))
+            gear, _ = self.leveling_member(slot, gear=True, hull=record.get('hull'))
+            if gear is not None:
+                record.update(gear)
                 if save is not None:
                     save()
         return trips
@@ -336,7 +341,8 @@ class Leveling(LevelingBoost):
             targets = [target for target in queue if target.row == row][:QUEUE_LOG]
             logger.info(f'Leveling queue, {row}: ' + ', '.join(
                 f'{target.ship} Lv.{target.level}->{target.goal} ({target.chips} chips'
-                f'{"" if target.geared else ", no gear"})' for target in targets))
+                f'{"" if target.geared else ", gear not checked" if target.gear_done else ", no gear"})'
+                for target in targets))
 
     def run(self):
         inventory = load_inventory(self.config.config_name)

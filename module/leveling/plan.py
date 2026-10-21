@@ -77,6 +77,10 @@ HULL_ROW = {
 # A ship without gear sinks early and misses the EXP of the battles after.
 GEARED_SLOTS = 5
 GEARED_LEVEL = 10
+# Her gear was checked against module.leveling.policy, the rules of 12-4, and nothing they leave out is on her.
+# Levels alone would take a sonar at +10 for gear, the Codex review of 2026-10-21. The inventory keeps the version
+# of the rules a ship passed, a scan of the dock reads levels only and a ship is checked again after it.
+GEAR_POLICY = 1
 # Rows of the mob fleet that take ships without gear: they get gear from storage as they come in, and come in
 # only if it makes them geared. Two ships at +0 in the vanguard lost a battle of the mobs of 12-4 that ships at +10
 # won.
@@ -151,14 +155,14 @@ def power(stats):
     return sum(weight * stats.get(key, 0) for key, weight in POWER_WEIGHTS.items())
 
 
-def is_geared(ship):
+def gear_levels_done(ship):
     """
     Args:
         ship (dict): Ship of the inventory, with the enhancement levels of her 5 gear slots and of her augment.
             An empty slot and gear at +0 both read 0.
 
     Returns:
-        bool: If she has gear to fight with: all 6 slots at GEARED_LEVEL, the augment too, the user's rule
+        bool: If all 6 slots are at GEARED_LEVEL, the augment too, the user's rule
     """
     levels = ship.get('gear_levels') or []
     if sum(1 for level in levels if (level or 0) >= GEARED_LEVEL) < GEARED_SLOTS:
@@ -166,16 +170,30 @@ def is_geared(ship):
     return (ship.get('augment_level') or 0) >= GEARED_LEVEL
 
 
-def gear_record(levels):
+def is_geared(ship):
+    """
+    Args:
+        ship (dict): Ship of the inventory
+
+    Returns:
+        bool: If she has gear to fight with: all 6 slots at GEARED_LEVEL, and her gear checked against the rules of
+            12-4, see GEAR_POLICY
+    """
+    return gear_levels_done(ship) and ship.get('gear_policy') == GEAR_POLICY
+
+
+def gear_record(levels, checked=False):
     """
     Args:
         levels (list[int]): Enhancement of the 5 gear slots and of the augment, as module.leveling.gear reads them
+        checked (bool): If her gear was checked against module.leveling.policy and nothing it leaves out is on her
 
     Returns:
-        dict: gear_levels and augment_level, as the inventory keeps them
+        dict: gear_levels, augment_level and gear_policy, as the inventory keeps them
     """
     levels = [max(level or 0, 0) for level in levels]
-    return {'gear_levels': levels[:5], 'augment_level': levels[5] if len(levels) > 5 else 0}
+    return {'gear_levels': levels[:5], 'augment_level': levels[5] if len(levels) > 5 else 0,
+            'gear_policy': GEAR_POLICY if checked else 0}
 
 
 def name_key(name):
@@ -323,6 +341,8 @@ class Target:
     geared: bool
     # Place in the dock of the scan
     index: int
+    # If her gear is at +10 in all 6 slots, checked or not
+    gear_done: bool = False
 
     @property
     def character(self):
@@ -411,7 +431,7 @@ def leveling_queue(ships, data=None, ultra_to_125=True):
             name=ship.get('name'), ship=match.name, hull=match.hull, row=HULL_ROW.get(match.hull, 'vanguard'),
             rarity=rarity, level=level, goal=goal, chips=chips, arrays=arrays,
             gain=round(gain, 1), tech=round(tech, 1), score=score, priority=priority,
-            geared=is_geared(ship), index=ship.get('index', -1),
+            geared=is_geared(ship), index=ship.get('index', -1), gear_done=gear_levels_done(ship),
         ))
 
     queue.sort(key=Target.sort_key)
@@ -568,14 +588,15 @@ def carry_targets(ships, data=None):
         data (dict[str, ShipData]):
 
     Returns:
-        list[Target]: Ships to fight a boss, geared, at CARRY_LEVEL or above and under FARM_LEVEL_MAX,
-            the most powerful first
+        list[Target]: Ships to fight a boss, with gear at +10, at CARRY_LEVEL or above and under FARM_LEVEL_MAX,
+            the most powerful first. One whose gear was not checked against the policy is geared=False, she gets a
+            trip to the depot before she comes in.
     """
     matcher = ShipMatcher(data if data is not None else load_ship_data())
     best = {}
     for ship in ships:
         level = ship.get('level') or 0
-        if not CARRY_LEVEL <= level < FARM_LEVEL_MAX or not is_geared(ship):
+        if not CARRY_LEVEL <= level < FARM_LEVEL_MAX or not gear_levels_done(ship):
             continue
         match = matcher.match(ship.get('name') or '')
         if match is None:
@@ -587,8 +608,8 @@ def carry_targets(ships, data=None):
     targets = [
         Target(name=ship.get('name'), ship=match.name, hull=match.hull, row=HULL_ROW.get(match.hull, 'vanguard'),
                rarity=matcher.base_rarity(match), level=ship['level'], goal=ship['level'], chips=0, arrays=0,
-               gain=0., tech=0., score=float(ship.get('power') or 0), priority=3, geared=True,
-               index=ship.get('index', -1))
+               gain=0., tech=0., score=float(ship.get('power') or 0), priority=3, geared=is_geared(ship),
+               index=ship.get('index', -1), gear_done=True)
         for ship, match in best.values()
     ]
     targets.sort(key=lambda target: -target.score)
