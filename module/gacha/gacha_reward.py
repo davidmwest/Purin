@@ -1,4 +1,7 @@
+import cv2
+
 from module.base.timer import Timer
+from module.base.utils import crop
 from module.campaign.campaign_status import OCR_COIN
 from module.combat.assets import GET_SHIP
 from module.exception import ScriptError
@@ -15,6 +18,28 @@ OCR_BUILD_CUBE_COUNT = Digit(BUILD_CUBE_COUNT, letter=(255, 247, 247), threshold
 OCR_BUILD_TICKET_COUNT = Digit(BUILD_TICKET_COUNT, letter=(255, 247, 247), threshold=64)
 OCR_BUILD_SUBMIT_COUNT = Digit(BUILD_SUBMIT_COUNT, letter=(255, 247, 247), threshold=64)
 OCR_BUILD_SUBMIT_WW_COUNT = Digit(BUILD_SUBMIT_WW_COUNT, letter=(255, 247, 247), threshold=64)
+# "Ship Found" over the ships of many orders in two rows, "Tap to continue" under them. Its title is higher and larger
+# than BUILD_FINISH_RESULTS, that template scored 0.23 on the 10 ships of the F2P account and the queue timed out.
+SHIP_FOUND = './assets/gacha/ship_found.png'
+SHIP_FOUND_AREA = (500, 30, 800, 240)
+SHIP_FOUND_SIMILARITY = 0.8
+_ship_found = None
+
+
+def ship_found_appear(image):
+    """
+    Args:
+        image (np.ndarray): Screenshot
+
+    Returns:
+        bool: If the results of many build orders are shown
+    """
+    global _ship_found
+    if _ship_found is None:
+        _ship_found = cv2.cvtColor(cv2.imread(SHIP_FOUND), cv2.COLOR_BGR2RGB)
+    region = crop(image, SHIP_FOUND_AREA, copy=False)
+    result = cv2.matchTemplate(region, _ship_found, cv2.TM_CCOEFF_NORMED)
+    return float(cv2.minMaxLoc(result)[1]) > SHIP_FOUND_SIMILARITY
 
 
 class RewardGacha(GachaUI, Retirement):
@@ -199,6 +224,7 @@ class RewardGacha(GachaUI, Retirement):
         # Transition appropriate screens
         # and end up in Gacha/Build page
         confirm_timer = Timer(1, count=2).start()
+        results_timer = Timer(3)
         confirm_mode = True  # Drill, Lock Ship
         # Clear button offset, or will click at the PLUS button of gems or HOME button
         STORY_SKIP.clear_offset()
@@ -240,6 +266,12 @@ class RewardGacha(GachaUI, Retirement):
 
             if self.appear(BUILD_FINISH_RESULTS, offset=(20, 150), interval=3):
                 self.device.click(BUILD_FINISH_ORDERS)  # Safe area
+                confirm_timer.reset()
+                continue
+            if results_timer.reached() and ship_found_appear(self.device.image):
+                logger.info('Ship found, tap to continue')
+                self.device.click(BUILD_FINISH_ORDERS)  # Safe area
+                results_timer.reset()
                 confirm_timer.reset()
                 continue
 
