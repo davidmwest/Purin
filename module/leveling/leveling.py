@@ -206,10 +206,19 @@ class Leveling(LevelingBoost):
                     if level is not None:
                         target.level = level
                 self.formation_goto_fleet(slot.fleet)
+                read_level = target.level
                 if self.fleet_swap(slot, target):
                     taken.add(target.character)
                     swapped += 1
                     slot.name, slot.level = target.name, target.level
+                    if target.level != read_level:
+                        # Up since the dock read, fleet_swap took the level of her card
+                        record = next((ship for ship in ships if ship.get('name') == target.name
+                                       and ship.get('index', -1) == target.index), None)
+                        if record is not None:
+                            set_level(record, target.level)
+                            if save is not None:
+                                save()
                     break
                 # In an other fleet, on a commission, or not found
                 missing.add(target.character)

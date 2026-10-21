@@ -19,7 +19,7 @@ from module.base.button import Button
 from module.base.timer import Timer
 from module.equipment.assets import EQUIPMENT_OPEN, FLEET_DETAIL, FLEET_DETAIL_CHECK
 from module.formation.formation import Formation
-from module.leveling.plan import RETROFIT, ShipMatcher, Slot, load_ship_data, name_key
+from module.leveling.plan import FARM_LEVEL_MAX, RETROFIT, ShipMatcher, Slot, load_ship_data, name_key
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr
 from module.retire.assets import DOCK_CHECK
@@ -352,6 +352,12 @@ class LevelingFleet(Formation):
             if ship.level == target.level:
                 return ship
         if len(fits) == 1:
+            # A ship goes up in level after the dock read, never down. One below it is an other copy, a level 1
+            # duplicate when the copy looked for is on a commission: taken, it came in as the geared level 110 one.
+            if fits[0].level < target.level:
+                logger.warning(f'{target.ship} found at level {fits[0].level} only, the dock read had '
+                               f'{target.level}: an other copy, not taken')
+                return None
             logger.info(f'{target.ship} found at level {fits[0].level}, the dock read had {target.level}')
             return fits[0]
         logger.info(f'{target.ship} at level {target.level} not found, cards: {list(zip(names, [s.level for s in ships]))}')
@@ -383,9 +389,16 @@ class LevelingFleet(Formation):
                 self.device.sleep(1)
                 self.device.screenshot()
                 ship = self.dock_find(target)
+        if ship is not None and ship.level >= FARM_LEVEL_MAX:
+            # The fleets that farm hold ships under 120, one that went up to it since the dock read stays out
+            logger.warning(f'{target.ship} is at level {ship.level} now, the fleets that farm hold ships '
+                           f'under {FARM_LEVEL_MAX}')
+            ship = None
         if ship is None:
             self.ui_back(check_button=FLEET_CHECK)
             return False
         self.dock_select_one(ship.button)
         self.dock_select_confirm(check_button=FLEET_CHECK)
+        # She comes in at her level now, the fleet's average and the records follow it
+        target.level = ship.level
         return True

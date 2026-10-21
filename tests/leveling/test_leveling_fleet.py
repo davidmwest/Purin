@@ -122,8 +122,10 @@ def test_ship_found_by_a_search():
     # The first card is to remove the ship of the slot, the ship found comes after it
     assert ship.level == 73
     assert ship.button.area == CARD_GRIDS[(1, 0)].area
-    # The dock read had an other level, she is the only Cooper
-    assert fleet.dock_find(target('Cooper', 74)) is not None
+    # The only Cooper, the dock read had her lower: she went up since
+    assert fleet.dock_find(target('Cooper', 72)) is not None
+    # The dock read had her higher: the card is an other copy, ships never go down in level
+    assert fleet.dock_find(target('Cooper', 74)) is None
     assert fleet.dock_find(target('Hasty', 72)) is None
 
 
