@@ -127,7 +127,7 @@ class FakeDialog:
 def fake_boost(fake):
     boost = LevelingBoost.__new__(LevelingBoost)
     boost.device = SimpleNamespace(image=None, click=fake.click, sleep=Mock(), screenshot=Mock(),
-                                   stuck_record_add=Mock())
+                                   stuck_record_add=Mock(), click_record_clear=Mock())
     boost.interval_timer = {}
     boost.is_boost_dialog = lambda: fake.shown
     boost.is_boost_enter = lambda: not fake.shown
@@ -187,3 +187,36 @@ def test_spare_packs_only_when_storage_spares_them():
 
     assert fake_boost(fake).boost_to(None, spare=True) is None
     assert fake.used == 0 and not fake.shown
+
+
+def test_many_taps_do_not_trip_the_record_of_clicks():
+    # Tirpitz at 72 to 97 took more than 12 taps of +10, Alas stopped it as a button tapped too often
+    fake = FakeDialog()
+    boost = fake_boost(fake)
+    clicks = []
+
+    def click(button):
+        clicks.append(button.name)
+        # The record of Alas: 12 taps of a button in the last 15 stop it
+        if clicks[-15:].count(button.name) >= 12:
+            raise AssertionError('Too many click')
+        fake.click(button)
+
+    def clear():
+        clicks.clear()
+
+    boost.device.click = click
+    boost.device.click_record_clear = clear
+    fake.level = 72
+
+    assert boost.boost_to(97) == 97
+
+
+def test_auto_takes_her_to_100_in_one_tap():
+    fake = FakeDialog()
+    boost = fake_boost(fake)
+    taps = []
+    boost.device.click = lambda button: taps.append(button.name) or fake.click(button)
+
+    assert boost.boost_to(100) == 100
+    assert taps.count('BOOST_T1_PLUS10') == 0 and 'BOOST_AUTO' in taps

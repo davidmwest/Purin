@@ -147,10 +147,13 @@ class LevelingBoost(LevelingGear):
     def boost_tap(self, button):
         """
         Tap a button of the dialog and read the levels the packs add after it.
+        The dialog takes a tap of +10 for every 2 levels or so: the record of clicks, that stops a button tapped
+        12 times in a row, is cleared first. 25 levels lost to it once.
 
         Returns:
             int:
         """
+        self.device.click_record_clear()
         self.device.click(button)
         self.device.sleep((0.3, 0.4))
         self.device.screenshot()
@@ -207,6 +210,13 @@ class LevelingBoost(LevelingGear):
             out: the Boost EXP dialog
         """
         gain = self.boost_read_gain()
+        if self.boost_read_level() + wanted >= BOOST_CAP:
+            # Auto chooses the packs to her level cap in one tap
+            gain = self.boost_tap(BOOST_AUTO)
+            if gain >= wanted:
+                return gain
+            self.boost_tap(BOOST_CLEAR)
+            gain = 0
         for _ in range(PLUS10_TAPS):
             if gain >= wanted:
                 break
