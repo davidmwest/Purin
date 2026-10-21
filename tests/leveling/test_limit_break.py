@@ -65,3 +65,49 @@ def test_the_result_of_a_limit_break():
     assert template_score(screen('limit_break_tab.png'), load_image(RESULT), RESULT_AREA) < SIMILARITY
     # The result is not the tab, its slot empty or not
     assert not is_tab(result_screen())
+
+
+def test_the_ship_of_the_fleet_is_limit_broken_not_a_higher_copy():
+    # Code review (Codex, 2026-10-21): Cooper 70 in fleet 1, an other Cooper at 90 in fleet 2. The highest card of
+    # her name was opened and limit broken, the one of the fleet stayed capped.
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from module.leveling.limit_break import LimitBreak
+    from module.leveling.plan import Slot
+    slot = Slot(1, 'vanguard', 0, 'Cooper', 70)
+    fleet_ship = SimpleNamespace(level=70, fleet=1, button='active_fleet_copy_70')
+    other_ship = SimpleNamespace(level=90, fleet=2, button='different_copy_90')
+    controller = SimpleNamespace(
+        config=SimpleNamespace(task_delay=Mock()),
+        device=SimpleNamespace(sleep=Mock(), screenshot=Mock()),
+        ui_ensure=Mock(), formation_fleets=Mock(return_value=[1]), formation_goto_fleet=Mock(),
+        fleet_read_slots=Mock(return_value=[slot]),
+        fleet_formation_ensure=Mock(), limit_break_cards=Mock(return_value=[other_ship, fleet_ship]),
+        fleet_ship_enter=Mock(), ship_info_enter=Mock(), ship_side_navbar_ensure=Mock(),
+        limit_break_name_fits=Mock(return_value=True), is_limit_break_tab=Mock(return_value=True),
+        limit_break_once=Mock(side_effect=[True, False]), handle_popup_cancel=Mock(return_value=False), ui_back=Mock(),
+    )
+    controller.limit_break_ship = lambda *args: LimitBreak.limit_break_ship(controller, *args)
+
+    LimitBreak.run(controller)
+
+    controller.fleet_ship_enter.assert_called_once_with(slot)
+    controller.ship_info_enter.assert_not_called()
+    assert controller.limit_break_once.call_count == 1
+
+
+def test_an_other_ship_on_the_detail_page_is_not_limit_broken():
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from module.leveling.limit_break import LimitBreak
+    from module.leveling.plan import ShipMatcher, load_ship_data
+    matcher = ShipMatcher(load_ship_data())
+    controller = SimpleNamespace(device=SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8)))
+    with patch('module.leveling.limit_break.Ocr') as ocr:
+        ocr.return_value.ocr.return_value = 'Hammann'
+        assert LimitBreak.limit_break_name_fits(controller, 'Cooper', matcher) is False
+        ocr.return_value.ocr.return_value = 'Cooper'
+        assert LimitBreak.limit_break_name_fits(controller, 'Cooper', matcher) is True
+        # Not read, the ship of the slot is trusted
+        ocr.return_value.ocr.return_value = ''
+        assert LimitBreak.limit_break_name_fits(controller, 'Cooper', matcher) is True

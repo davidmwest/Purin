@@ -18,12 +18,11 @@ import cv2
 
 from module.base.timer import Timer
 from module.base.utils import crop, load_image
-from module.equipment.assets import EQUIPMENT_OPEN
+from module.equipment.assets import FLEET_DETAIL_CHECK
 from module.leveling.fleet import LevelingFleet, area_button, card_name_area, name_fits, search_term
 from module.leveling.plan import ShipMatcher, load_ship_data
 from module.logger import logger
 from module.ocr.ocr import Ocr
-from module.retire.assets import DOCK_CHECK
 from module.retire.scanner import ShipScanner
 from module.ui.page import page_dock, page_fleet, page_main
 
@@ -48,6 +47,8 @@ RESULT = './assets/leveling/limit_break_result.png'
 RESULT_AREA = (660, 110, 1095, 265)
 # Seconds on the tab with the slot emptied and no result shown, before the limit break is taken as done
 RESULT_WAIT = 5
+# Her name on top of the detail page, white letters
+DETAIL_NAME = area_button((230, 86, 420, 118), 'LIMIT_BREAK_NAME')
 # A ship is limit broken 3 times at most
 LIMIT_BREAK_MAX = 3
 # Seconds for Quick Select to fill the slot, and for a limit break to come back to the tab
@@ -199,17 +200,39 @@ class LimitBreak(LevelingFleet):
                 self.device.click(SAFE_TAP)
                 tap.reset()
 
-    def limit_break_ship(self, name):
+    def limit_break_name_fits(self, name, matcher):
         """
         Args:
-            name (str): Name of a ship of a fleet, on the wiki
+            name (str): Name of the ship of the slot, on the wiki
+            matcher (ShipMatcher):
+
+        Returns:
+            bool: False if the detail page shows an other ship, True if hers or not read
+
+        Pages:
+            in: detail page of a ship
+        """
+        read = Ocr(DETAIL_NAME, lang='cnocr', letter=(255, 255, 255), threshold=128, name='LIMIT_BREAK_NAME').ocr(
+            self.device.image)
+        data = matcher.match(str(read)) if read else None
+        if data is not None and data.name != name:
+            logger.warning(f'The detail page shows {data.name}, not {name}')
+            return False
+        return True
+
+    def limit_break_ship(self, slot, name, matcher):
+        """
+        Args:
+            slot (Slot): Of a fleet, her ship is the one limit broken
+            name (str): Her name on the wiki
+            matcher (ShipMatcher):
 
         Returns:
             int: Limit breaks done
 
         Pages:
             in: Any page
-            out: page_dock
+            out: page_fleet, its Info view
         """
         logger.hr(f'Limit break {name}', level=2)
         # The search bar keeps the name typed before, "Nevada" went after "Long Island" and found nothing:
@@ -221,15 +244,19 @@ class LimitBreak(LevelingFleet):
         if copies < 1:
             logger.info(f'{name} has no copy in the dock, not tried')
             return 0
-        keeper = cards[0]
-        self.ship_info_enter(click_button=keeper.button, check_button=EQUIPMENT_OPEN, long_click=False,
-                             skip_first_screenshot=False)
+        # The ship of the slot is opened from the fleet: the highest card of her name can be an other copy of her,
+        # in an other fleet or in the dock (code review, Codex)
+        self.ui_ensure(page_fleet)
+        self.formation_goto_fleet(slot.fleet)
+        self.fleet_ship_enter(slot)
         # Detail tab 1, gear 2, limit break 3 from the bottom, with or without a retrofit tab on top
         self.ship_side_navbar_ensure(bottom=3)
         self.device.sleep(1)
         self.device.screenshot()
         done = 0
-        if self.is_limit_break_tab():
+        if not self.limit_break_name_fits(name, matcher):
+            pass
+        elif self.is_limit_break_tab():
             for _ in range(min(copies, LIMIT_BREAK_MAX)):
                 if not self.limit_break_once():
                     break
@@ -243,13 +270,14 @@ class LimitBreak(LevelingFleet):
             if not self.handle_popup_cancel('LIMIT_BREAK_LEAVE'):
                 break
             self.device.sleep(1)
-        self.ui_back(check_button=DOCK_CHECK)
+        self.ui_back(check_button=FLEET_DETAIL_CHECK)
+        self.fleet_formation_ensure()
         return done
 
     def run(self):
         matcher = ShipMatcher(load_ship_data())
         self.ui_ensure(page_fleet)
-        names = []
+        members = []
         for fleet in self.formation_fleets():
             self.formation_goto_fleet(fleet)
             for slot in self.fleet_read_slots(fleet):
@@ -260,12 +288,12 @@ class LimitBreak(LevelingFleet):
                     continue
                 if not search_term(data.name):
                     continue
-                names.append(data.name)
+                members.append((slot, data.name))
         self.fleet_formation_ensure()
         total = 0
-        if names:
-            for name in names:
-                total += self.limit_break_ship(name)
+        if members:
+            for slot, name in members:
+                total += self.limit_break_ship(slot, name, matcher)
             self.ui_ensure(page_fleet)
             self.fleet_formation_ensure()
         logger.info(f'Limit breaks done: {total}')
