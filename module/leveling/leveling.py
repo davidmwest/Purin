@@ -21,9 +21,9 @@ from datetime import datetime, timedelta
 from module.equipment.assets import FLEET_DETAIL_CHECK
 from module.inventory.inventory import filepath_inventory, save_inventory
 from module.leveling.boost import LevelingBoost
-from module.leveling.plan import BOOST_CAP, CARRY_LEVEL, FARM_LEVEL_MAX, ShipMatcher, campaign_fleets, carry_targets, \
-    fleet_average, is_geared, level_needed, leveling_queue, load_ship_data, plan_boosts, plan_carries, \
-    plan_done, plan_lift, plan_swaps, update_levels
+from module.leveling.plan import BOOST_CAP, CARRY_LEVEL, FARM_LEVEL_MAX, campaign_fleets, carry_targets, \
+    fleet_average, is_geared, level_needed, leveling_queue, load_ship_data, mark_slot, plan_boosts, plan_carries, \
+    plan_done, plan_lift, plan_swaps, slot_records, update_levels
 from module.leveling.readiness import RECOVERY_MINUTES, assess_fleets
 from module.leveling.record import load_record, record_average, save_record
 from module.logger import logger
@@ -84,25 +84,10 @@ def inventory_ships_of(ships, slots, data=None):
         data (dict[str, ShipData]):
 
     Returns:
-        dict[int, dict]: Ship of the inventory of each slot read, by id() of the slot. A ship may have copies in
-            the dock, the one at the highest level is the one in a fleet.
+        dict[int, dict]: Ship of the inventory in each slot read, by id() of the slot: the copy in the slot for a
+            ship with copies, a slot whose copy is not known for sure is left out, see plan.slot_records()
     """
-    matcher = ShipMatcher(data if data is not None else load_ship_data())
-    wanted = {}
-    for slot in slots:
-        match = matcher.match(slot.name) if slot.name else None
-        if match is not None:
-            wanted[id(slot)] = match.character
-    characters = set(wanted.values())
-    best = {}
-    for ship in ships:
-        match = matcher.match(ship.get('name') or '')
-        if match is None or match.character not in characters:
-            continue
-        current = best.get(match.character)
-        if current is None or (ship.get('level') or 0) > (current.get('level') or 0):
-            best[match.character] = ship
-    return {key: best[character] for key, character in wanted.items() if character in best}
+    return slot_records(ships, slots, data)
 
 
 def set_level(ship, level):
@@ -213,6 +198,13 @@ class Leveling(LevelingBoost):
                     taken.add(target.character)
                     swapped += 1
                     slot.name, slot.level = target.name, target.level
+                    # The copy that came in, told apart from her others by it
+                    record = next((ship for ship in ships if ship.get('name') == target.name
+                                   and ship.get('index', -1) == target.index), None)
+                    if record is not None:
+                        mark_slot(ships, record, slot)
+                        if save is not None:
+                            save()
                     if target.level != read_level:
                         # Up since the dock read, fleet_swap took the level of her card
                         record = next((ship for ship in ships if ship.get('name') == target.name

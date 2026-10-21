@@ -178,9 +178,11 @@ def test_gear_tried_is_written_before_the_trip_to_the_depot():
     leveling = leveling_with(prepare=prepare)
 
     assert Leveling.leveling_execute(leveling, [(slots[0], [isokaze])], slots, ships, save=save) == 1
-    assert [event for event, _ in events] == ['save', 'gear', 'save']
+    # Then she is seen in her slot, as she came in
+    assert [event for event, _ in events] == ['save', 'gear', 'save', 'save']
     assert 'gear_tried' in events[0][1] and 'gear_levels' not in events[0][1]
     assert events[2][1]['gear_levels'] == GEARED[:5]
+    assert events[3][1]['slot'] == [1, 'vanguard', 0]
 
 
 def test_gear_tried_a_day_ago_is_tried_again():

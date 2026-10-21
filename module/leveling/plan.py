@@ -453,9 +453,99 @@ class Slot:
     level: int
 
 
+# Where a ship of the inventory was seen in the fleets last, [fleet, row, index]: Leveling writes it as it reads the
+# fleets or puts her in one. A ship with copies in the dock is told apart by it and by her level, there is no id of a
+# ship to read, the Codex review of 2026-10-21.
+SLOT_KEY = 'slot'
+
+
+def slot_key(slot):
+    return [slot.fleet, slot.row, slot.index]
+
+
+def slot_records(ships, slots, data=None):
+    """
+    The ship of the inventory in each slot of the fleets, the copy for a ship with copies in the dock.
+
+    A copy fits a slot if her level in the inventory is not above the level read there, levels only go up. Of the
+    copies that fit, the one last seen in the slot is hers, then the one at the level of the slot, then the only one.
+    A copy is in one slot at most. With copies that fit and none of these, the slot is left out, rather than a copy
+    taken for an other: a level written into the wrong one, gear not checked on the right one. A scan of the dock or
+    a swap tells them apart again.
+
+    Args:
+        ships (list[dict]): Ships of the inventory
+        slots (list[Slot]):
+        data (dict[str, ShipData]):
+
+    Returns:
+        dict[int, dict]: Ship of the inventory in each slot told, by id() of the slot
+    """
+    matcher = ShipMatcher(data if data is not None else load_ship_data())
+    by_character = {}
+    for ship in ships:
+        match = matcher.match(ship.get('name') or '')
+        if match is not None:
+            by_character.setdefault(match.character, []).append(ship)
+
+    candidates = []
+    for slot in slots:
+        if not slot.name:
+            continue
+        match = matcher.match(slot.name)
+        if match is None or match.character not in by_character:
+            continue
+        known = 1 <= slot.level <= LEVEL_MAX
+        copies = [ship for ship in by_character[match.character]
+                  if not known or (ship.get('level') or 0) <= slot.level]
+        candidates.append((slot, known, copies))
+
+    found, taken = {}, set()
+
+    def take(slot, ship):
+        found[id(slot)] = ship
+        taken.add(id(ship))
+
+    # Seen there last, then at the level of the slot
+    for evidence in ('seen', 'level'):
+        for slot, known, copies in candidates:
+            if id(slot) in found:
+                continue
+            if evidence == 'seen':
+                fits = [ship for ship in copies if ship.get(SLOT_KEY) == slot_key(slot)]
+            else:
+                fits = [ship for ship in copies if known and (ship.get('level') or 0) == slot.level]
+            fits = [ship for ship in fits if id(ship) not in taken]
+            if len(fits) == 1:
+                take(slot, fits[0])
+    # The only copy that fits
+    for slot, known, copies in candidates:
+        if id(slot) in found:
+            continue
+        free = [ship for ship in copies if id(ship) not in taken]
+        if len(free) == 1:
+            take(slot, free[0])
+        elif len(free) > 1:
+            logger.info(f'Fleet {slot.fleet} {slot.row} {slot.index + 1}: {len(free)} copies of {slot.name} could be '
+                        f'the one at level {slot.level}, she is left out')
+    return found
+
+
+def mark_slot(ships, ship, slot):
+    """
+    A ship of the inventory seen in a slot, or put there: an other ship last seen there is not any more.
+    """
+    key = slot_key(slot)
+    for other in ships:
+        if other is not ship and other.get(SLOT_KEY) == key:
+            other.pop(SLOT_KEY)
+    ship[SLOT_KEY] = key
+
+
 def update_levels(ships, slots, data=None):
     """
     Levels of the ships of the fleets have gone up since the dock was read, the fleet page tells them.
+    Each goes to the copy in the slot, see slot_records(), which is marked as seen there.
 
     Args:
         ships (list[dict]): Ships of the inventory, changed in place
@@ -465,23 +555,14 @@ def update_levels(ships, slots, data=None):
     Returns:
         int: Ships whose level changed
     """
-    matcher = ShipMatcher(data if data is not None else load_ship_data())
-    by_character = {}
-    for ship in ships:
-        match = matcher.match(ship.get('name') or '')
-        if match is not None:
-            by_character.setdefault(match.character, []).append(ship)
-
+    records = slot_records(ships, slots, data)
     changed = 0
     for slot in slots:
-        if not slot.name or not 1 <= slot.level <= LEVEL_MAX:
+        ship = records.get(id(slot))
+        if ship is None:
             continue
-        match = matcher.match(slot.name)
-        if match is None or match.character not in by_character:
-            continue
-        # A copy of the ship may be in the dock too, the one in the fleet is the best
-        ship = max(by_character[match.character], key=lambda s: s.get('level') or 0)
-        if slot.level > (ship.get('level') or 0):
+        mark_slot(ships, ship, slot)
+        if 1 <= slot.level <= LEVEL_MAX and slot.level > (ship.get('level') or 0):
             ship['level'] = slot.level
             # EXP is not shown, a ship at a level cap waits for her awakening
             ship['exp'] = None
