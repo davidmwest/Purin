@@ -321,6 +321,10 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         limit_next_run(["OpsiExplore", "OpsiCrossMonth", "OpsiVoucher", "OpsiMonthBoss", "OpsiShop"],
                        limit=now + timedelta(days=31, seconds=-1))
         limit_next_run(["OpsiArchive"], limit=now + timedelta(days=7, seconds=-1))
+        # The scan of the whole dock runs once a week. Its next run, a week after the end of the last, was pulled in
+        # to now by the limit of a day below as soon as the config was read again: scans of an hour back to back.
+        # Its interval may be set up to 7 days, with some slack for a config read right after it was set.
+        limit_next_run(["Inventory"], limit=now + timedelta(days=7, hours=1))
         limit_next_run(self.args.keys(), limit=now + timedelta(hours=24, seconds=-1))
 
         """
