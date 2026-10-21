@@ -605,6 +605,10 @@
       "goto_main": "前往主界面",
       "close_game": "关闭游戏",
       "close_emulator": "关闭模拟器"
+    },
+    "UserInputWait": {
+      "name": "有人操作时等待（秒）",
+      "help": "有人在模拟器上点击、触摸或按键时，Purin 停下当前任务，不与其抢操作，等到无人操作满这么多秒后重新开始任务。有人操作时开始的等待不会关闭游戏。\n适用于 ADB、uiautomator2 和 MaaTouch 控制方式。填 0 关闭"
     }
   },
   "DropRecord": {

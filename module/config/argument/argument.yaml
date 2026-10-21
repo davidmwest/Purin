@@ -98,6 +98,7 @@ Optimization:
   WhenTaskQueueEmpty:
     value: goto_main
     option: [ stay_there, goto_main, close_game, close_emulator ]
+  UserInputWait: 30
 DropRecord:
   SaveFolder: ./screenshots
   AzurStatsID: null

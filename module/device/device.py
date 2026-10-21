@@ -19,8 +19,9 @@ from module.config.utils import get_server_next_update
 from module.device.app_control import AppControl
 from module.device.control import Control
 from module.device.screenshot import Screenshot
+from module.device.user_input import CONTROL_METHODS as USER_INPUT_CONTROL_METHODS, UserInputWatcher
 from module.exception import (EmulatorNotRunningError, GameNotRunningError, GameStuckError, GameTooManyClickError,
-                              RequestHumanTakeover)
+                              RequestHumanTakeover, UserPlaying)
 from module.handler.assets import GET_MISSION
 from module.handler.tutorial import TUTORIAL_CHECK_INTERVAL, TUTORIAL_DIALOG_TEMPLATE, TUTORIAL_GONE, \
     TUTORIAL_HAND_TEMPLATE, TUTORIAL_TAP_OFFSETS, is_same_step, tutorial_target
@@ -88,6 +89,8 @@ class Device(Screenshot, Control, AppControl):
     # Where the hand pointed at the last tap, and taps at that step
     _tutorial_step = None
     _tutorial_taps = 0
+    # Touches of the emulator by a person, see module/device/user_input.py
+    _user_input = None
 
     def __init__(self, *args, **kwargs):
         for trial in range(4):
@@ -125,6 +128,8 @@ class Device(Screenshot, Control, AppControl):
                 self.early_maatouch_init()
             if self.config.Emulator_ControlMethod == 'minitouch':
                 self.early_minitouch_init()
+            # Touches are followed from now on, someone may be playing already
+            _ = self.user_input_seconds()
 
     def run_simple_screenshot_benchmark(self):
         """
@@ -402,7 +407,60 @@ class Device(Screenshot, Control, AppControl):
         else:
             raise GameNotRunningError('Game died')
 
+    @property
+    def user_input_wait(self):
+        """
+        Returns:
+            int: Seconds nobody has to touch the emulator before Purin taps again, 0 if it does not wait for anyone
+        """
+        try:
+            return int(self.config.Optimization_UserInputWait)
+        except (AttributeError, TypeError, ValueError):
+            return 0
+
+    def user_input_stop(self):
+        """
+        Stop following the touches of the emulator, like before closing it.
+        """
+        if self._user_input is not None:
+            self._user_input.stop()
+            self._user_input = None
+
+    def user_input_seconds(self):
+        """
+        Returns:
+            float: Seconds since someone touched the emulator, infinite if not known.
+                Touches are followed in actual tasks, with a control method unseen by `getevent`, and not while
+                stuck detection is off, as in the semi auto tasks that play along with someone.
+        """
+        if self.user_input_wait <= 0 or self.is_stuck_detection_disabled or not self.config.is_actual_task \
+                or self.config.Emulator_ControlMethod not in USER_INPUT_CONTROL_METHODS:
+            return float('inf')
+        if self._user_input is None or not self._user_input.is_alive:
+            self._user_input = UserInputWatcher(self.adb_binary, self.serial).start()
+        return self._user_input.seconds_since()
+
+    def user_playing(self):
+        """
+        Returns:
+            bool: If someone touched the emulator less than Optimization.UserInputWait seconds ago
+        """
+        return self.user_input_seconds() < self.user_input_wait
+
+    def user_input_check(self):
+        """
+        Raises:
+            UserPlaying: If someone touched the emulator less than Optimization.UserInputWait seconds ago
+        """
+        seconds = self.user_input_seconds()
+        wait = self.user_input_wait
+        if seconds < wait:
+            raise UserPlaying(f'Someone touched the emulator {seconds:.0f}s ago, '
+                              f'Purin waits until nobody has for {wait}s')
+
     def handle_control_check(self, button):
+        # Someone playing is not tapped over
+        self.user_input_check()
         self.stuck_record_clear()
         self.click_record_add(button)
         self.click_record_check()
@@ -485,6 +543,7 @@ class Device(Screenshot, Control, AppControl):
     logged_in = False
 
     def app_start(self):
+        self.user_input_check()
         if not self.config.Error_HandleError:
             logger.critical('No app stop/start, because HandleError disabled')
             logger.critical('Please enable Alas.Error.HandleError or manually login to AzurLane')
@@ -495,6 +554,7 @@ class Device(Screenshot, Control, AppControl):
         self.click_record_clear()
 
     def app_stop(self):
+        self.user_input_check()
         if not self.config.Error_HandleError:
             logger.critical('No app stop/start, because HandleError disabled')
             logger.critical('Please enable Alas.Error.HandleError or manually login to AzurLane')

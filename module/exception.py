@@ -67,6 +67,12 @@ class GamePageUnknownError(Exception):
     pass
 
 
+class UserPlaying(Exception):
+    # Someone touched the emulator, Purin does not tap over them.
+    # The task runs again once nobody has touched it for Optimization.UserInputWait seconds.
+    pass
+
+
 class RequestHumanTakeover(Exception):
     # Request human takeover
     # Alas is unable to handle such error, probably because of wrong settings.

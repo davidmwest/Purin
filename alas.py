@@ -104,6 +104,10 @@ class AzurLaneAutoScript:
             return True
         except TaskEnd:
             return True
+        except UserPlaying as e:
+            # Not a failure, the task runs again once nobody is playing
+            logger.warning(e)
+            return None
         except GameLoggedOutError as e:
             logger.warning(e)
             self.handle_logged_out()
@@ -573,6 +577,7 @@ class AzurLaneAutoScript:
             bool: If stopped. False on platforms that can not stop emulators, the emulator stays as it is.
         """
         logger.info('Close emulator during wait')
+        self.device.user_input_stop()
         if not self.device.emulator_stop():
             logger.warning('Emulator is not closed, close the game only')
             return False
@@ -718,6 +723,22 @@ class AzurLaneAutoScript:
         del_cached_property(self, 'config')
         return True
 
+    def wait_while_user_plays(self):
+        """
+        Hold while someone plays on the emulator, until nobody has touched it for Optimization.UserInputWait seconds.
+        The task that was running starts again after, from wherever the game was left.
+        """
+        wait = self.device.user_input_wait
+        logger.hr('Someone playing', level=1)
+        logger.info(f'Purin waits until nobody has touched the emulator for {wait}s')
+        write_scheduler_state(self.config_name, task='UserPlaying', paused=True)
+        while self.device.user_playing():
+            if self.stop_event is not None and self.stop_event.is_set():
+                break
+            time.sleep(1)
+        logger.info('Nobody touched the emulator for a while, Purin continues')
+        write_scheduler_state(self.config_name)
+
     def get_next_task(self):
         """
         Returns:
@@ -743,6 +764,10 @@ class AzurLaneAutoScript:
                 # Without a device, the emulator was closed, or nothing connected to it since the scheduler started.
                 # It is not started only to be closed, the device of the next task starts it.
                 emulator_closed = method == 'close_emulator' and 'device' not in self.__dict__
+                if method != 'stay_there' and 'device' in self.__dict__ and self.device.user_playing():
+                    # The game is not closed nor taken to its main page under someone's fingers
+                    logger.info('Someone is playing on the emulator, stay there during wait')
+                    method = 'stay_there'
                 if method == 'close_emulator' and not emulator_closed \
                         and task.next_run - datetime.now() < CLOSE_EMULATOR_MIN_WAIT:
                     # Not worth a restart of the game either, it takes half a minute every time
@@ -832,8 +857,14 @@ class AzurLaneAutoScript:
                 del_cached_property(self, 'config')
                 continue
             # A game slowed down by a flood of logs is started again first. If that fails, run() has called Restart.
-            if task != 'Restart' and not self.run('log_flood_check', skip_first_screenshot=True):
-                continue
+            if task != 'Restart':
+                checked = self.run('log_flood_check', skip_first_screenshot=True)
+                if checked is None:
+                    self.wait_while_user_plays()
+                    del_cached_property(self, 'config')
+                    continue
+                if not checked:
+                    continue
 
             # Run
             logger.info(f'Scheduler: Start task `{task}`')
@@ -845,6 +876,11 @@ class AzurLaneAutoScript:
             logger.info(f'Scheduler: End task `{task}`')
             write_scheduler_state(self.config_name)
             self.is_first_task = False
+            if success is None:
+                # Someone played on the emulator, the task is not counted as failed and runs again
+                self.wait_while_user_plays()
+                del_cached_property(self, 'config')
+                continue
 
             # Check failures
             failed = deep_get(self.failure_record, keys=task, default=0)

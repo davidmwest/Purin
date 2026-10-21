@@ -174,7 +174,7 @@ class Waiting(SimpleNamespace):
     A scheduler whose next task `Event` is due after the given wait.
     """
 
-    def __init__(self, wait, method='close_emulator', emulator_stops=True, device=True):
+    def __init__(self, wait, method='close_emulator', emulator_stops=True, device=True, playing=False):
         tasks = [SimpleNamespace(command='Event', next_run=datetime.now() + wait),
                  SimpleNamespace(command='Restart', next_run=datetime.now() - timedelta(seconds=1))]
         config = SimpleNamespace(get_next=lambda: tasks.pop(0), bind=Mock(), task=None, task_call=Mock(),
@@ -184,7 +184,8 @@ class Waiting(SimpleNamespace):
                          wait_until=Mock(return_value=True), run=Mock())
         if device:
             self.device = SimpleNamespace(app_stop=Mock(), release_during_wait=Mock(),
-                                          emulator_stop=Mock(return_value=emulator_stops))
+                                          emulator_stop=Mock(return_value=emulator_stops),
+                                          user_playing=Mock(return_value=playing), user_input_stop=Mock())
         self.close_emulator = lambda: AzurLaneAutoScript.close_emulator(self)
 
 
@@ -280,3 +281,50 @@ def test_every_task_is_in_the_scheduler_priority():
             if 'Scheduler' in (settings or []) and task not in listed:
                 missing.append(task)
     assert missing == []
+
+
+@pytest.mark.parametrize('method', ['close_emulator', 'close_game', 'goto_main'])
+def test_wait_begun_while_someone_plays_leaves_the_game_alone(waiting, method):
+    # "don't fight me when i'm trying to click around"
+    scheduler = waiting(timedelta(hours=1), method=method, playing=True)
+
+    assert AzurLaneAutoScript.get_next_task(scheduler) == 'Event'
+
+    scheduler.device.app_stop.assert_not_called()
+    scheduler.device.emulator_stop.assert_not_called()
+    scheduler.run.assert_not_called()
+    # Nothing was closed, nothing to start again
+    scheduler.config.task_call.assert_not_called()
+
+
+def test_closing_the_emulator_stops_following_its_touches(waiting):
+    scheduler = waiting(timedelta(hours=1))
+    device = scheduler.device
+
+    AzurLaneAutoScript.get_next_task(scheduler)
+
+    device.user_input_stop.assert_called_once_with()
+
+
+def test_someone_playing_ends_the_task_without_failure():
+    from module.exception import UserPlaying
+    runner = Runner(keep_running=True, error=UserPlaying('Someone touched the emulator 2s ago'))
+
+    assert AzurLaneAutoScript.run(runner, 'event2') is None
+
+    # No restart of the game, no error log
+    runner.config.task_call.assert_not_called()
+    runner.save_error_log.assert_not_called()
+
+
+def test_scheduler_waits_until_nobody_plays(monkeypatch):
+    playing = iter([True, True, False])
+    sleeps = []
+    monkeypatch.setattr(alas.time, 'sleep', lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(alas, 'write_scheduler_state', Mock())
+    scheduler = SimpleNamespace(config_name='alas', stop_event=None,
+                                device=SimpleNamespace(user_input_wait=30, user_playing=lambda: next(playing)))
+
+    AzurLaneAutoScript.wait_while_user_plays(scheduler)
+
+    assert sleeps == [1, 1]

@@ -605,6 +605,10 @@
       "goto_main": "goto_main",
       "close_game": "close_game",
       "close_emulator": "close_emulator"
+    },
+    "UserInputWait": {
+      "name": "手動操作時の待機（秒）",
+      "help": "エミュレーターがタップ・クリック・キー入力されると、Purin は今のタスクを止めて操作を邪魔せず、この秒数だけ誰も触らなかったらタスクをやり直します。操作中に始まる待機ではゲームを閉じません。\n操作方法が ADB、uiautomator2、MaaTouch のときに有効です。0 で無効"
     }
   },
   "DropRecord": {

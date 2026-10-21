@@ -228,6 +228,10 @@
           "close_game",
           "close_emulator"
         ]
+      },
+      "UserInputWait": {
+        "type": "input",
+        "value": 30
       }
     },
     "DropRecord": {

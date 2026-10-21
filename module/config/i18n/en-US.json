@@ -605,6 +605,10 @@
       "goto_main": "Goto Main Page",
       "close_game": "Close Game",
       "close_emulator": "Close Emulator"
+    },
+    "UserInputWait": {
+      "name": "Wait for Someone Playing (s)",
+      "help": "When someone taps, clicks or types on the emulator, Purin stops what it is doing instead of tapping over them, and starts the task again once nobody has touched the emulator for this many seconds. A wait that begins while someone plays leaves the game open where it is.\nWorks with the control methods ADB, uiautomator2 and MaaTouch. 0 to turn it off"
     }
   },
   "DropRecord": {
