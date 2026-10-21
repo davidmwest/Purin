@@ -60,6 +60,9 @@ PLUS10_TAPS = 40
 MINUS_TAPS = 10
 # Seconds for each step
 BOOST_TIMEOUT = 10
+# Seconds for the Info tab to show her new level: her EXP bar fills first, 0.7s after a boost of 30 levels it still
+# showed the level before, 2026-10-21
+BOOST_LEVEL_WAIT = 5
 
 
 def parse_level(text):
@@ -323,8 +326,14 @@ class LevelingBoost(LevelingGear):
             if self.is_boost_enter():
                 break
         self.boost_dialog_close()
-        # Her level tells if the packs were used
-        after = self.info_read_level()
+        # Her level tells if the packs were used, once the Info tab shows it
+        after = 0
+        for _ in self.loop(timeout=BOOST_LEVEL_WAIT):
+            read = self.info_read_level()
+            if 0 < read <= BOOST_CAP:
+                after = max(after, read)
+            if after >= current + gain:
+                break
         if after > current:
             logger.info(f'Boosted from level {current} to {after}')
             return after

@@ -86,7 +86,7 @@ class FakeDialog:
     With level_exp, the EXP of each level from hers on.
     """
 
-    def __init__(self, packs_owned=2811, closes_on_confirm=True, level_exp=None):
+    def __init__(self, packs_owned=2811, closes_on_confirm=True, level_exp=None, info_lag=0):
         self.packs = 0
         self.owned = packs_owned
         self.shown = False
@@ -94,6 +94,16 @@ class FakeDialog:
         self.used = 0
         self.closes_on_confirm = closes_on_confirm
         self.level_exp = level_exp
+        # Reads of the Info tab that still show her level before the packs, her EXP bar fills first
+        self.info_lag = info_lag
+        self.shown_level = 70
+
+    def info_level(self):
+        if self.shown_level != self.level and self.info_lag > 0:
+            self.info_lag -= 1
+            return self.shown_level
+        self.shown_level = self.level
+        return self.level
 
     def gain(self):
         exp = 9511 + self.packs * 3000
@@ -145,10 +155,23 @@ def fake_boost(fake):
     boost.boost_read_gain = fake.gain
     boost.boost_read_stock = lambda: fake.owned
     boost.boost_read_count = lambda: fake.packs
-    boost.info_read_level = lambda: fake.level
+    boost.info_read_level = fake.info_level
     boost.handle_popup_confirm = Mock(return_value=False)
     boost.handle_popup_cancel = Mock(return_value=False)
     return boost
+
+
+@pytest.fixture(autouse=True)
+def short_level_wait(monkeypatch):
+    monkeypatch.setattr('module.leveling.boost.BOOST_LEVEL_WAIT', 0.5)
+
+
+def test_her_new_level_shows_a_moment_after_the_packs():
+    # Isokaze 2026-10-21: 274 packs took her from 70 to 100, the Info tab still showed 70 0.7s after
+    fake = FakeDialog(info_lag=3)
+
+    assert fake_boost(fake).boost_to(spare=True) == 100
+    assert fake.level == 100
 
 
 @pytest.mark.parametrize('closes', [True, False])
