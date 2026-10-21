@@ -48,3 +48,20 @@ def test_the_enhance_tab_is_not_the_limit_break_tab():
 
 def test_confirm_not_lit_on_an_empty_screen():
     assert not confirm_orange(np.zeros((720, 1280, 3), dtype=np.uint8))
+
+
+def result_screen():
+    """
+    Long Island limit broken, 2 stars to 3: the "LIMIT BREAK" result, black but for its title
+    """
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    image[100:280, 640:1110] = load_image(os.path.join(DATA, 'limit_break_result.png'))
+    return image
+
+
+def test_the_result_of_a_limit_break():
+    from module.leveling.limit_break import RESULT, RESULT_AREA
+    assert template_score(result_screen(), load_image(RESULT), RESULT_AREA) > SIMILARITY
+    assert template_score(screen('limit_break_tab.png'), load_image(RESULT), RESULT_AREA) < SIMILARITY
+    # The result is not the tab, its slot empty or not
+    assert not is_tab(result_screen())

@@ -40,6 +40,12 @@ SIMILARITY = 0.85
 CONFIRM_ORANGE = 60
 # Stats of the tab, no button under them: a tap there goes through the screens a limit break shows
 SAFE_TAP = area_button((990, 292, 1010, 308), 'LIMIT_BREAK_SAFE')
+# After Confirm: "LIMIT BREAK" over the stats before and after, a tap closes it. It has no back arrow.
+# The slot of the tab empties the moment Confirm is taken, before this shows.
+RESULT = './assets/leveling/limit_break_result.png'
+RESULT_AREA = (660, 110, 1095, 265)
+# Seconds on the tab with the slot emptied and no result shown, before the limit break is taken as done
+RESULT_WAIT = 5
 # A ship is limit broken 3 times at most
 LIMIT_BREAK_MAX = 3
 # Seconds for Quick Select to fill the slot, and for a limit break to come back to the tab
@@ -80,6 +86,9 @@ class LimitBreak(LevelingFleet):
 
     def is_slot_empty(self):
         return template_score(self.device.image, self._template(SLOT_EMPTY), SLOT_AREA) > SIMILARITY
+
+    def is_limit_break_result(self):
+        return template_score(self.device.image, self._template(RESULT), RESULT_AREA) > SIMILARITY
 
     def limit_break_cards(self, name):
         """
@@ -139,34 +148,48 @@ class LimitBreak(LevelingFleet):
             logger.info('Confirm is not lit, the level or the coins are short')
             return False
         self.device.click(CONFIRM_BUTTON)
-        # A popup to confirm, then the screens of the limit break, until the tab is back with its slot empty
+        # A popup to confirm maybe, the result, a tap closes it, then the tab with its slot empty
         timeout = Timer(BREAK_TIMEOUT, count=60).start()
         tap = Timer(2)
         retry = Timer(3, count=6).start()
-        left = False
+        emptied = Timer(RESULT_WAIT, count=10)
+        result = False
         for _ in self.loop():
-            if self.handle_popup_confirm('LIMIT_BREAK'):
-                left = True
-                continue
-            if self.is_limit_break_tab():
-                if self.is_slot_empty():
-                    return True
-                if left and tap.reached():
-                    # Back on the tab with the copy still in the slot
-                    logger.warning('The limit break did not take the copy')
-                    return False
-                if not left and retry.reached():
-                    # The tap on Confirm did not get through
-                    self.device.click(CONFIRM_BUTTON)
-                    retry.reset()
-            else:
-                left = True
+            if timeout.reached():
+                logger.warning('The limit break did not come back to its tab')
+                return result
+            if self.is_limit_break_result():
+                result = True
                 if tap.reached():
                     self.device.click(SAFE_TAP)
                     tap.reset()
-            if timeout.reached():
-                logger.warning('The limit break did not come back to its tab')
-                return False
+                continue
+            if self.handle_popup_confirm('LIMIT_BREAK'):
+                continue
+            if self.is_limit_break_tab():
+                if self.is_slot_empty():
+                    if result:
+                        return True
+                    # The copy is taken, the result comes after it
+                    if not emptied.started():
+                        emptied.start()
+                    if emptied.reached():
+                        logger.info('The copy was taken, no result shown')
+                        return True
+                    continue
+                emptied.clear()
+                if result and tap.reached():
+                    logger.warning('Back on the tab with the copy still in the slot')
+                    return True
+                if retry.reached():
+                    # The tap on Confirm did not get through
+                    self.device.click(CONFIRM_BUTTON)
+                    retry.reset()
+                continue
+            # Another screen of the limit break
+            if tap.reached():
+                self.device.click(SAFE_TAP)
+                tap.reset()
 
     def limit_break_ship(self, name):
         """
