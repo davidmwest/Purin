@@ -340,15 +340,17 @@ class Leveling(LevelingBoost):
                 f'{"" if target.geared else ", gear not checked" if target.gear_done else ", no gear"})'
                 for target in targets))
 
-    def leveling_assess(self, record, mob_slots, boss_slots, fleets, problems):
+    def leveling_assess(self, record, mob_slots, boss_slots, fleets, problems, records=None):
         """
         The fleets of Main as Leveling leaves them, kept in the record for Main to ask, see module.leveling.readiness.
 
         Returns:
             dict: The assessment
         """
+        geared = {key: is_geared(ship) for key, ship in (records or {}).items()}
         assessment = assess_fleets(mob_slots, boss_slots, record['minimum'], fleets=fleets,
-                                   stage=self.config.cross_get('Main.Campaign.Name', default=None), problems=problems)
+                                   stage=self.config.cross_get('Main.Campaign.Name', default=None), problems=problems,
+                                   geared=geared)
         record['assessment'] = assessment
         if assessment['ok']:
             logger.info('The fleets of Main keep the rules of Leveling')
@@ -455,7 +457,8 @@ class Leveling(LevelingBoost):
                                              use_packs=use_packs)
         average = fleet_average(mob_slots)
         record_average(record, average)
-        assessment = self.leveling_assess(record, mob_slots, boss_slots, (mob, boss), problems)
+        assessment = self.leveling_assess(record, mob_slots, boss_slots, (mob, boss), problems,
+                                          records=inventory_ships_of(ships, slots, data))
         save_record(self.config.config_name, record)
         logger.info(f'Leveling: {swapped} ships came in, {changed} levels went up, '
                     f'mob fleet average level {average:.1f} with a minimum of {minimum}')

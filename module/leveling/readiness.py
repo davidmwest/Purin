@@ -16,7 +16,7 @@ Leveling ends each run with an assessment of the fleets of Main, kept under 'ass
     reasons: the rules broken, in words, then what kept Leveling from repairing them
     near_cap: if a ship is NEAR_CAP levels or less below FARM_LEVEL_MAX, a run can take her to it
     runs: runs of Main since, written as they end
-    ships: the ships of the fleets, [fleet, name, level]
+    ships: the ships of the fleets, [fleet, name, level, geared], geared None if not known
 
 Main asks readiness() before each run, see main_readiness(). An assessment missing, of other fleets, rules or
 minimum, older than ASSESSMENT_MAX_AGE, or of too many runs ago is stale: Leveling runs first. One that is not ok
@@ -41,7 +41,7 @@ STALE = 'stale'
 BLOCKED = 'blocked'
 
 
-def assess_fleets(mob_slots, boss_slots, minimum, fleets=None, stage=None, problems=(), now=None):
+def assess_fleets(mob_slots, boss_slots, minimum, fleets=None, stage=None, problems=(), geared=None, now=None):
     """
     Args:
         mob_slots (list[Slot]): Slots of the mob fleet, as Leveling leaves them
@@ -50,6 +50,7 @@ def assess_fleets(mob_slots, boss_slots, minimum, fleets=None, stage=None, probl
         fleets (tuple[list[int], list[int]]): The mob and the boss fleets, campaign_fleets()
         stage (str): Stage of Main
         problems (list[str]): What kept Leveling from repairing the fleets, said with the rules broken
+        geared (dict[int, bool]): If the ship in a slot is geared, by id() of the slot
         now (datetime):
 
     Returns:
@@ -85,7 +86,7 @@ def assess_fleets(mob_slots, boss_slots, minimum, fleets=None, stage=None, probl
         'reasons': reasons,
         'near_cap': near_cap,
         'runs': 0,
-        'ships': [[slot.fleet, slot.name, slot.level] for slot in slots],
+        'ships': [[slot.fleet, slot.name, slot.level, (geared or {}).get(id(slot))] for slot in slots],
     }
 
 
