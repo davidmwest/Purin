@@ -366,19 +366,21 @@ class Awaken(Dock):
     def awaken_fleets(self):
         """
         Returns:
-            list[int]: Fleets whose ships are awakened with Awaken_OnlyFleets: the fleet of Main that fights the mobs,
-                where ships level, and its submarine fleet. None for any ship of the dock.
+            list[int]: Fleets whose ships are awakened with Awaken_OnlyFleets: both fleets of Main, the one that
+                fights the mobs and the one that fights the boss, and its submarine fleet. None for any ship of the dock.
         """
         if not self.config.Awaken_OnlyFleets:
             return None
-        # Ships level in the fleet that fights the mobs, the boss fleet holds ships done
-        mob, _ = campaign_fleets(
+        # The fleets that farm hold ships under 120 since 2026-10-21, the boss fleet too, its ships from level 100.
+        # One at a cap of 100, 105, 110 or 115 levels on only once awakened: the boss fleet was left out and its
+        # capped ships stayed there (code review, Codex).
+        mob, boss = campaign_fleets(
             self.config.cross_get('Main.Fleet.Fleet1', default=1),
             self.config.cross_get('Main.Fleet.Fleet2', default=0),
             self.config.cross_get('Main.Fleet.FleetOrder', default='fleet1_mob_fleet2_boss'),
         )
         # Cards of the dock show a submarine fleet like the common fleet of its number
-        fleets = mob + [self.config.cross_get('Main.Submarine.Fleet', default=0)]
+        fleets = mob + boss + [self.config.cross_get('Main.Submarine.Fleet', default=0)]
         return sorted({fleet for fleet in fleets if fleet})
 
     def awaken_run(self, use_array=False, favourite=False, rarity=None):

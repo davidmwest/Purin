@@ -149,10 +149,11 @@ def test_dock_filter_takes_the_rarity_asked_for():
 
 @pytest.mark.parametrize('only, order, submarine, fleets', [
     (False, 'fleet1_mob_fleet2_boss', 1, None),
-    # The mob fleet levels, the boss fleet holds ships done. Submarine fleet 1 shows on the dock as fleet 1.
-    (True, 'fleet1_mob_fleet2_boss', 1, [1]),
-    (True, 'fleet1_mob_fleet2_boss', 2, [1, 2]),
-    (True, 'fleet1_boss_fleet2_mob', 0, [2]),
+    # Both fleets farm, the boss fleet with its ships from level 100 to 119, capped ones awaken to go on.
+    # Submarine fleet 1 shows on the dock as fleet 1.
+    (True, 'fleet1_mob_fleet2_boss', 1, [1, 2]),
+    (True, 'fleet1_mob_fleet2_boss', 3, [1, 2, 3]),
+    (True, 'fleet1_boss_fleet2_mob', 0, [1, 2]),
 ])
 def test_fleets_of_the_campaign(only, order, submarine, fleets):
     keys = {'Main.Fleet.Fleet1': 1, 'Main.Fleet.Fleet2': 2, 'Main.Fleet.FleetOrder': order,
@@ -230,3 +231,16 @@ def test_a_ship_of_the_fleets_further_down_is_looked_for():
         scanner.return_value.scan.return_value = []
         assert Awaken.awaken_enter_fleet_ship(awaken, [1], 0) is True
     awaken.awaken_walk_enter.assert_called_once_with(0, fleets=[1])
+
+
+def test_a_capped_ship_of_the_boss_fleet_is_awakened():
+    # Code review (Codex, 2026-10-21): the boss fleet keeps a ship at level 100, she does not rotate out under 120,
+    # and only an awakening lets her level on. The main account: fleet 1 mobs, fleet 2 boss, submarines in fleet 1.
+    from module.leveling.plan import Slot, plan_carries
+    slot = Slot(2, 'vanguard', 0, 'Cooper', 100)
+    assert plan_carries([slot], [slot], []) == []
+    keys = {'Main.Fleet.Fleet1': 1, 'Main.Fleet.Fleet2': 2, 'Main.Fleet.FleetOrder': 'fleet1_mob_fleet2_boss',
+            'Main.Submarine.Fleet': 1}
+    awaken = SimpleNamespace(config=SimpleNamespace(
+        Awaken_OnlyFleets=True, cross_get=lambda keys_, default=None: keys.get(keys_, default)))
+    assert slot.fleet in Awaken.awaken_fleets(awaken)
