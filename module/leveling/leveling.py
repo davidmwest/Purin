@@ -90,6 +90,14 @@ def inventory_ships_of(ships, slots, data=None):
     return slot_records(ships, slots, data)
 
 
+def tried_for(problems, slot):
+    """
+    Returns:
+        bool: If problems tell why ships did not take the place of the ship in a slot, see leveling_execute()
+    """
+    return any(problem.startswith(f'for {slot.name}:') for problem in problems)
+
+
 def set_level(ship, level):
     """
     A ship of the inventory raised to a level. Her EXP is not known, at a level cap she waits for an awakening.
@@ -120,7 +128,8 @@ class Leveling(LevelingBoost):
         self.fleet_formation_ensure()
         return slots
 
-    def leveling_execute(self, plans, slots=(), ships=(), limit=None, save=None, minimum=None, use_packs=False):
+    def leveling_execute(self, plans, slots=(), ships=(), limit=None, save=None, minimum=None, use_packs=False,
+                         problems=None):
         """
         Args:
             plans: plan_swaps() or plan_carries()
@@ -132,6 +141,7 @@ class Leveling(LevelingBoost):
             minimum (float): Average level the fleets of the plans keep, None for none
             use_packs (bool): If a ship short of the level the minimum takes is raised with EXP Data Packs,
                 and a ship below BOOST_CAP goes to it with spare packs, see module.leveling.boost
+            problems (list[str]): Why a ship tried did not come in is added to it, "for Juneau (Retrofit): ..."
 
         Returns:
             int: Ships that came in
@@ -143,6 +153,11 @@ class Leveling(LevelingBoost):
         taken, missing = set(), set()
         swapped = 0
         trips = 0
+
+        def failed(slot, target, why):
+            if problems is not None:
+                problems.append(f'for {slot.name or "an empty slot"}: {target.ship} {why}')
+
         for slot, candidates in plans:
             if limit is not None and swapped >= limit:
                 break
@@ -183,11 +198,14 @@ class Leveling(LevelingBoost):
                         # Gear at +10 that passes the policy, a sonar storage could not replace keeps her out
                         if gear is None or not is_geared(gear):
                             logger.info(f'{target.ship} can not be geared from storage, gear {gear}')
+                            failed(slot, target, 'not found in the dock or not geared from storage'
+                                   if gear is None else 'not geared from storage')
                             missing.add(target.character)
                             continue
                         target.geared = True
                     if boost is not None and (level is None or level < boost):
                         logger.info(f'{target.ship} can not be raised to level {boost}, at {level}')
+                        failed(slot, target, f'not raised to level {boost}')
                         missing.add(target.character)
                         continue
                     if level is not None:
@@ -215,6 +233,7 @@ class Leveling(LevelingBoost):
                                 save()
                     break
                 # In an other fleet, on a commission, or not found
+                failed(slot, target, 'not free in the dock')
                 missing.add(target.character)
         return swapped
 
@@ -352,6 +371,8 @@ class Leveling(LevelingBoost):
                                    stage=self.config.cross_get('Main.Campaign.Name', default=None), problems=problems,
                                    geared=geared)
         record['assessment'] = assessment
+        for warning in assessment['warnings']:
+            logger.warning(warning)
         if assessment['ok']:
             logger.info('The fleets of Main keep the rules of Leveling')
         else:
@@ -412,13 +433,16 @@ class Leveling(LevelingBoost):
         # The boss fleet, ships it lets go may level in the mob fleet
         boss_slots = [slot for slot in slots if slot.fleet in boss]
         carries = plan_carries(boss_slots, slots, carry_list, data)
-        swapped = self.leveling_execute(carries, slots, ships, save=save)
+        swapped = self.leveling_execute(carries, slots, ships, save=save, problems=problems)
         for slot in boss_slots:
-            if slot.name and (slot.level >= FARM_LEVEL_MAX or 0 < slot.level < CARRY_LEVEL):
+            if slot.name and 0 < slot.level < CARRY_LEVEL:
                 problem = (f'no geared ship of level {CARRY_LEVEL} to {FARM_LEVEL_MAX - 1} was free to take the place '
                            f'of {slot.name} Lv.{slot.level} in fleet {slot.fleet}')
                 logger.warning(problem)
                 problems.append(problem)
+            elif slot.name and slot.level >= FARM_LEVEL_MAX and not tried_for(problems, slot):
+                problems.append(f'for {slot.name}: no geared ship of level {CARRY_LEVEL} to {FARM_LEVEL_MAX - 1} '
+                                f'is free in her row')
         logger.info(f'Mob fleet average level {fleet_average(mob_slots):.1f}, minimum {minimum}')
         # Ships done leave the mob fleet. The others go up first, for the fleet to keep its minimum with a ship
         # coming in at BOOST_CAP.
@@ -430,14 +454,13 @@ class Leveling(LevelingBoost):
                 self.leveling_boost_members(mob_slots, minimum, records, save=save, replacing=done,
                                             problems=problems)
             plans = plan_done(mob_slots, queue, carry_list, data, others=other_slots)
-            replaced = self.leveling_execute(plans, slots, ships, save=save, minimum=minimum, use_packs=use_packs)
+            replaced = self.leveling_execute(plans, slots, ships, save=save, minimum=minimum, use_packs=use_packs,
+                                             problems=problems)
             swapped += replaced
             for slot in done:
-                if slot.level >= FARM_LEVEL_MAX:
-                    problem = (f'no ship under {FARM_LEVEL_MAX} could take the place of {slot.name} Lv.{slot.level} '
-                               f'in fleet {slot.fleet} and keep the minimum average {minimum}')
-                    logger.warning(problem)
-                    problems.append(problem)
+                if slot.level >= FARM_LEVEL_MAX and not tried_for(problems, slot):
+                    problems.append(f'for {slot.name}: no ship under {FARM_LEVEL_MAX} of her row is free to come in '
+                                    f'and keep the minimum average {minimum}')
         # A mob fleet below its minimum average, as when a battle lost raised it
         if fleet_average(mob_slots) < minimum and use_packs:
             self.leveling_boost_members(mob_slots, minimum, records, save=save, problems=problems)

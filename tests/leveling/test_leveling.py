@@ -293,7 +293,7 @@ def test_ships_at_120_and_above_leave_the_fleets(monkeypatch):
 
     executed = []
 
-    def execute(plans, slots_, ships, limit=None, save=None, minimum=None, use_packs=False):
+    def execute(plans, slots_, ships, limit=None, save=None, minimum=None, use_packs=False, problems=None):
         executed.append([((slot.fleet, slot.name), [target.ship for target in targets]) for slot, targets in plans])
         for slot, targets in plans:
             slot.name, slot.level = targets[0].ship, max(targets[0].level, 100)

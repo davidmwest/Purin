@@ -3,6 +3,11 @@ If Main may farm with its fleets, the rules Leveling keeps them to. The Codex re
 repaired what it could, then Main went on all the same, with a mob fleet below its minimum average, or a ship at 120
 kept for want of an other.
 
+Rules that make runs fail hold Main: the mob fleet below its minimum average, a ship of the boss fleet below
+CARRY_LEVEL. A ship at FARM_LEVEL_MAX and above only wastes the EXP of her slot: it is a warning, said at each run of
+Leveling with the ships it tried in her place, and Main goes on. One 125 in the boss fleet wastes a sixth of the EXP,
+holding all farming would waste it all, the user's rule of 2026-10-21 as the session that relays it put it.
+
 Leveling ends each run with an assessment of the fleets of Main, kept under 'assessment' in the record of the trial
 (module.leveling.record):
     time: when
@@ -11,9 +16,10 @@ Leveling ends each run with an assessment of the fleets of Main, kept under 'ass
     version: READINESS_VERSION, of the rules
     minimum: the minimum average of the mob fleet then
     average: the average level of the mob fleet
-    ok: if the fleets keep the rules: the mob fleet at its minimum average, the ships of the boss fleet at CARRY_LEVEL
-        and above, no ship at FARM_LEVEL_MAX and above in either
+    ok: if the fleets keep the rules that hold Main: the mob fleet at its minimum average, the ships of the boss
+        fleet at CARRY_LEVEL and above
     reasons: the rules broken, in words, then what kept Leveling from repairing them
+    warnings: ships at FARM_LEVEL_MAX and above, with what kept Leveling from replacing them
     near_cap: if a ship is NEAR_CAP levels or less below FARM_LEVEL_MAX, a run can take her to it
     runs: runs of Main since, written as they end
     ships: the ships of the fleets, [fleet, name, level, geared], geared None if not known
@@ -62,10 +68,13 @@ def assess_fleets(mob_slots, boss_slots, minimum, fleets=None, stage=None, probl
     average = fleet_average(mob_slots)
     if mob_slots and average < minimum:
         reasons.append(f'the mob fleet is at average level {average:.1f}, below its minimum {minimum}')
+    warnings = []
     for slot in slots:
         if slot.name and slot.level >= FARM_LEVEL_MAX:
-            reasons.append(f'{slot.name} Lv.{slot.level} is in fleet {slot.fleet}, '
-                           f'the fleets that farm hold ships under {FARM_LEVEL_MAX}')
+            prefix = f'for {slot.name}: '
+            tried = [problem[len(prefix):] for problem in problems if problem.startswith(prefix)]
+            warnings.append(f'{slot.name} Lv.{slot.level} in fleet {slot.fleet}, no replacement found'
+                            + (': ' + '; '.join(tried) if tried else ''))
     for slot in boss_slots:
         if slot.name and 0 < slot.level < CARRY_LEVEL:
             reasons.append(f'{slot.name} Lv.{slot.level} is in the boss fleet {slot.fleet}, below {CARRY_LEVEL}')
@@ -84,6 +93,7 @@ def assess_fleets(mob_slots, boss_slots, minimum, fleets=None, stage=None, probl
         'average': round(average, 1),
         'ok': ok,
         'reasons': reasons,
+        'warnings': warnings,
         'near_cap': near_cap,
         'runs': 0,
         'ships': [[slot.fleet, slot.name, slot.level, (geared or {}).get(id(slot))] for slot in slots],

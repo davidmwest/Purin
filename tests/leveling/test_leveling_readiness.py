@@ -46,10 +46,26 @@ def test_rules_broken_hold_main():
     state, reason = readiness(record, FLEETS, NOW)
     assert state == BLOCKED
     assert 'average level 78.3, below its minimum 95' in reason
-    assert 'Ship 15 Lv.120 is in fleet 1' in reason and 'Ship 24 Lv.125 is in fleet 2' in reason
     assert 'Ship 25 Lv.77 is in the boss fleet 2, below 100' in reason
     # What kept Leveling from repairing them is said too
     assert 'EXP Data Packs did not raise Ship 10 to level 100' in reason
+    # Ships at 120 and above are warnings
+    assert record['assessment']['warnings'] == ['Ship 15 Lv.120 in fleet 1, no replacement found',
+                                                'Ship 24 Lv.125 in fleet 2, no replacement found']
+
+
+def test_a_ship_at_120_is_a_warning_main_goes_on():
+    # Juneau at 125 in the boss fleet wastes the EXP of her slot, holding all farming would waste it all
+    boss = fleet(2, 111, 109, 103, 119, 110, 125, names=['Victorious META', 'Hiei', 'Haruna', 'London (Retrofit)',
+                                                       'Nana Astar Deviluke', 'Juneau (Retrofit)'])
+    problems = ['for Juneau (Retrofit): Dmitri Donskoi not found in the dock or not geared from storage',
+                'for Juneau (Retrofit): Vittorio Cuniberti not free in the dock']
+    record = assessed(fleet(1, 97, 100, 100, 102, 89, 82), boss, problems=problems)
+
+    assert readiness(record, FLEETS, NOW) == (READY, '')
+    assert record['assessment']['warnings'] == [
+        'Juneau (Retrofit) Lv.125 in fleet 2, no replacement found: Dmitri Donskoi not found in the dock or not '
+        'geared from storage; Vittorio Cuniberti not free in the dock']
 
 
 def test_problems_are_said_only_with_rules_broken():
@@ -187,8 +203,8 @@ def test_leveling_that_can_not_repair_the_fleets_holds_main(monkeypatch, stored)
     assessment = stored['record']['assessment']
     assert not assessment['ok']
     assert any('below its minimum 95' in reason for reason in assessment['reasons'])
-    assert any('Nicholas (Retrofit) Lv.120' in reason for reason in assessment['reasons'])
     assert any('EXP Data Packs did not raise' in reason for reason in assessment['reasons'])
+    assert assessment['warnings'][0].startswith('Nicholas (Retrofit) Lv.120 in fleet 1, no replacement found')
     # Leveling comes back soon, Main holds meanwhile
     leveling.config.task_delay.assert_called_once_with(minute=RECOVERY_MINUTES)
     assert readiness(stored['record'], FLEETS)[0] == BLOCKED
