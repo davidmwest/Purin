@@ -13,6 +13,8 @@ so this leaves the page in the 3D view.
 """
 import re
 
+import numpy as np
+
 from module.base.button import Button
 from module.base.timer import Timer
 from module.equipment.assets import EQUIPMENT_OPEN, FLEET_DETAIL, FLEET_DETAIL_CHECK
@@ -50,8 +52,13 @@ DOCK_TITLE = area_button((125, 15, 180, 40), 'DOCK_TITLE')
 # The magnifier is blue, about (89, 100, 125), and gold, about (186, 143, 92), with the search bar open
 SEARCH_ICON = (654, 12, 686, 44)
 # OK of the input bar of Android. The bar is white and covers the bottom of the screen while typing.
+# Its size goes by the density of the screen: y 600 to 720 at 1280x720, the bottom 60 only at 2560x1440 brought to
+# 1280x720, with OK at about (1200, 657) and (1240, 688). The F2P account never saw the bar come up.
 INPUT_OK = area_button((1165, 635, 1235, 680), 'INPUT_OK')
-INPUT_BAR = (300, 600, 1100, 720)
+INPUT_BAR = (300, 662, 1100, 718)
+# The dark letters of OK, at the right end of the bar
+INPUT_OK_SEARCH = (1100, 600, 1280, 720)
+INPUT_OK_DARK = 100
 # Name on a card of the dock, from the top left of the card
 CARD_NAME = (4, 163, 134, 186)
 # Seconds for each step of a search
@@ -84,6 +91,31 @@ def is_input_shown(image):
         bool: If the input bar of Android is up
     """
     return bool(crop_mean(image, INPUT_BAR).mean() > 240)
+
+
+def input_ok(image):
+    """
+    Args:
+        image (np.ndarray): Screenshot with the input bar of Android up
+
+    Returns:
+        Button: OK of the input bar, where its letters are
+    """
+    x1, y1, x2, y2 = INPUT_OK_SEARCH
+    # The bar is the white rows at the bottom, the dock above it is dark too
+    bar_x1, _, bar_x2, _ = INPUT_BAR
+    rows = image[y1:y2, bar_x1:bar_x2].mean(axis=(1, 2))
+    top = y2
+    for y in range(y2 - y1 - 1, -1, -1):
+        if rows[y] <= 240:
+            break
+        top = y1 + y
+    gray = image[top:y2, x1:x2].mean(axis=2)
+    ys, xs = np.where(gray < INPUT_OK_DARK)
+    if not len(xs):
+        return INPUT_OK
+    x, y = int(xs.mean()) + x1, int(ys.mean()) + top
+    return area_button((x - 15, y - 8, x + 15, y + 8), 'INPUT_OK')
 
 
 def search_term(name):
@@ -279,7 +311,7 @@ class LevelingFleet(Formation):
                     break
                 continue
             if not click.started() or click.reached():
-                self.device.click(INPUT_OK)
+                self.device.click(input_ok(self.device.image))
                 click.start()
                 click.reset()
         else:
