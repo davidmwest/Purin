@@ -83,19 +83,29 @@ def test_dialog_reads(name, gain):
 class FakeDialog:
     """
     The Boost EXP dialog of a ship at 70 with 9,511 EXP: levels come every 12,100 EXP up to 100, packs give 3,000.
+    With level_exp, the EXP of each level from hers on.
     """
 
-    def __init__(self, packs_owned=2811, closes_on_confirm=True):
+    def __init__(self, packs_owned=2811, closes_on_confirm=True, level_exp=None):
         self.packs = 0
         self.owned = packs_owned
         self.shown = False
         self.level = 70
         self.used = 0
         self.closes_on_confirm = closes_on_confirm
+        self.level_exp = level_exp
 
     def gain(self):
         exp = 9511 + self.packs * 3000
-        return min(exp // 12100, 100 - self.level)
+        if self.level_exp is None:
+            return min(exp // 12100, 100 - self.level)
+        gain = 0
+        for need in self.level_exp:
+            if exp < need or self.level + gain >= 100:
+                break
+            exp -= need
+            gain += 1
+        return gain
 
     def click(self, button):
         name = button.name
@@ -220,3 +230,11 @@ def test_auto_takes_her_to_100_in_one_tap():
 
     assert boost.boost_to(100) == 100
     assert taps.count('BOOST_T1_PLUS10') == 0 and 'BOOST_AUTO' in taps
+
+
+def test_levels_near_100_take_more_than_a_tap():
+    # Tirpitz at 72 to 97 stopped at +23: a tap of 10 packs, 30,000 EXP, did not make a level near 95
+    fake = FakeDialog(level_exp=[20000 + 2000 * index for index in range(28)])
+    fake.level = 72
+
+    assert fake_boost(fake).boost_to(97) == 97

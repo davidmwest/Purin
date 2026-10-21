@@ -217,18 +217,21 @@ class LevelingBoost(LevelingGear):
                 return gain
             self.boost_tap(BOOST_CLEAR)
             gain = 0
+        count = self.boost_read_count()
         for _ in range(PLUS10_TAPS):
             if gain >= wanted:
                 break
-            after = self.boost_tap(BOOST_PLUS10)
-            if after <= gain:
-                # Read again, the preview may lag
+            # Near 100 a level takes more EXP than 10 packs give: the packs chosen tell if storage ran out
+            gain = self.boost_tap(BOOST_PLUS10)
+            after = self.boost_read_count()
+            if after <= count:
+                # Read again, the dialog may lag
                 self.device.sleep(0.5)
                 self.device.screenshot()
-                after = self.boost_read_gain()
-                if after <= gain:
+                gain, after = self.boost_read_gain(), self.boost_read_count()
+                if after <= count:
                     break
-            gain = after
+            count = after
         if gain < wanted:
             logger.warning(f'EXP Data Packs take her {gain} levels up, not {wanted}: none used')
             self.boost_tap(BOOST_CLEAR)
