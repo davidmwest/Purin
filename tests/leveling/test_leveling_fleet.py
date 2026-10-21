@@ -205,10 +205,10 @@ def test_level_on_a_card(read, level):
     assert card_level(read) == level
 
 
-class Card:
-    def __init__(self, level):
-        self.level = level
-        self.button = CARD_GRIDS[(1, 0)]
+def Card(level):
+    # The Ship of the scanner, frozen: 2026-10-21 a level written into one stopped Leveling
+    from module.retire.scanner import Ship
+    return Ship(level=level, button=CARD_GRIDS[(1, 0)])
 
 
 def dock_with(monkeypatch, cards):

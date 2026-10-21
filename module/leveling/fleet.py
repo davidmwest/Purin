@@ -12,6 +12,7 @@ The fleet page is known by its lit Formation button, the 3D view. Other tasks go
 so this leaves the page in the 3D view.
 """
 import re
+from dataclasses import replace
 
 import numpy as np
 
@@ -372,13 +373,17 @@ class LevelingFleet(Formation):
         # OCR of a single button gives its result alone
         if isinstance(names, str):
             names = [names]
-        fits = [ship for ship, read in zip(ships, names) if name_fits(read, target.ship)]
-        for ship in fits:
+        fits = []
+        for ship, read in zip(ships, names):
+            if not name_fits(read, target.ship):
+                continue
             level = card_level(ship.level)
             if level != ship.level:
                 logger.info(f'Level of a card of {target.ship} read {ship.level}, '
                             + (f'taken as {level}' if level else 'not a level'))
-                ship.level = level
+                # Ship is frozen
+                ship = replace(ship, level=level)
+            fits.append(ship)
         for ship in fits:
             if ship.level == target.level:
                 return ship
