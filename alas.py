@@ -282,6 +282,10 @@ class AzurLaneAutoScript:
         from module.formation.formation import Formation
         Formation(config=self.config, device=self.device).run()
 
+    def limit_break(self):
+        from module.leveling.limit_break import LimitBreak
+        LimitBreak(config=self.config, device=self.device).run()
+
     def leveling(self):
         from module.leveling.leveling import Leveling
         Leveling(config=self.config, device=self.device).run()

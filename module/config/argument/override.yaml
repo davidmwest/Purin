@@ -311,6 +311,11 @@ RetireShips:
     SuccessInterval: 30
     FailureInterval: 120
     ServerUpdate: 00:00
+LimitBreak:
+  Scheduler:
+    # Copies drop and are built all along, a ship of the fleets reaches levels 10, 30 and 70
+    SuccessInterval: 180
+    FailureInterval: 60
 Formation:
   Scheduler:
     # Ships drop and are built all along, the fleets of a new account fill up slot by slot

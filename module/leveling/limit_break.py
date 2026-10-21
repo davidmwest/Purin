@@ -1,0 +1,232 @@
+"""
+Limit break the ships of the fleets that the campaign uses, with copies of themselves.
+
+The user's rules for the F2P account, 2026-10-21: "Remember to limit break ships as needed!", "It's urgent to enhance
+ships and limit break them in the f2p account because its fleet strength is so low."
+
+A limit break raises the level cap by 10, from 70 with none to 100 with three: Long Island stopped at 70.
+The game asks for levels 10, 30 and 70, and coins. Its Quick Select puts a copy in the material slot,
+and a Bulin when the dock has no copy: a ship is limit broken only as many times as the dock has copies of her.
+
+Pages:
+    in: Any page
+    out: page_fleet, its 3D view
+"""
+import cv2
+
+from module.base.timer import Timer
+from module.base.utils import crop, load_image
+from module.equipment.assets import EQUIPMENT_OPEN
+from module.leveling.fleet import LevelingFleet, area_button, card_name_area, name_fits, search_term
+from module.leveling.plan import ShipMatcher, load_ship_data
+from module.logger import logger
+from module.ocr.ocr import Ocr
+from module.retire.assets import DOCK_CHECK
+from module.retire.scanner import ShipScanner
+from module.ui.page import page_dock, page_fleet
+
+# The limit break tab of the detail page of a ship: Quick Select and Confirm under its material slot
+QUICK_SELECT = './assets/leveling/limit_break_quick_select.png'
+QUICK_SELECT_AREA = (806, 625, 966, 700)
+QUICK_SELECT_BUTTON = area_button((826, 645, 946, 680), 'LIMIT_BREAK_QUICK_SELECT')
+CONFIRM = './assets/leveling/limit_break_confirm.png'
+CONFIRM_AREA = (1120, 625, 1272, 698)
+CONFIRM_BUTTON = area_button((1140, 645, 1252, 678), 'LIMIT_BREAK_CONFIRM')
+# The "+" of the material slot, 1.0 empty and 0.35 with a copy in it
+SLOT_EMPTY = './assets/leveling/limit_break_slot_empty.png'
+SLOT_AREA = (835, 508, 937, 610)
+SIMILARITY = 0.85
+# Confirm is orange when the game takes it
+CONFIRM_ORANGE = 60
+# Stats of the tab, no button under them: a tap there goes through the screens a limit break shows
+SAFE_TAP = area_button((990, 292, 1010, 308), 'LIMIT_BREAK_SAFE')
+# A ship is limit broken 3 times at most
+LIMIT_BREAK_MAX = 3
+# Seconds for Quick Select to fill the slot, and for a limit break to come back to the tab
+SELECT_WAIT = 3
+BREAK_TIMEOUT = 30
+
+
+def template_score(image, template, area):
+    """
+    Returns:
+        float: Best similarity of the template within the area
+    """
+    region = crop(image, area, copy=False)
+    return float(cv2.minMaxLoc(cv2.matchTemplate(region, template, cv2.TM_CCOEFF_NORMED))[1])
+
+
+def confirm_orange(image):
+    """
+    Returns:
+        bool: If Confirm of the limit break tab is lit
+    """
+    r, g, b = cv2.mean(crop(image, CONFIRM_BUTTON.area, copy=False))[:3]
+    return r - b > CONFIRM_ORANGE
+
+
+class LimitBreak(LevelingFleet):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._templates = {}
+
+    def _template(self, file):
+        if file not in self._templates:
+            self._templates[file] = load_image(file)
+        return self._templates[file]
+
+    def is_limit_break_tab(self):
+        return template_score(self.device.image, self._template(QUICK_SELECT), QUICK_SELECT_AREA) > SIMILARITY
+
+    def is_slot_empty(self):
+        return template_score(self.device.image, self._template(SLOT_EMPTY), SLOT_AREA) > SIMILARITY
+
+    def limit_break_cards(self, name):
+        """
+        Args:
+            name (str): Name of a ship on the wiki
+
+        Returns:
+            list[Ship]: Her cards in the dock, highest level first, those in fleets too
+
+        Pages:
+            in: page_dock
+            out: page_dock, the ships found
+        """
+        if not self.dock_search(name):
+            return []
+        scanner = ShipScanner(fleet=(0, 6))
+        scanner.disable('emotion', 'rarity')
+        ships = scanner.scan(self.device.image, output=False)
+        if not ships:
+            # The dock may not have drawn the ships found yet
+            self.device.sleep(1)
+            self.device.screenshot()
+            ships = scanner.scan(self.device.image, output=False)
+        if not ships:
+            return []
+        buttons = [area_button(card_name_area(ship.button), f'CARD_NAME_{i}') for i, ship in enumerate(ships)]
+        names = Ocr(buttons, lang='cnocr', letter=(255, 255, 255), threshold=128, name='CARD_NAME').ocr(
+            self.device.image)
+        if isinstance(names, str):
+            names = [names]
+        fits = [ship for ship, read in zip(ships, names) if name_fits(read, name)]
+        logger.info(f'{name}: {len(fits)} in the dock, levels {[ship.level for ship in fits]}')
+        return sorted(fits, key=lambda ship: -ship.level)
+
+    def limit_break_once(self):
+        """
+        Returns:
+            bool: If a copy was used up
+
+        Pages:
+            in: limit break tab
+            out: limit break tab
+        """
+        # Quick Select puts a copy in the slot
+        timeout = Timer(SELECT_WAIT, count=6).start()
+        clicked = False
+        for _ in self.loop():
+            if not self.is_slot_empty():
+                break
+            if timeout.reached():
+                logger.info('No material for a limit break')
+                return False
+            if not clicked:
+                self.device.click(QUICK_SELECT_BUTTON)
+                clicked = True
+        if not confirm_orange(self.device.image):
+            logger.info('Confirm is not lit, the level or the coins are short')
+            return False
+        self.device.click(CONFIRM_BUTTON)
+        # A popup to confirm, then the screens of the limit break, until the tab is back with its slot empty
+        timeout = Timer(BREAK_TIMEOUT, count=60).start()
+        tap = Timer(2)
+        retry = Timer(3, count=6).start()
+        left = False
+        for _ in self.loop():
+            if self.handle_popup_confirm('LIMIT_BREAK'):
+                left = True
+                continue
+            if self.is_limit_break_tab():
+                if self.is_slot_empty():
+                    return True
+                if left and tap.reached():
+                    # Back on the tab with the copy still in the slot
+                    logger.warning('The limit break did not take the copy')
+                    return False
+                if not left and retry.reached():
+                    # The tap on Confirm did not get through
+                    self.device.click(CONFIRM_BUTTON)
+                    retry.reset()
+            else:
+                left = True
+                if tap.reached():
+                    self.device.click(SAFE_TAP)
+                    tap.reset()
+            if timeout.reached():
+                logger.warning('The limit break did not come back to its tab')
+                return False
+
+    def limit_break_ship(self, name):
+        """
+        Args:
+            name (str): Name of a ship of a fleet, on the wiki
+
+        Returns:
+            int: Limit breaks done
+
+        Pages:
+            in: page_dock
+            out: page_dock
+        """
+        logger.hr(f'Limit break {name}', level=2)
+        cards = self.limit_break_cards(name)
+        copies = len(cards) - 1
+        if copies < 1:
+            logger.info(f'{name} has no copy in the dock')
+            return 0
+        keeper = cards[0]
+        self.ship_info_enter(click_button=keeper.button, check_button=EQUIPMENT_OPEN, long_click=False,
+                             skip_first_screenshot=False)
+        # Detail tab 1, gear 2, limit break 3 from the bottom, with or without a retrofit tab on top
+        self.ship_side_navbar_ensure(bottom=3)
+        self.device.sleep(1)
+        self.device.screenshot()
+        done = 0
+        if self.is_limit_break_tab():
+            for _ in range(min(copies, LIMIT_BREAK_MAX)):
+                if not self.limit_break_once():
+                    break
+                done += 1
+                logger.info(f'{name} limit broken, {done} time(s)')
+        else:
+            logger.info(f'{name} has no limit break tab, fully limit broken or a research ship')
+        self.ui_back(check_button=DOCK_CHECK)
+        return done
+
+    def run(self):
+        matcher = ShipMatcher(load_ship_data())
+        self.ui_ensure(page_fleet)
+        names = []
+        for fleet in self.formation_fleets():
+            self.formation_goto_fleet(fleet)
+            for slot in self.fleet_read_slots(fleet):
+                data = matcher.match(slot.name) if slot.name else None
+                if data is None:
+                    if slot.name:
+                        logger.warning(f'Fleet {fleet}: {slot.name} is no ship known')
+                    continue
+                if not search_term(data.name):
+                    continue
+                names.append(data.name)
+        self.fleet_formation_ensure()
+        total = 0
+        if names:
+            self.ui_ensure(page_dock)
+            for name in names:
+                total += self.limit_break_ship(name)
+            self.ui_ensure(page_fleet)
+            self.fleet_formation_ensure()
+        logger.info(f'Limit breaks done: {total}')
+        self.config.task_delay(success=True)

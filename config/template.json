@@ -360,6 +360,19 @@
       "Storage": {}
     }
   },
+  "LimitBreak": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "LimitBreak",
+      "SuccessInterval": 180,
+      "FailureInterval": 60,
+      "ServerUpdate": "00:00"
+    },
+    "Storage": {
+      "Storage": {}
+    }
+  },
   "GemsFarming": {
     "Scheduler": {
       "Enable": false,

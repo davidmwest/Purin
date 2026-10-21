@@ -66,6 +66,10 @@
       "name": "自動編成",
       "help": "メインタスクが使う艦隊の空き枠を、ドックの空いている最適な艦船（レベルとレアリティ順）で埋めます：前衛には前衛艦、主力には主力艦。新しいアカウントは数隻しか持たず、ドロップや建造で得た艦船はゲームが艦隊に入れません。艦隊にいる艦船はそのままです。1時間ごとに実行します"
     },
+    "LimitBreak": {
+      "name": "Task.LimitBreak.name",
+      "help": "Task.LimitBreak.help"
+    },
     "GemsFarming": {
       "name": "Commission Farming",
       "help": ""

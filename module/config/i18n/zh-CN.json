@@ -66,6 +66,10 @@
       "name": "自动编队",
       "help": "用船坞中空闲的最佳舰船（按等级和稀有度）补满主线任务所用舰队的空位：前排舰船进前排，后排舰船进后排。新账号开始只有几艘舰船，游戏不会把掉落或建造的舰船加入舰队。已在舰队中的舰船保持不变。每小时运行一次"
     },
+    "LimitBreak": {
+      "name": "Task.LimitBreak.name",
+      "help": "Task.LimitBreak.help"
+    },
     "GemsFarming": {
       "name": "刷紧急委托",
       "help": ""
