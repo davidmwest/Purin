@@ -1,5 +1,4 @@
 import os
-from collections import Counter
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,8 +6,9 @@ import pytest
 
 from module.base.utils import load_image
 from module.leveling.enhance import (ENHANCE_FILL, ENHANCE_FILL_AREA, ENHANCE_PICKER, ENHANCE_PICKER_AREA,
-                                     ENHANCE_SLOT_AREA, ENHANCE_SLOT_EMPTY, SIMILARITY, material_fits, template_score)
-from module.leveling.plan import ShipMatcher, load_ship_data, name_key
+                                     ENHANCE_SLOT_AREA, ENHANCE_SLOT_EMPTY, SIMILARITY, Census, material_fits,
+                                     template_score)
+from module.leveling.plan import ShipMatcher, load_ship_data
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 
@@ -22,39 +22,62 @@ def card(level=1, rarity='common', fleet=0, status='free'):
     return SimpleNamespace(level=level, rarity=rarity, fleet=fleet, status=status)
 
 
-def census(*names):
-    return Counter(name_key(name) for name in names)
+def census(*cards):
+    """
+    Args:
+        cards: Names, or (name, locked, fleet)
+    """
+    out = Census()
+    for item in cards:
+        name, locked, fleet = (item, False, 0) if isinstance(item, str) else item
+        out.add(name, locked=locked, fleet=fleet)
+    return out
 
 
-def test_a_ship_alone_of_her_name_is_material(matcher):
-    # McCall, common, no retrofit
-    assert material_fits('McCall', card(), census('McCall', 'Aoba', 'Aoba'), matcher) == ''
+def test_a_single_unlocked_ship_is_material(matcher):
+    # "any extras count as enhancement material"
+    assert material_fits('McCall', card(), census('McCall'), matcher) == ''
 
 
-def test_a_ship_with_a_copy_is_kept_for_limit_breaks(matcher):
-    # Two Aobas: one limit breaks the other. Fill took one of them.
-    assert material_fits('Aoba', card(), census('Aoba', 'Aoba'), matcher)
+def test_copies_of_a_ship_nobody_keeps_are_material(matcher):
+    # Four Cravens, none locked, none in a fleet
+    dock = census('Craven', 'Craven', 'Craven', 'Craven')
+    for _ in range(4):
+        assert material_fits('Craven', card(), dock, matcher) == ''
+        dock.take('Craven')
+    assert material_fits('Craven', card(), dock, matcher)
 
 
-def test_the_copy_of_a_ship_of_a_fleet_is_kept(matcher):
-    # Hammann of fleet 1 and her copy in the dock: the census has both
-    assert material_fits('Hammann', card(), census('Hammann', 'Hammann'), matcher)
+def test_a_locked_ship_keeps_enough_copies_to_limit_break_her_fully(matcher):
+    # McCall locked at level 12 for commissions, 3 copies: she needs 4, none is extra
+    dock = census(('McCall', True, 0), 'McCall', 'McCall', 'McCall')
+    assert material_fits('McCall', card(), dock, matcher).startswith('kept to limit break')
+    # A 4th copy is the last one she needs, a 5th is an extra
+    dock.add('McCall')
+    assert material_fits('McCall', card(), dock, matcher).startswith('kept to limit break')
+    dock.add('McCall')
+    assert material_fits('McCall', card(), dock, matcher) == ''
+
+
+def test_a_ship_of_a_fleet_keeps_her_copies_locked_or_not(matcher):
+    # Long Island and Laffey of the F2P fleet are not locked, the limit breaks of the task use their copies
+    dock = census(('Laffey', False, 1), 'Laffey')
+    assert material_fits('Laffey', card(rarity='elite'), dock, matcher)
 
 
 @pytest.mark.parametrize('name, ship', [
     # Levelled for commissions
-    ('McCall', card(level=12)),
-    ('McCall', card(rarity='elite')),
-    ('McCall', card(fleet=2)),
-    ('McCall', card(status='commission')),
+    ('Craven', card(level=12)),
+    ('Craven', card(rarity='super_rare')),
+    ('Craven', card(fleet=2)),
+    ('Craven', card(status='commission')),
 ])
 def test_other_ships_kept(matcher, name, ship):
     assert material_fits(name, ship, census(name), matcher)
 
 
-def test_a_ship_with_a_retrofit_is_kept(matcher):
-    # Cassin has a retrofit, the long-term core of the account
-    assert material_fits('Cassin', card(), census('Cassin'), matcher) == 'has a retrofit'
+def test_an_elite_extra_is_material(matcher):
+    assert material_fits('Laffey', card(rarity='elite'), census('Laffey'), matcher) == ''
 
 
 def test_a_bulin_is_kept(matcher):
@@ -63,6 +86,11 @@ def test_a_bulin_is_kept(matcher):
 
 def test_a_name_not_read_is_kept(matcher):
     assert material_fits('', card(), census(''), matcher)
+
+
+def test_a_name_the_census_did_not_read_is_kept(matcher):
+    # "B og ue" in the picker, the census read her otherwise: no card of that name, no extra
+    assert material_fits('Bogue', card(), census('Boque'), matcher)
 
 
 def screen(file, left, top):

@@ -68,7 +68,7 @@
     },
     "LimitBreak": {
       "name": "Limit Break and Enhance",
-      "help": "For each ship of the fleets that the task Main uses, opened from her slot: limit break with the material the game's Quick Select picks, a copy or a Bulin, as many tries as the dock has copies of her (levels 10, 30 and 70 and coins, each raises the level cap by 10). Then enhance her with ships no limit break needs: alone of their name in the whole dock, level 3 at most, common or rare, no Bulin, no ship with a retrofit, in no fleet. The game's Fill is not used, it takes copies. Runs every 3 hours"
+      "help": "For each ship of the fleets that the task Main uses, opened from her slot: limit break with the material the game's Quick Select picks, a copy or a Bulin, as many tries as the dock has copies of her (levels 10, 30 and 70 and coins, each raises the level cap by 10). Then enhance her: a locked ship, and one in a fleet, keeps 4 copies to be limit broken fully, the other cards of the dock are material at level 3 at most, common, rare or elite, no Bulin. The game's Fill is not used, it takes copies. Runs every 3 hours"
     },
     "GemsFarming": {
       "name": "Commission Farming",

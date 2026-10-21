@@ -5,12 +5,14 @@ The user's rule for the F2P account, 2026-10-21: "It's urgent to enhance ships a
 account because its fleet strength is so low. Just make sure not to enhance using ships that are meant for limit
 breaking." The game's Fill took two copies of one ship and one of two Aobas, its pick is not used.
 
-A material is a ship whose name no other card of the dock has: no limit break needs her, she needs none. She is at
-level 3 at most (ships levelled for commissions stay), common or rare, not a Bulin, without a retrofit (retrofits
-are the long-term core of the F2P account), in no fleet and on no commission. The names of every card of the dock are
-read first, ships in fleets and locked ones too. The picker of materials is set to commons and rares, lowest level
-first, and only its first screen is looked at: a tap on a card picked before would put it back. A ship gets what that
-screen has, the next run gives more.
+Then the user's rule of 2026-10-21: "keep enough to MLB any locked ship, any extras count as enhancement material".
+The cards of the whole dock are read first, by name: a locked one keeps 4 copies, what it takes to limit break her
+fully from none (1, 1, then 2, a card does not tell how many she had), and so does one in a fleet, locked or not, as
+the limit breaks of this task use their copies: Long Island and Laffey of the F2P fleet are not locked. The other
+cards of a name, past those kept, are extras, a single unlocked ship too. An extra is material at level 3 at most
+(ships levelled for commissions stay), common, rare or elite, not a Bulin, in no fleet and on no commission.
+The picker of materials is set to those rarities, lowest level first, and only its first screen is looked at: a tap on
+a card picked before would put it back. A ship gets what that screen has, the next run gives more.
 """
 from collections import Counter
 
@@ -22,7 +24,7 @@ from module.equipment.assets import FLEET_DETAIL_CHECK
 from module.handler.assets import POPUP_CANCEL, POPUP_CONFIRM
 from module.inventory.inventory import CARD_LEFTS
 from module.leveling.fleet import CARD_NAME, LevelingFleet, area_button, card_name_area
-from module.leveling.plan import RETROFIT, name_key
+from module.leveling.plan import name_key
 from module.logger import logger
 from module.ocr.ocr import Ocr
 from module.retire.dock_walk import DockWalker
@@ -52,8 +54,10 @@ SIMILARITY = 0.85
 POPUP_CONFIRM_COLOR = 20
 # Materials, see the docstring
 MATERIAL_LEVEL_MAX = 3
-MATERIAL_RARITY = ('common', 'rare')
+MATERIAL_RARITY = ('common', 'rare', 'elite')
 MATERIAL_SLOTS = 12
+# Copies a ship needs to be limit broken fully from none: 1, 1, then 2
+MLB_COPIES = 4
 # Seconds for each step
 STEP_TIMEOUT = 20
 
@@ -63,12 +67,49 @@ def template_score(image, template, area):
     return float(cv2.minMaxLoc(cv2.matchTemplate(region, template, cv2.TM_CCOEFF_NORMED))[1])
 
 
+class Census:
+    """
+    The cards of the whole dock by name, see the docstring of this module.
+    """
+
+    def __init__(self):
+        self.total = Counter()
+        # Locked, or in a fleet: each keeps MLB_COPIES copies
+        self.keepers = Counter()
+        # Neither
+        self.free = Counter()
+        # Picked as material during this run
+        self.taken = Counter()
+
+    def add(self, read, locked=False, fleet=0):
+        key = name_key(read)
+        self.total[key] += 1
+        if locked or fleet:
+            self.keepers[key] += 1
+        else:
+            self.free[key] += 1
+
+    def extras(self, read):
+        """
+        Returns:
+            int: Cards of her name that can still be material
+        """
+        key = name_key(read)
+        return max(0, self.free[key] - MLB_COPIES * self.keepers[key] - self.taken[key])
+
+    def take(self, read):
+        self.taken[name_key(read)] += 1
+
+    def __len__(self):
+        return sum(self.total.values())
+
+
 def material_fits(read, ship, census, matcher):
     """
     Args:
         read (str): Name read on the card of the picker
         ship (Ship): The card, with its level, rarity, fleet and status
-        census (Counter): Cards of each name in the whole dock, by name_key()
+        census (Census): Cards of each name in the whole dock
         matcher (ShipMatcher):
 
     Returns:
@@ -77,8 +118,6 @@ def material_fits(read, ship, census, matcher):
     key = name_key(read)
     if not key:
         return 'name not read'
-    if census[key] != 1:
-        return f'{census[key]} cards of her name in the dock'
     if ship.level > MATERIAL_LEVEL_MAX:
         return f'level {ship.level}'
     if ship.rarity not in MATERIAL_RARITY:
@@ -87,13 +126,14 @@ def material_fits(read, ship, census, matcher):
         return f'in fleet {ship.fleet}'
     if ship.status not in ('free', None):
         return f'status {ship.status}'
+    if not census.extras(read):
+        return (f'kept to limit break: {census.total[key]} in the dock, {census.keepers[key]} locked or in a fleet '
+                f'keep {MLB_COPIES} each, {census.taken[key]} taken')
     data = matcher.match(read)
     if data is None:
         return 'no ship known by that name'
     if data.is_bulin:
         return 'a Bulin'
-    if data.name.endswith(RETROFIT) or f'{data.name}{RETROFIT}' in matcher.ships:
-        return 'has a retrofit'
     return ''
 
 
@@ -171,7 +211,7 @@ class FleetEnhance(LevelingFleet):
     def enhance_census(self):
         """
         Returns:
-            Counter: Cards of each name in the whole dock, by name_key()
+            Census: Cards of each name in the whole dock
 
         Pages:
             in: Any page
@@ -182,18 +222,17 @@ class FleetEnhance(LevelingFleet):
         self.ui_ensure(page_dock)
         self.dock_favourite_set(False, wait_loading=False)
         self.dock_filter_set(sort='level', index='all', faction='all', rarity='all', extra='no_limit')
-        census = Counter()
-        cards = 0
-        for card, _ in DockWalker(self).cards():
+        census = Census()
+        for card, fleet in DockWalker(self).cards():
             x1, y1, x2, y2 = CARD_NAME
             left = CARD_LEFTS[card.column]
             button = area_button((left + x1, card.top + y1, left + x2, card.top + y2), 'CENSUS_NAME')
             read = Ocr(button, lang='cnocr', letter=(255, 255, 255), threshold=128, name='CENSUS_NAME').ocr(
                 self.device.image)
-            census[name_key(str(read))] += 1
-            cards += 1
-        logger.info(f'Enhance census: {cards} cards, {sum(1 for count in census.values() if count > 1)} names with '
-                    f'copies')
+            census.add(str(read), locked=card.locked, fleet=fleet)
+        extras = sum(census.extras(key) for key in census.total)
+        logger.info(f'Enhance census: {len(census)} cards, {sum(census.keepers.values())} locked or in a fleet, '
+                    f'{extras} extras')
         return census
 
     def enhance_wait(self, check, timeout=STEP_TIMEOUT):
@@ -239,6 +278,7 @@ class FleetEnhance(LevelingFleet):
                 logger.info(f'{read} (Lv.{ship.level}) is no material: {why}')
                 continue
             logger.info(f'Material: {read} (Lv.{ship.level}, {ship.rarity})')
+            census.take(str(read))
             self.device.click(ship.button)
             self.device.sleep(0.3)
             picked += 1
@@ -249,7 +289,7 @@ class FleetEnhance(LevelingFleet):
         Args:
             slot (Slot): Of a fleet, her ship is the one enhanced
             name (str): Her name on the wiki
-            census (Counter): See enhance_census()
+            census (Census): See enhance_census()
             matcher (ShipMatcher):
 
         Returns:
