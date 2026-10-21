@@ -41,14 +41,7 @@ def test_each_ship_comes_in_once_and_a_missing_one_is_not_tried_again():
     assert leveling.formation_goto_fleet.call_args_list == [call(1), call(2), call(2)]
 
 
-def test_no_inventory_waits_for_the_next_day(monkeypatch):
-    monkeypatch.setattr('module.leveling.leveling.load_inventory', lambda name: None)
-    leveling = SimpleNamespace(config=SimpleNamespace(config_name='alas', task_delay=Mock()), ui_ensure=Mock())
-
-    Leveling.run(leveling)
-
-    leveling.config.task_delay.assert_called_once_with(server_update=True)
-    leveling.ui_ensure.assert_not_called()
+# Without an inventory, Leveling still looks at the fleets for Main, see test_leveling_readiness.py
 
 
 # 5 gear slots and the augment at +10
@@ -306,7 +299,7 @@ def test_ships_at_120_and_above_leave_the_fleets(monkeypatch):
 
     boosts = []
 
-    def boost(slots_, minimum, records, save=None, replacing=()):
+    def boost(slots_, minimum, records, save=None, replacing=(), problems=None):
         boosts.append([slot.name for slot in replacing])
         # Hamakaze goes to 97, see plan_boosts()
         slots[4].level = 97
@@ -314,7 +307,8 @@ def test_ships_at_120_and_above_leave_the_fleets(monkeypatch):
 
     leveling = Leveling.__new__(Leveling)
     leveling.config = SimpleNamespace(config_name='alas', Leveling_ExpDataPacks=True, Leveling_UltraTo125=True,
-                                      Leveling_CheckInterval=180, task_delay=Mock())
+                                      Leveling_CheckInterval=180, task_delay=Mock(), task_call=Mock(),
+                                      cross_get=lambda key, default=None: default)
     leveling.ui_ensure = Mock()
     leveling.leveling_fleets = lambda: ([1], [2])
     leveling.leveling_read = lambda fleets: slots

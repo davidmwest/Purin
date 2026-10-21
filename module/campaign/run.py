@@ -1,6 +1,7 @@
 import copy
 import os
 import random
+from datetime import datetime, timedelta
 
 from module.campaign.campaign_base import CampaignBase
 from module.campaign.campaign_event import CampaignEvent
@@ -9,6 +10,7 @@ from module.campaign.stage import StageNotFound, load_stage, stage_names
 from module.config.config import AzurLaneConfig
 from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import to_map_file_name, to_map_input_name
+from module.leveling.readiness import BLOCKED, STALE, leveling_next_run, main_readiness
 from module.leveling.record import record_leveling_run
 from module.logger import logger
 from module.notify import handle_notify
@@ -408,6 +410,27 @@ class CampaignRun(CampaignEvent):
             self.config.task_call('Commission', force_call=True)
             self.config.task_stop('Commission notice found')
 
+    def leveling_gate(self):
+        """
+        Main farms only with fleets that keep the rules of Leveling, see module.leveling.readiness: fleets not looked
+        at lately are looked at by Leveling first, fleets that break the rules hold Main until its next run.
+
+        Raises:
+            TaskEnd: If Main does not run now
+        """
+        state, reason = main_readiness(self.config)
+        if state == STALE:
+            logger.info(f'Leveling looks at the fleets of Main first: {reason}')
+            self.config.task_call('Leveling')
+        elif state == BLOCKED:
+            logger.warning(f'Main holds, its fleets break the rules of Leveling: {reason}')
+            after = max(leveling_next_run(self.config) or datetime.now(), datetime.now())
+            self.config.task_delay(target=after + timedelta(minutes=1))
+        else:
+            return
+        self.campaign.ensure_auto_search_exit(skip_first_screenshot=False)
+        self.config.task_stop(f'Main waits for Leveling: {reason}')
+
     def run(self, name, folder='campaign_main', mode='normal', total=0):
         """
         Args:
@@ -427,6 +450,9 @@ class CampaignRun(CampaignEvent):
                 break
             if self.campaign.event_time_limit_triggered():
                 self.config.task_stop()
+            # The fleets Leveling fills keep its rules
+            if self.config.task.command == 'Main':
+                self.leveling_gate()
 
             # Log
             logger.hr(name, level=1)

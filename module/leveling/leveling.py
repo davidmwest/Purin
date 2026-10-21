@@ -24,6 +24,7 @@ from module.leveling.boost import LevelingBoost
 from module.leveling.plan import BOOST_CAP, CARRY_LEVEL, FARM_LEVEL_MAX, ShipMatcher, campaign_fleets, carry_targets, \
     fleet_average, is_geared, level_needed, leveling_queue, load_ship_data, plan_boosts, plan_carries, \
     plan_done, plan_lift, plan_swaps, update_levels
+from module.leveling.readiness import RECOVERY_MINUTES, assess_fleets
 from module.leveling.record import load_record, record_average, save_record
 from module.logger import logger
 from module.ui.page import page_fleet
@@ -295,7 +296,7 @@ class Leveling(LevelingBoost):
                     save()
         return trips
 
-    def leveling_boost_members(self, slots, minimum, records, save=None, replacing=()):
+    def leveling_boost_members(self, slots, minimum, records, save=None, replacing=(), problems=None):
         """
         The lowest ships of a fleet below its minimum average go up with EXP Data Packs, see plan_boosts().
 
@@ -305,6 +306,7 @@ class Leveling(LevelingBoost):
             records (dict[int, dict]): inventory_ships_of()
             save (callable):
             replacing (list[Slot]): Slots whose ship leaves, see plan_boosts()
+            problems (list[str]): Boosts that failed are added to it, for the assessment of the fleets
 
         Returns:
             int: Ships raised
@@ -314,6 +316,8 @@ class Leveling(LevelingBoost):
             _, boosted = self.leveling_member(slot, level=level)
             if boosted is None:
                 logger.warning(f'{slot.name} was not raised to level {level}')
+                if problems is not None:
+                    problems.append(f'EXP Data Packs did not raise {slot.name} to level {level}')
                 continue
             slot.level = boosted
             raised += 1
@@ -344,21 +348,59 @@ class Leveling(LevelingBoost):
                 f'{"" if target.geared else ", gear not checked" if target.gear_done else ", no gear"})'
                 for target in targets))
 
-    def run(self):
-        inventory = load_inventory(self.config.config_name)
-        if not inventory or not inventory.get('ships'):
-            logger.warning('No inventory of the dock to level ships from, run the Inventory task first')
+    def leveling_assess(self, record, mob_slots, boss_slots, fleets, problems):
+        """
+        The fleets of Main as Leveling leaves them, kept in the record for Main to ask, see module.leveling.readiness.
+
+        Returns:
+            dict: The assessment
+        """
+        assessment = assess_fleets(mob_slots, boss_slots, record['minimum'], fleets=fleets,
+                                   stage=self.config.cross_get('Main.Campaign.Name', default=None), problems=problems)
+        record['assessment'] = assessment
+        if assessment['ok']:
+            logger.info('The fleets of Main keep the rules of Leveling')
+        else:
+            logger.warning('The fleets of Main break the rules of Leveling, Main holds: '
+                           + '; '.join(assessment['reasons']))
+        return assessment
+
+    def leveling_delay(self, assessment):
+        """
+        The next run of Leveling: after CheckInterval, or in RECOVERY_MINUTES while the fleets break the rules.
+        """
+        interval = self.config.Leveling_CheckInterval
+        if not assessment['ok']:
+            self.config.task_delay(minute=min(interval, RECOVERY_MINUTES) if interval > 0 else RECOVERY_MINUTES)
+        elif interval > 0:
+            self.config.task_delay(minute=interval)
+        else:
             self.config.task_delay(server_update=True)
-            return
-        ships = inventory['ships']
-        data = load_ship_data()
+
+    def run(self):
         record = load_record(self.config.config_name)
         minimum = record['minimum']
         use_packs = self.config.Leveling_ExpDataPacks
+        # What kept the fleets from the rules, for the assessment
+        problems = []
+        inventory = load_inventory(self.config.config_name)
+        ships = inventory.get('ships') if inventory else None
 
         self.ui_ensure(page_fleet)
         mob, boss = self.leveling_fleets()
         slots = self.leveling_read(mob + boss)
+        if not ships:
+            # The fleets are looked at all the same, Main needs to know
+            logger.warning('No inventory of the dock to level ships from, run the Inventory task first')
+            problems.append('no inventory of the dock to find ships in, the Inventory task reads it')
+            assessment = self.leveling_assess(record, [slot for slot in slots if slot.fleet in mob],
+                                              [slot for slot in slots if slot.fleet in boss], (mob, boss), problems)
+            save_record(self.config.config_name, record)
+            if not assessment['ok']:
+                self.config.task_call('Inventory')
+            self.leveling_delay(assessment)
+            return
+        data = load_ship_data()
         changed = update_levels(ships, slots, data)
         queue = leveling_queue(ships, data, ultra_to_125=self.config.Leveling_UltraTo125)
         self.leveling_log_queue(queue)
@@ -378,9 +420,11 @@ class Leveling(LevelingBoost):
         carries = plan_carries(boss_slots, slots, carry_list, data)
         swapped = self.leveling_execute(carries, slots, ships, save=save)
         for slot in boss_slots:
-            if slot.name and slot.level >= FARM_LEVEL_MAX:
-                logger.warning(f'Fleet {slot.fleet}: no geared ship of level {CARRY_LEVEL} to {FARM_LEVEL_MAX - 1} '
-                               f'is free to take the place of {slot.name} Lv.{slot.level}, she stays')
+            if slot.name and (slot.level >= FARM_LEVEL_MAX or 0 < slot.level < CARRY_LEVEL):
+                problem = (f'no geared ship of level {CARRY_LEVEL} to {FARM_LEVEL_MAX - 1} was free to take the place '
+                           f'of {slot.name} Lv.{slot.level} in fleet {slot.fleet}')
+                logger.warning(problem)
+                problems.append(problem)
         logger.info(f'Mob fleet average level {fleet_average(mob_slots):.1f}, minimum {minimum}')
         # Ships done leave the mob fleet. The others go up first, for the fleet to keep its minimum with a ship
         # coming in at BOOST_CAP.
@@ -389,20 +433,28 @@ class Leveling(LevelingBoost):
         if done:
             logger.info('Ships done in the mob fleet: ' + ', '.join(f'{slot.name} Lv.{slot.level}' for slot in done))
             if use_packs:
-                self.leveling_boost_members(mob_slots, minimum, records, save=save, replacing=done)
+                self.leveling_boost_members(mob_slots, minimum, records, save=save, replacing=done,
+                                            problems=problems)
             plans = plan_done(mob_slots, queue, carry_list, data, others=other_slots)
             replaced = self.leveling_execute(plans, slots, ships, save=save, minimum=minimum, use_packs=use_packs)
             swapped += replaced
             for slot in done:
                 if slot.level >= FARM_LEVEL_MAX:
-                    logger.warning(f'Fleet {slot.fleet}: no ship under {FARM_LEVEL_MAX} could take the place of '
-                                   f'{slot.name} Lv.{slot.level} and keep the minimum average {minimum}, she stays')
+                    problem = (f'no ship under {FARM_LEVEL_MAX} could take the place of {slot.name} Lv.{slot.level} '
+                               f'in fleet {slot.fleet} and keep the minimum average {minimum}')
+                    logger.warning(problem)
+                    problems.append(problem)
         # A mob fleet below its minimum average, as when a battle lost raised it
         if fleet_average(mob_slots) < minimum and use_packs:
-            self.leveling_boost_members(mob_slots, minimum, records, save=save)
+            self.leveling_boost_members(mob_slots, minimum, records, save=save, problems=problems)
         if fleet_average(mob_slots) < minimum:
+            if not use_packs:
+                problems.append('EXP Data Packs are off, Leveling.ExpDataPacks')
             lift = plan_lift(mob_slots, carry_list, minimum, data, others=other_slots)
             swapped += self.leveling_execute(lift, slots, ships, limit=1, save=save)
+            if fleet_average(mob_slots) < minimum:
+                problems.append(f'no free ship of level {CARRY_LEVEL} to {FARM_LEVEL_MAX - 1} could lift the mob '
+                                f'fleet to its minimum')
         elif not replaced:
             # The swaps that bring in the best ships first
             plans = plan_swaps(mob_slots, queue, data, others=other_slots)
@@ -411,14 +463,10 @@ class Leveling(LevelingBoost):
                                              use_packs=use_packs)
         average = fleet_average(mob_slots)
         record_average(record, average)
+        assessment = self.leveling_assess(record, mob_slots, boss_slots, (mob, boss), problems)
         save_record(self.config.config_name, record)
         logger.info(f'Leveling: {swapped} ships came in, {changed} levels went up, '
                     f'mob fleet average level {average:.1f} with a minimum of {minimum}')
         if changed or swapped:
             save_inventory(self.config.config_name, inventory)
-
-        interval = self.config.Leveling_CheckInterval
-        if interval > 0:
-            self.config.task_delay(minute=interval)
-        else:
-            self.config.task_delay(server_update=True)
+        self.leveling_delay(assessment)

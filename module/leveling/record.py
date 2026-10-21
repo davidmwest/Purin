@@ -142,4 +142,8 @@ def record_leveling_run(config, campaign):
     mob_lost = bool(lost) and fleet != 2
     record = load_record(config.config_name)
     record_run(record, config.Campaign_Name, mob_lost)
+    # The fleets were looked at a run ago more, see module.leveling.readiness
+    assessment = record.get('assessment')
+    if isinstance(assessment, dict):
+        assessment['runs'] = (assessment.get('runs') or 0) + 1
     save_record(config.config_name, record)
