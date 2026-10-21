@@ -265,3 +265,68 @@ def test_without_gear_transfer_a_ship_without_gear_stays_out(monkeypatch):
     assert Leveling.leveling_execute(leveling, plans, slots, []) == 1
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Hamakaze']
     leveling.ship_prepare.assert_not_called()
+
+
+def dock_ship(name, level, geared=True, power=4000, index=0):
+    gear = [10, 10, 10, 10, 10] if geared else [0, 0, 0, 0, 0]
+    return {'name': name, 'level': level, 'stars': 6, 'exp': 0, 'exp_next': 1000 if level < 125 else 0,
+            'affinity': 'stranger', 'power': power, 'gear_levels': gear, 'augment_level': 10 if geared else 0,
+            'index': index}
+
+
+def test_ships_at_120_and_above_leave_the_fleets(monkeypatch):
+    # The fleets of 12-4 on 2026-10-21, the user's rule: ships under 120 only
+    slots = [Slot(1, 'main', 0, 'Hakuhou', 95), Slot(1, 'main', 1, 'Gangut', 99),
+             Slot(1, 'main', 2, 'Gotz von Berlichingen', 125), Slot(1, 'vanguard', 0, 'Isokaze', 101),
+             Slot(1, 'vanguard', 1, 'Hamakaze', 72), Slot(1, 'vanguard', 2, 'Tanikaze', 78),
+             Slot(2, 'main', 0, 'Victorious META', 110), Slot(2, 'main', 1, 'Hiei', 109),
+             Slot(2, 'main', 2, 'Haruna', 103), Slot(2, 'vanguard', 0, 'London (Retrofit)', 119),
+             Slot(2, 'vanguard', 1, 'Eldridge (Retrofit)', 125), Slot(2, 'vanguard', 2, 'Juneau (Retrofit)', 125)]
+    dock = [dock_ship(slot.name, slot.level, index=index) for index, slot in enumerate(slots)] + [
+        dock_ship('Nana Astar Deviluke', 110, power=4768, index=20),
+        dock_ship('Dmitri Donskoi', 100, power=4673, index=21),
+        dock_ship('Tirpitz', 72, geared=False, index=22),
+    ]
+    monkeypatch.setattr('module.leveling.leveling.load_inventory', lambda name: {'ships': dock})
+    monkeypatch.setattr('module.leveling.leveling.load_record', lambda name: {'minimum': 95})
+    monkeypatch.setattr('module.leveling.leveling.record_average', Mock())
+    monkeypatch.setattr('module.leveling.leveling.save_record', Mock())
+    monkeypatch.setattr('module.leveling.leveling.save_inventory', Mock())
+
+    executed = []
+
+    def execute(plans, slots_, ships, limit=None, save=None, minimum=None, use_packs=False):
+        executed.append([((slot.fleet, slot.name), [target.ship for target in targets]) for slot, targets in plans])
+        for slot, targets in plans:
+            slot.name, slot.level = targets[0].ship, max(targets[0].level, 100)
+        return len(plans)
+
+    boosts = []
+
+    def boost(slots_, minimum, records, save=None, replacing=()):
+        boosts.append([slot.name for slot in replacing])
+        # Hamakaze goes to 97, see plan_boosts()
+        slots[4].level = 97
+        return 1
+
+    leveling = Leveling.__new__(Leveling)
+    leveling.config = SimpleNamespace(config_name='alas', Leveling_ExpDataPacks=True, Leveling_UltraTo125=True,
+                                      Leveling_CheckInterval=180, task_delay=Mock())
+    leveling.ui_ensure = Mock()
+    leveling.leveling_fleets = lambda: ([1], [2])
+    leveling.leveling_read = lambda fleets: slots
+    leveling.leveling_gear_members = Mock()
+    leveling.leveling_execute = execute
+    leveling.leveling_boost_members = boost
+
+    leveling.run()
+
+    # Fleet 2 takes the carries under 120 for its two at 125
+    assert executed[0] == [((2, 'Eldridge (Retrofit)'), ['Nana Astar Deviluke', 'Dmitri Donskoi']),
+                           ((2, 'Juneau (Retrofit)'), ['Nana Astar Deviluke', 'Dmitri Donskoi'])]
+    # Fleet 1 raises the others for a ship coming in at 100, Tirpitz takes the place of Gotz
+    assert boosts == [['Gotz von Berlichingen']]
+    assert executed[1] == [((1, 'Gotz von Berlichingen'), ['Tirpitz'])]
+    # No other swap in the run
+    assert len(executed) == 2
+    assert all(slot.level < 120 for slot in slots)

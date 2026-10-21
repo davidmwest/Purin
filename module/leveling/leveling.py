@@ -1,7 +1,9 @@
 """
 Keep the fleets of the campaign filled with the ships to level next, in the order of module.leveling.plan.
 
-Ships level in the fleet that fights the mobs, 6 of the 7 battles of 12-4. It keeps its average level at a minimum,
+Ships level in the fleet that fights the mobs, 6 of the 7 battles of 12-4. The fleets that farm hold ships under
+FARM_LEVEL_MAX only, the user's rule of 2026-10-21: a ship done leaves for a ship of the queue, or a carry.
+The mob fleet keeps its average level at a minimum,
 the user's rule: 95, as 86.8 lost a run in three (see AVERAGE_STEPS), module.leveling.record keeps the trial.
 A ship comes in if the fleet keeps the minimum with her, raised with EXP Data Packs if she is short of it, and to 100
 with packs storage can spare (module.leveling.boost). A fleet below the minimum has its lowest ships raised.
@@ -19,9 +21,9 @@ from datetime import datetime, timedelta
 from module.equipment.assets import FLEET_DETAIL_CHECK
 from module.inventory.inventory import filepath_inventory, save_inventory
 from module.leveling.boost import LevelingBoost
-from module.leveling.plan import BOOST_CAP, ShipMatcher, campaign_fleets, carry_targets, fleet_average, gear_record, \
-    is_geared, level_needed, leveling_queue, load_ship_data, plan_boosts, plan_carries, plan_lift, plan_swaps, \
-    update_levels
+from module.leveling.plan import BOOST_CAP, CARRY_LEVEL, FARM_LEVEL_MAX, ShipMatcher, campaign_fleets, carry_targets, \
+    fleet_average, gear_record, is_geared, level_needed, leveling_queue, load_ship_data, plan_boosts, plan_carries, \
+    plan_done, plan_lift, plan_swaps, update_levels
 from module.leveling.record import load_record, record_average, save_record
 from module.logger import logger
 from module.ui.page import page_fleet
@@ -279,7 +281,7 @@ class Leveling(LevelingBoost):
                     save()
         return trips
 
-    def leveling_boost_members(self, slots, minimum, records, save=None):
+    def leveling_boost_members(self, slots, minimum, records, save=None, replacing=()):
         """
         The lowest ships of a fleet below its minimum average go up with EXP Data Packs, see plan_boosts().
 
@@ -288,12 +290,13 @@ class Leveling(LevelingBoost):
             minimum (float):
             records (dict[int, dict]): inventory_ships_of()
             save (callable):
+            replacing (list[Slot]): Slots whose ship leaves, see plan_boosts()
 
         Returns:
             int: Ships raised
         """
         raised = 0
-        for slot, level in plan_boosts(slots, minimum):
+        for slot, level in plan_boosts(slots, minimum, replacing=replacing):
             _, boosted = self.leveling_member(slot, level=level)
             if boosted is None:
                 logger.warning(f'{slot.name} was not raised to level {level}')
@@ -356,16 +359,36 @@ class Leveling(LevelingBoost):
         if GEAR_TRANSFER:
             self.leveling_gear_members(slots, records, save=save)
         # The boss fleet, ships it lets go may level in the mob fleet
-        carries = plan_carries([slot for slot in slots if slot.fleet in boss], slots, carry_list, data)
+        boss_slots = [slot for slot in slots if slot.fleet in boss]
+        carries = plan_carries(boss_slots, slots, carry_list, data)
         swapped = self.leveling_execute(carries, slots, ships, save=save)
-        # A mob fleet below its minimum average, as when a battle lost raised it
+        for slot in boss_slots:
+            if slot.name and slot.level >= FARM_LEVEL_MAX:
+                logger.warning(f'Fleet {slot.fleet}: no geared ship of level {CARRY_LEVEL} to {FARM_LEVEL_MAX - 1} '
+                               f'is free to take the place of {slot.name} Lv.{slot.level}, she stays')
         logger.info(f'Mob fleet average level {fleet_average(mob_slots):.1f}, minimum {minimum}')
+        # Ships done leave the mob fleet. The others go up first, for the fleet to keep its minimum with a ship
+        # coming in at BOOST_CAP.
+        done = [slot for slot in mob_slots if slot.name and slot.level >= FARM_LEVEL_MAX]
+        replaced = 0
+        if done:
+            logger.info('Ships done in the mob fleet: ' + ', '.join(f'{slot.name} Lv.{slot.level}' for slot in done))
+            if use_packs:
+                self.leveling_boost_members(mob_slots, minimum, records, save=save, replacing=done)
+            plans = plan_done(mob_slots, queue, carry_list, data, others=other_slots)
+            replaced = self.leveling_execute(plans, slots, ships, save=save, minimum=minimum, use_packs=use_packs)
+            swapped += replaced
+            for slot in done:
+                if slot.level >= FARM_LEVEL_MAX:
+                    logger.warning(f'Fleet {slot.fleet}: no ship under {FARM_LEVEL_MAX} could take the place of '
+                                   f'{slot.name} Lv.{slot.level} and keep the minimum average {minimum}, she stays')
+        # A mob fleet below its minimum average, as when a battle lost raised it
         if fleet_average(mob_slots) < minimum and use_packs:
             self.leveling_boost_members(mob_slots, minimum, records, save=save)
         if fleet_average(mob_slots) < minimum:
             lift = plan_lift(mob_slots, carry_list, minimum, data, others=other_slots)
             swapped += self.leveling_execute(lift, slots, ships, limit=1, save=save)
-        else:
+        elif not replaced:
             # The swaps that bring in the best ships first
             plans = plan_swaps(mob_slots, queue, data, others=other_slots)
             plans.sort(key=lambda plan: -plan[1][0].score)

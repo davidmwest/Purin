@@ -84,6 +84,9 @@ GEARLESS_ROWS = ('main', 'vanguard')
 # Ships at level 120 and above are done, unless they go to 125
 LEVEL_DONE = 120
 LEVEL_MAX = 125
+# The fleets that farm, the mob and the boss fleets of 12-4, hold ships under this level only, the user's rule of
+# 2026-10-21 for the main account: Gotz von Berlichingen, Eldridge and Juneau at 125 were in them, gaining nothing
+FARM_LEVEL_MAX = 120
 
 
 @dataclass(frozen=True)
@@ -474,7 +477,7 @@ def plan_swaps(slots, queue, data=None, others=()):
     A row of the fleets holds the geared ships at the top of the queue, as many as it has slots, and in the rows
     of GEARLESS_ROWS ships without gear too, they get gear from storage as they come in. Ships at the top stay
     where they are, the other slots take the next ships of the top from the dock. A ship only replaces one below
-    her.
+    her. Ships at FARM_LEVEL_MAX and above do not come in.
     A slot whose ship can not be read is left as it is.
 
     Args:
@@ -495,7 +498,8 @@ def plan_swaps(slots, queue, data=None, others=()):
             elsewhere.add(match.character)
     plans = []
     for row in ('main', 'vanguard'):
-        ranked = [target for target in queue if target.row == row and (target.geared or row in GEARLESS_ROWS)]
+        ranked = [target for target in queue if target.row == row and target.level < FARM_LEVEL_MAX
+                  and (target.geared or row in GEARLESS_ROWS)]
         rank = {target.character: index for index, target in enumerate(ranked)}
         row_slots = sorted([slot for slot in slots if slot.row == row], key=lambda slot: (slot.fleet, slot.index))
 
@@ -564,13 +568,14 @@ def carry_targets(ships, data=None):
         data (dict[str, ShipData]):
 
     Returns:
-        list[Target]: Ships to fight a boss, geared and at CARRY_LEVEL or above, the most powerful first
+        list[Target]: Ships to fight a boss, geared, at CARRY_LEVEL or above and under FARM_LEVEL_MAX,
+            the most powerful first
     """
     matcher = ShipMatcher(data if data is not None else load_ship_data())
     best = {}
     for ship in ships:
         level = ship.get('level') or 0
-        if not CARRY_LEVEL <= level <= LEVEL_MAX or not is_geared(ship):
+        if not CARRY_LEVEL <= level < FARM_LEVEL_MAX or not is_geared(ship):
             continue
         match = matcher.match(ship.get('name') or '')
         if match is None:
@@ -592,7 +597,8 @@ def carry_targets(ships, data=None):
 
 def plan_carries(boss_slots, slots, carries, data=None):
     """
-    The boss fleet holds ships at CARRY_LEVEL or above, a slot below it takes the most powerful ship free.
+    The boss fleet holds ships at CARRY_LEVEL or above and under FARM_LEVEL_MAX, a slot out of it takes the most
+    powerful ship free.
 
     Args:
         boss_slots (list[Slot]): Slots of the boss fleet
@@ -611,7 +617,7 @@ def plan_carries(boss_slots, slots, carries, data=None):
             seated.add(match.character)
     plans = []
     for slot in sorted(boss_slots, key=lambda slot: (slot.fleet, slot.row != 'main', slot.index)):
-        if slot.name and slot.level >= CARRY_LEVEL:
+        if slot.name and CARRY_LEVEL <= slot.level < FARM_LEVEL_MAX:
             continue
         candidates = [target for target in carries if target.row == slot.row and target.character not in seated]
         if candidates:
@@ -646,7 +652,7 @@ def level_needed(slots, slot, minimum):
     return max(0, math.ceil(minimum * len(slots) - others - 1e-9))
 
 
-def plan_boosts(slots, minimum):
+def plan_boosts(slots, minimum, replacing=()):
     """
     A fleet below its minimum average has its lowest ships below BOOST_CAP raised with EXP Data Packs,
     the lowest first, as few levels as it takes.
@@ -654,13 +660,16 @@ def plan_boosts(slots, minimum):
     Args:
         slots (list[Slot]): Slots of a fleet
         minimum (float): Average level the fleet keeps
+        replacing (list[Slot]): Slots whose ship leaves, the ship coming in counts as BOOST_CAP, packs take one there
 
     Returns:
         list[tuple[Slot, int]]: Slots and the level their ship goes to
     """
-    missing = math.ceil(minimum * len(slots) - sum(slot.level if slot.name else 0 for slot in slots) - 1e-9)
+    leaving = {id(slot) for slot in replacing}
+    total = sum(BOOST_CAP if id(slot) in leaving else (slot.level if slot.name else 0) for slot in slots)
+    missing = math.ceil(minimum * len(slots) - total - 1e-9)
     plans = []
-    for slot in sorted([slot for slot in slots if slot.name and 0 < slot.level < BOOST_CAP],
+    for slot in sorted([slot for slot in slots if id(slot) not in leaving and slot.name and 0 < slot.level < BOOST_CAP],
                        key=lambda slot: (slot.level, slot.row, slot.index)):
         if missing <= 0:
             break
@@ -692,3 +701,39 @@ def plan_lift(slots, carries, minimum, data=None, others=()):
         return []
     lowest = min(filled, key=lambda slot: (slot.level, slot.row, slot.index))
     return plan_carries([lowest], list(slots) + list(others), carries, data)
+
+
+def plan_done(slots, queue, carries, data=None, others=()):
+    """
+    Ships at FARM_LEVEL_MAX and above leave the fleet that farms, the user's rule. The slot of one takes a ship of the
+    queue, the best first, or else a carry, see carry_targets().
+
+    Args:
+        slots (list[Slot]): Slots of the fleet
+        queue (list[Target]): leveling_queue()
+        carries (list[Target]): carry_targets()
+        data (dict[str, ShipData]):
+        others (list[Slot]): Slots of the other fleets read, their ships are not free to come in
+
+    Returns:
+        list[tuple[Slot, list[Target]]]: Slots to change, with the ships to try in them, the best first
+    """
+    matcher = ShipMatcher(data if data is not None else load_ship_data())
+    seated = set()
+    for slot in list(slots) + list(others):
+        match = matcher.match(slot.name) if slot.name else None
+        if match is not None:
+            seated.add(match.character)
+    plans = []
+    for slot in sorted(slots, key=lambda slot: (slot.fleet, slot.row != 'main', slot.index)):
+        if not slot.name or slot.level < FARM_LEVEL_MAX:
+            continue
+        candidates = [target for target in queue
+                      if target.row == slot.row and target.level < FARM_LEVEL_MAX
+                      and (target.geared or slot.row in GEARLESS_ROWS) and target.character not in seated]
+        listed = {target.character for target in candidates}
+        candidates += [target for target in carries
+                       if target.row == slot.row and target.character not in seated | listed]
+        if candidates:
+            plans.append((slot, candidates))
+    return plans

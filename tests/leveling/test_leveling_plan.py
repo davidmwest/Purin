@@ -3,7 +3,7 @@ import pytest
 from module.leveling.plan import (
     AWAKEN_CHIPS, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Slot, Target, awaken_cost,
     awakenings_done, campaign_fleets, carry_targets, fleet_average, gear_record, is_geared, level_needed, leveling_queue,
-    load_ship_data, name_key, plan_boosts, plan_carries, plan_lift, plan_swaps, update_levels,
+    load_ship_data, name_key, plan_boosts, plan_carries, plan_done, plan_lift, plan_swaps, update_levels,
 )
 
 GEARED = [10, 10, 10, 10, 10]
@@ -327,35 +327,54 @@ def test_mob_and_boss_fleets(fleet1, fleet2, order, fleets):
 
 def test_carries_are_the_most_powerful_geared_ships(data):
     dock = [
-        ship('Eldridge (Retrofit)', 125, exp_next=0, gear=GEARED, power=6046),
-        ship('Plymouth', 125, exp_next=0, gear=GEARED, power=5780),
-        # Without gear, or below 100
-        ship('Juneau (Retrofit)', 125, exp_next=0, power=5828),
+        ship('Nana Astar Deviluke', 110, gear=GEARED, power=4768),
+        ship('Dmitri Donskoi', 100, gear=GEARED, power=4673),
+        # Without gear, below 100, or at 120 and above: the user's rule of 2026-10-21, ships under 120 farm
+        ship('Akashi', 105, power=3514),
         ship('Hasty', 72, gear=GEARED, power=3691),
-        ship('Lion', 125, exp_next=0, gear=GEARED, power=6215),
+        ship('Eldridge (Retrofit)', 125, exp_next=0, gear=GEARED, power=6046),
+        ship('Juneau (Retrofit)', 125, exp_next=0, gear=GEARED, power=5828),
+        ship('Hiei', 109, gear=GEARED, power=4912),
     ]
     carries = carry_targets(dock, data)
 
     assert [(target.ship, target.row) for target in carries] == \
-           [('Lion', 'main'), ('Eldridge (Retrofit)', 'vanguard'), ('Plymouth', 'vanguard')]
+           [('Hiei', 'main'), ('Nana Astar Deviluke', 'vanguard'), ('Dmitri Donskoi', 'vanguard')]
 
 
 def test_boss_fleet_takes_carries_for_ships_below_100(data):
-    dock = [ship(name, 125, exp_next=0, gear=GEARED, power=power)
-            for name, power in [('Eldridge (Retrofit)', 6046), ('Plymouth', 5780), ('London (Retrofit)', 4554),
-                                ('Lion', 6215)]]
+    dock = [ship(name, level, gear=GEARED, power=power)
+            for name, level, power in [('Nana Astar Deviluke', 110, 4768), ('Vittorio Cuniberti', 105, 4543),
+                                       ('London (Retrofit)', 118, 4554), ('Victorious META', 110, 4840)]]
     boss = slots_of(2, 'vanguard', 'London (Retrofit)', 'Cooper', 'Vampire') + slots_of(2, 'main', '', 'Hiei', 'Haruna')
     for slot, level in zip(boss, [118, 73, 77, 0, 108, 102]):
         slot.level = level
-    mob = slots_of(1, 'vanguard', 'Hasty', 'Plymouth', 'Ping Hai Retrofit')
+    mob = slots_of(1, 'vanguard', 'Hasty', 'Vittorio Cuniberti', 'Ping Hai Retrofit')
 
     plans = plan_carries(boss, boss + mob, carry_targets(dock, data), data)
 
-    # Plymouth is in fleet 1 and London in fleet 2 already, an empty slot takes a carry too
+    # Vittorio Cuniberti is in fleet 1 and London in fleet 2 already, an empty slot takes a carry too
     assert plan_names(plans) == [
-        ((2, 0), ['Lion']),
-        ((2, 1), ['Eldridge (Retrofit)']),
-        ((2, 2), ['Eldridge (Retrofit)']),
+        ((2, 0), ['Victorious META']),
+        ((2, 1), ['Nana Astar Deviluke']),
+        ((2, 2), ['Nana Astar Deviluke']),
+    ]
+
+
+def test_boss_fleet_lets_ships_at_120_and_above_go(data):
+    # Fleet 2 on 2026-10-21: Eldridge and Juneau at 125 gained nothing there
+    dock = [ship(name, level, gear=GEARED, power=power)
+            for name, level, power in [('Nana Astar Deviluke', 110, 4768), ('Dmitri Donskoi', 100, 4673),
+                                       ('Eldridge (Retrofit)', 125, 6046), ('Juneau (Retrofit)', 125, 5828)]]
+    boss = slots_of(2, 'vanguard', 'London (Retrofit)', 'Eldridge (Retrofit)', 'Juneau (Retrofit)')
+    for slot, level in zip(boss, [119, 125, 125]):
+        slot.level = level
+
+    plans = plan_carries(boss, boss, carry_targets(dock, data), data)
+
+    assert plan_names(plans) == [
+        ((2, 1), ['Nana Astar Deviluke', 'Dmitri Donskoi']),
+        ((2, 2), ['Nana Astar Deviluke', 'Dmitri Donskoi']),
     ]
 
 
@@ -434,11 +453,54 @@ def test_ships_at_100_are_not_raised():
     assert plan_boosts(slots, 105) == []
 
 
+def carry(name, row, level, power):
+    return Target(name=name, ship=name, hull='DD' if row == 'vanguard' else 'BB', row=row, rarity='Super Rare',
+                  level=level, goal=level, chips=0, arrays=0, gain=0, tech=0, score=power, priority=3, geared=True,
+                  index=0)
+
+
 def test_without_packs_the_lowest_ship_makes_room_for_a_carry(data):
     slots = mob_fleet(89, 99, 93, 70, 72, 91)
-    carries = [Target(name='Eldridge (Retrofit)', ship='Eldridge (Retrofit)', hull='DD', row='vanguard',
-                      rarity='Super Rare', level=125, goal=125, chips=0, arrays=0, gain=0, tech=0, score=6046,
-                      priority=3, geared=True, index=0)]
+    carries = [carry('Nana Astar Deviluke', 'vanguard', 110, 4768)]
 
-    assert plan_names(plan_lift(slots, carries, 95, data)) == [((1, 0), ['Eldridge (Retrofit)'])]
+    assert plan_names(plan_lift(slots, carries, 95, data)) == [((1, 0), ['Nana Astar Deviluke'])]
     assert plan_lift(slots, carries, 85, data) == []
+
+
+def test_ships_at_120_and_above_do_not_come_into_the_fleets(data):
+    queue = queue_of(('Hasty', 'vanguard', True), ('Cooper', 'vanguard', True))
+    # Ships of the queue at 120 and above, going to 125
+    queue[0].level = 120
+    slots = slots_of(1, 'vanguard', '', 'Craven')
+
+    assert plan_names(plan_swaps(slots, queue, data)) == [((1, 0), ['Cooper']), ((1, 1), ['Cooper'])]
+
+
+def test_packs_raise_the_others_for_a_ship_coming_in_at_100():
+    # Fleet 1 on 2026-10-21, Gotz von Berlichingen at 125 leaves
+    slots = mob_fleet(95, 99, 125, 101, 72, 78)
+    gotz = slots[2]
+
+    # The ship coming in counts as 100: 570 - 100 - 445 = 25 levels short
+    assert [(slot.name, level) for slot, level in plan_boosts(slots, 95, replacing=[gotz])] == [
+        ('Ping Hai Retrofit', 97)]
+    # Her 125 does not count
+    assert plan_boosts(slots, 95) == []
+
+
+def test_a_ship_done_leaves_for_a_ship_of_the_queue_or_a_carry(data):
+    queue = queue_of(('Tirpitz', 'main', False), ('Kirishima', 'main', False), ('Haruna', 'main', True),
+                     ('Hakuhou', 'main', True), ('Isokaze', 'vanguard', True))
+    # A ship of the queue at 120 and above is done too
+    queue[1].level = 121
+    mob = mob_fleet(95, 99, 125, 101, 72, 78)
+    mob[2].name = 'Gotz von Berlichingen'
+    boss = slots_of(2, 'main', 'Victorious META', 'Hiei', 'Haruna')
+    carries = [carry('Akashi', 'main', 105, 3514), carry('Hiei', 'main', 109, 4912),
+               carry('Nana Astar Deviluke', 'vanguard', 110, 4768)]
+
+    plans = plan_done(mob, queue, carries, data, others=boss)
+
+    # Haruna and Hiei are in fleet 2, Hakuhou in fleet 1
+    assert plan_names(plans) == [((1, 2), ['Tirpitz', 'Akashi'])]
+    assert plan_done(mob_fleet(95, 99, 119, 101, 72, 78), queue, carries, data) == []
