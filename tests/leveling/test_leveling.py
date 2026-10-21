@@ -385,3 +385,15 @@ def test_ships_leaving_the_fleets_get_no_gear():
 
     assert Leveling.leveling_gear_members(leveling, slots, records) == 1
     assert leveling.leveling_member.call_args == call(slots[1], gear=True, hull='DD')
+
+
+def test_why_ships_were_not_tried_is_told():
+    # 2026-10-21: Dmitri Donskoi and Vittorio Cuniberti, tried at 13:56, were left out of the run after it unsaid
+    slot = Slot(2, 'vanguard', 2, 'Juneau (Retrofit)', 125)
+    tried = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    ships = [{'name': 'Dmitri Donskoi', 'index': 0, 'gear_tried': tried}]
+    donskoi = target('Dmitri Donskoi', level=100, geared=False)
+    problems = []
+
+    assert Leveling.leveling_execute(leveling_with(), [(slot, [donskoi])], [slot], ships, problems=problems) == 0
+    assert problems == [f'for Juneau (Retrofit): Dmitri Donskoi tried at {tried}, again a day after']

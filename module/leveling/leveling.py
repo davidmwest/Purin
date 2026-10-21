@@ -168,6 +168,8 @@ class Leveling(LevelingBoost):
                     continue
                 boost = need if target.level < need else None
                 if boost is not None and (not use_packs or boost > BOOST_CAP):
+                    failed(slot, target, f'would need level {boost}'
+                           + (f', packs go to {BOOST_CAP} at most' if use_packs else ', EXP Data Packs are off'))
                     continue
                 spare = use_packs and 0 < target.level < BOOST_CAP
                 if not target.geared and not GEAR_TRANSFER:
@@ -176,8 +178,10 @@ class Leveling(LevelingBoost):
                     record = next((ship for ship in ships if ship.get('name') == target.name
                                    and ship.get('index', -1) == target.index), None)
                     if trips >= GEAR_TRIES:
+                        failed(slot, target, f'not tried, {GEAR_TRIES} trips to the dock this run already')
                         continue
                     if not target.geared and gear_tried_recently(record, datetime.now()):
+                        failed(slot, target, f'tried at {record.get("gear_tried")}, again a day after')
                         continue
                     trips += 1
                     if record is not None and not target.geared:

@@ -41,6 +41,8 @@ RUNS_PER_ASSESSMENT = 5
 ASSESSMENT_MAX_AGE = timedelta(hours=4)
 # Leveling comes back this soon when the fleets break the rules
 RECOVERY_MINUTES = 30
+# Ships tried in the place of a ship at FARM_LEVEL_MAX said in her warning, the others counted
+WARNING_TRIED = 4
 
 READY = 'ready'
 STALE = 'stale'
@@ -73,6 +75,8 @@ def assess_fleets(mob_slots, boss_slots, minimum, fleets=None, stage=None, probl
         if slot.name and slot.level >= FARM_LEVEL_MAX:
             prefix = f'for {slot.name}: '
             tried = [problem[len(prefix):] for problem in problems if problem.startswith(prefix)]
+            if len(tried) > WARNING_TRIED:
+                tried = tried[:WARNING_TRIED] + [f'{len(tried) - WARNING_TRIED} more']
             warnings.append(f'{slot.name} Lv.{slot.level} in fleet {slot.fleet}, no replacement found'
                             + (': ' + '; '.join(tried) if tried else ''))
     for slot in boss_slots:
