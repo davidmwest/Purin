@@ -6,6 +6,7 @@ from module.logger import logger
 from module.ocr.ocr import Digit
 from module.retire.assets import DOCK_CHECK, SHIP_DETAIL_CHECK
 from module.retire.dock import CARD_GRIDS, DOCK_EMPTY, Dock
+from module.retire.dock_walk import DockWalker
 from module.retire.scanner import ShipScanner
 from module.ui.assets import BACK_ARROW
 from module.ui.page import page_dock, page_main
@@ -468,22 +469,38 @@ class Awaken(Dock):
 
         Returns:
             bool: True if success to enter
-                False if there is no ship at that place, or it is not on the first screen of the dock
+                False if there is no ship at that place, the end of the dock
 
         Pages:
             in: page_dock
             out: SHIP_DETAIL_CHECK
         """
+        self.awaken_walk_back()
         if index == 0:
             return self.dock_enter_first()
 
         columns, rows = CARD_GRIDS.grid_shape
         if index >= columns * rows:
-            logger.info(f'Ship {index} is not on the first screen of the dock')
-            return False
+            # Ships passed over for the chip reserve stay in front, a cheaper one can be further down
+            return self.awaken_walk_enter(index)
 
         logger.info(f'Dock enter ship {index}')
         button = CARD_GRIDS[(index % columns, index // columns)]
+        return self.awaken_click_card(button, index, skip_first_screenshot=skip_first_screenshot)
+
+    def awaken_click_card(self, button, index, skip_first_screenshot=True):
+        """
+        Args:
+            button (Button): A card of the dock
+            index (int): Of the ship, for the log
+
+        Returns:
+            bool: True if success to enter
+
+        Pages:
+            in: page_dock
+            out: SHIP_DETAIL_CHECK
+        """
         self.interval_clear(DOCK_CHECK, interval=5)
         clicked = 0
         while 1:
@@ -504,6 +521,43 @@ class Awaken(Dock):
                 self.device.click(button)
                 clicked += 1
 
+    def awaken_walk_back(self):
+        """
+        The cards of CARD_GRIDS are those of the first screen: back to it after a walk down the dock.
+        """
+        if getattr(self, 'dock_walked', False):
+            DockWalker(self).list_top()
+            self.dock_walked = False
+
+    def awaken_walk_enter(self, index, fleets=None):
+        """
+        Enter a ship past the first screen of the dock, counted from its first card.
+
+        Args:
+            index (int): 0 for the first ship, of the fleets if any
+            fleets (list[int]): Fleets whose ships are counted, None for any ship
+
+        Returns:
+            bool: True if success to enter, False at the end of the dock
+
+        Pages:
+            in: page_dock
+            out: SHIP_DETAIL_CHECK
+        """
+        of = f' of fleets {fleets}' if fleets is not None else ''
+        count = 0
+        for card, fleet in DockWalker(self).cards():
+            self.dock_walked = True
+            if fleets is not None and fleet not in fleets:
+                continue
+            if count < index:
+                count += 1
+                continue
+            logger.info(f'Dock enter ship {index}{of}, row of the card at y={card.top}')
+            return self.awaken_click_card(card.button, index, skip_first_screenshot=False)
+        logger.info(f'No ship {index}{of} in dock, {count} seen')
+        return False
+
     def awaken_enter_fleet_ship(self, fleets, index, skip_first_screenshot=True):
         """
         Enter a ship of the fleets, counted from the first one of them in the dock.
@@ -515,20 +569,23 @@ class Awaken(Dock):
 
         Returns:
             bool: True if success to enter
-                False if there is no such ship on the first screen of the dock
+                False if there is no such ship in the dock
 
         Pages:
             in: page_dock
             out: SHIP_DETAIL_CHECK
         """
+        if getattr(self, 'dock_walked', False):
+            self.awaken_walk_back()
+            skip_first_screenshot = False
         if not skip_first_screenshot:
             self.device.screenshot()
         scanner = ShipScanner(fleet=fleets, status='any')
         scanner.disable('emotion', 'rarity')
         ships = scanner.scan(self.device.image, output=False)
         if index >= len(ships):
-            logger.info(f'No ship {index} of fleets {fleets} on the first screen of the dock')
-            return False
+            # The ships of the fleets may be further down, past ships of other fleets that can awaken too
+            return self.awaken_walk_enter(index, fleets=fleets)
 
         button = ships[index].button
         logger.info(f'Dock enter a ship of fleet {ships[index].fleet} at level {ships[index].level}')

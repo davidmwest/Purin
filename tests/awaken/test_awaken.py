@@ -178,3 +178,55 @@ def test_arrays_for_ultra_rares_only():
         call(use_array=True, favourite=False, rarity='ultra'),
         call(favourite=False),
     ]
+
+
+def offscreen_run(results, walk):
+    """
+    The real awaken_run and awaken_enter_ship, the walk down the dock mocked.
+
+    Args:
+        results (list[str]): Of awaken_ship, one after another
+        walk (list[bool]): Of awaken_walk_enter, one after another
+    """
+    from module.retire.assets import SHIP_DETAIL_CHECK
+    run = SimpleNamespace(
+        config=SimpleNamespace(Awaken_Order='highest_level_first', Awaken_Index='all', Awaken_Faction='all',
+                               Awaken_Rarity='all'),
+        device=SimpleNamespace(screenshot=Mock(), click=Mock()),
+        ui_ensure=Mock(), dock_favourite_set=Mock(), dock_sort_method_dsc_set=Mock(), dock_filter_set=Mock(),
+        awaken_fleets=Mock(return_value=None), dock_enter_first=Mock(return_value=True),
+        interval_clear=Mock(), awaken_ship=Mock(side_effect=results), awaken_exit=Mock(),
+        appear=lambda button, **kwargs: button == SHIP_DETAIL_CHECK,
+        awaken_walk_back=Mock(),
+        awaken_walk_enter=Mock(side_effect=walk),
+    )
+    run.awaken_enter_ship = lambda index: Awaken.awaken_enter_ship(run, index)
+    run.awaken_click_card = lambda button, index, skip_first_screenshot=True: \
+        Awaken.awaken_click_card(run, button, index, skip_first_screenshot=skip_first_screenshot)
+    return run
+
+
+def test_a_cheaper_ship_past_the_first_screen_is_entered():
+    # Code review (Codex, 2026-10-21): 14 ships passed over for the chip reserve fill the first screen of the
+    # dock, 7 by 2, and the run ended there, a cheaper 15th ship further down was never tried
+    run = offscreen_run(['reserve'] * 14 + ['no_exp'], walk=[True, False])
+
+    assert Awaken.awaken_run(run) == 'finish'
+
+    assert run.awaken_ship.call_count == 15
+    # The 15th ship, then the end of the dock
+    assert run.awaken_walk_enter.call_args_list == [call(14), call(14)]
+
+
+def test_a_ship_of_the_fleets_further_down_is_looked_for():
+    # Other ships that can awaken fill the first screen, the ones of the fleets come after them
+    from unittest.mock import patch
+    awaken = SimpleNamespace(
+        device=SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8), screenshot=Mock()),
+        awaken_walk_back=Mock(),
+        awaken_walk_enter=Mock(return_value=True),
+    )
+    with patch('module.awaken.awaken.ShipScanner') as scanner:
+        scanner.return_value.scan.return_value = []
+        assert Awaken.awaken_enter_fleet_ship(awaken, [1], 0) is True
+    awaken.awaken_walk_enter.assert_called_once_with(0, fleets=[1])
