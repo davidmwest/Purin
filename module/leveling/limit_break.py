@@ -23,7 +23,7 @@ from module.logger import logger
 from module.ocr.ocr import Ocr
 from module.retire.assets import DOCK_CHECK
 from module.retire.scanner import ShipScanner
-from module.ui.page import page_dock, page_fleet
+from module.ui.page import page_dock, page_fleet, page_main
 
 # The limit break tab of the detail page of a ship: Quick Select and Confirm under its material slot
 QUICK_SELECT = './assets/leveling/limit_break_quick_select.png'
@@ -200,10 +200,14 @@ class LimitBreak(LevelingFleet):
             int: Limit breaks done
 
         Pages:
-            in: page_dock
+            in: Any page
             out: page_dock
         """
         logger.hr(f'Limit break {name}', level=2)
+        # The search bar keeps the name typed before, "Nevada" went after "Long Island" and found nothing:
+        # the dock is entered again for each search
+        self.ui_ensure(page_main)
+        self.ui_ensure(page_dock)
         cards = self.limit_break_cards(name)
         copies = len(cards) - 1
         if copies < 1:
@@ -246,7 +250,6 @@ class LimitBreak(LevelingFleet):
         self.fleet_formation_ensure()
         total = 0
         if names:
-            self.ui_ensure(page_dock)
             for name in names:
                 total += self.limit_break_ship(name)
             self.ui_ensure(page_fleet)
