@@ -15,7 +15,7 @@ import module.config.server as server
 from module.exception import GameTooManyClickError
 from module.inventory import inventory as inventory_module
 from module.inventory.inventory import DockCard, DockReader, DockRow, Inventory, LIST_TOP, ROW_DELTA, \
-    ROW_TOP_MAX, find_row, save_inventory, signature, signature_still
+    ROW_TOP_MAX, carry_missed_ships, find_row, load_inventory, save_inventory, signature, signature_still
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 
@@ -404,3 +404,52 @@ def test_next_task_after_a_scan_does_not_abort():
 
     assert result.returncode == 0, result.stderr[-2000:]
     assert 'survived' in result.stdout
+
+
+def test_ships_a_scan_did_not_read_are_kept_from_the_last_full_one():
+    previous = [{'name': 'Tiger', 'level': 125}, {'name': 'Hiei', 'level': 109, 'gear_levels': [10] * 5},
+                {'name': 'Enterprise', 'level': 120}, {'name': 'Enterprise', 'level': 105},
+                # Missed by the scan before too, most likely retired since
+                {'name': 'Hasty', 'level': 74, 'missed': 1}]
+    ships = [{'name': 'Tiger', 'level': 125}, {'name': 'Enterprise', 'level': 121}]
+
+    carried = carry_missed_ships(ships, previous)
+
+    # The copy of Enterprise closest in level stands for the one read
+    assert carried == [{'name': 'Hiei', 'level': 109, 'gear_levels': [10] * 5, 'missed': 1},
+                       {'name': 'Enterprise', 'level': 105, 'missed': 1}]
+
+
+def test_scan_reaching_the_end_of_the_dock_is_whole(monkeypatch, tmp_path):
+    # 833 cards seen of 913: a drag skipped some, the scan was saved as partial and run again every day
+    monkeypatch.chdir(tmp_path)
+    save_inventory('alas', {'ships': [{'name': 'Tiger', 'level': 125}, {'name': 'Hiei', 'level': 109}]})
+    inv = Inventory.__new__(Inventory)
+    inv.config = SimpleNamespace(config_name='alas', task_delay=Mock())
+    inv.inventory_scan = lambda: {'time': '2026-10-20 04:18:39', 'duration': 3780, 'dock_amount': 913,
+                                  'seen': 833, 'end': 'dock', 'complete': False, 'unread': 0, 'locked': 1,
+                                  'ships': [{'name': 'Tiger', 'level': 125}]}
+
+    inv.run()
+
+    data = load_inventory('alas')
+    assert [(ship['name'], ship.get('missed')) for ship in data['ships']] == [('Tiger', None), ('Hiei', 1)]
+    assert data['carried'] == 1
+    assert load_inventory('alas', partial=True) is None
+    # Weekly again
+    inv.config.task_delay.assert_called_once_with(success=True)
+
+
+def test_scan_that_lost_its_place_is_still_partial(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    inv = Inventory.__new__(Inventory)
+    inv.config = SimpleNamespace(config_name='alas', task_delay=Mock())
+    inv.inventory_scan = lambda: {'time': '2026-10-20 04:18:39', 'duration': 600, 'dock_amount': 913,
+                                  'seen': 200, 'end': 'lost', 'complete': False, 'unread': 0, 'locked': 1,
+                                  'ships': [{'name': 'Tiger', 'level': 125}]}
+
+    inv.run()
+
+    assert load_inventory('alas') is None
+    assert load_inventory('alas', partial=True)['end'] == 'lost'
+    inv.config.task_delay.assert_called_once_with(success=False)

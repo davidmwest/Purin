@@ -1,7 +1,9 @@
 import gc
 import json
 import os
+import re
 import typing as t
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -58,6 +60,9 @@ DRAG_SPEED = 380
 DOCK_LIMIT = 5000
 # Ships read between two saves of a run not done yet
 CHECKPOINT = 50
+# A ship of the last full scan that a scan reaching the end of the dock did not read is kept, this many scans in a
+# row at most: a card a drag skipped does not drop her, a ship gone from the dock is forgotten after that
+MISSED_SCANS_MAX = 1
 
 # Still parts of the Info tab: gear, power, level and stats.
 # Not the name, which META ships animate, nor the rest of the row of the level, whose "Awakening" and
@@ -213,6 +218,55 @@ def filepath_inventory(config_name, partial=False):
     """
     name = f'{config_name}.partial' if partial else config_name
     return f'./config/inventory/{name}.json'
+
+
+def load_inventory(config_name, partial=False):
+    """
+    Returns:
+        dict: The inventory saved, None if there is none
+    """
+    try:
+        with open(filepath_inventory(config_name, partial=partial), encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def ship_key(name):
+    """
+    'Ning Hai (Retrofit)' -> 'ninghairetrofit'
+    """
+    return re.sub(r'[^0-9a-z]', '', str(name).lower())
+
+
+def carry_missed_ships(ships, previous):
+    """
+    Ships of the last full scan that a scan reaching the end of the dock did not read, as a drag can skip a card:
+    833 cards of 913 were seen once. Copies of a ship are told apart by level, the closest one read stands for each.
+
+    Args:
+        ships (list[dict]): Ships read by the scan
+        previous (list[dict]): Ships of the last full scan
+
+    Returns:
+        list[dict]: The ships of the last full scan not read, with `missed` the scans in a row that missed them.
+            A ship missed more than MISSED_SCANS_MAX times in a row is left out, she most likely left the dock.
+    """
+    read = defaultdict(list)
+    for ship in ships:
+        read[ship_key(ship.get('name'))].append(ship.get('level') or 0)
+    carried = []
+    for old in previous:
+        levels = read.get(ship_key(old.get('name')))
+        if levels:
+            level = old.get('level') or 0
+            levels.remove(min(levels, key=lambda read_level: abs(read_level - level)))
+            continue
+        missed = int(old.get('missed') or 0) + 1
+        if missed > MISSED_SCANS_MAX:
+            continue
+        carried.append(dict(old, missed=missed))
+    return carried
 
 
 def save_inventory(config_name, data, partial=False):
@@ -635,7 +689,19 @@ class Inventory(Dock):
         """
         data = self.inventory_scan()
         logger.info(f'Inventory: {data["locked"]} locked ships of {data["seen"]} seen, in {data["duration"]}s')
-        reached = data['end'] == 'dock' and data['seen'] >= data['dock_amount']
+        # A scan that got to the end of the dock is whole, though a drag may have skipped a card or the count of the
+        # dock was read wrong. The ships it did not read keep what the last full scan read of them.
+        reached = data['end'] == 'dock'
+        if reached:
+            previous = load_inventory(self.config.config_name) or {}
+            carried = carry_missed_ships(data['ships'], previous.get('ships') or [])
+            if data['seen'] < data['dock_amount']:
+                logger.info(f'{data["seen"]} cards seen of {data["dock_amount"]}, the scan is taken as whole')
+            if carried:
+                logger.info(f'Ships of the last full scan not read this time are kept: '
+                            f'{[ship.get("name") for ship in carried]}')
+            data['ships'] = data['ships'] + carried
+            data['carried'] = len(carried)
         if data['seen']:
             save_inventory(self.config.config_name, data, partial=not reached)
         if reached:
