@@ -453,3 +453,31 @@ def test_scan_that_lost_its_place_is_still_partial(monkeypatch, tmp_path):
     assert load_inventory('alas') is None
     assert load_inventory('alas', partial=True)['end'] == 'lost'
     inv.config.task_delay.assert_called_once_with(success=False)
+
+
+def test_a_name_read_differently_is_the_same_ship():
+    # Seen on 2026-10-21: "GroBe" then "GroSe", and a letter doubled
+    previous = [{'name': 'Friedrich der GroBe', 'level': 125, 'hull': 'BB'},
+                {'name': 'Sspecialized Bulin Custom MKIII', 'level': 54, 'hull': 'DD'},
+                {'name': 'Admiral Nakhimov', 'level': 125, 'hull': 'CV'}]
+    ships = [{'name': 'Friedrich der GroSe', 'level': 125, 'hull': 'BB'},
+             {'name': 'Specialized Bulin Custom MKIII', 'level': 55, 'hull': 'DD'},
+             {'name': 'Little Friedrich', 'level': 72, 'hull': 'BB'}]
+
+    carried = carry_missed_ships(ships, previous)
+
+    assert [ship['name'] for ship in carried] == ['Admiral Nakhimov']
+
+
+def test_a_sister_ship_does_not_stand_for_a_missed_one():
+    # "Ning Hai" and "Ping Hai" are 0.93 alike, Ping Hai read again under her own name takes her record
+    previous = [{'name': 'Ning Hai (Retrofit)', 'level': 92, 'hull': 'CL'},
+                {'name': 'Ping Hai (Retrofit)', 'level': 92, 'hull': 'CL'},
+                # A META ship is another ship
+                {'name': 'Kawakaze', 'level': 100, 'hull': 'DD'}]
+    ships = [{'name': 'Ping Hai (Retrofit)', 'level': 93, 'hull': 'CL'},
+             {'name': 'Kawakaze META', 'level': 100, 'hull': 'DD'}]
+
+    carried = carry_missed_ships(ships, previous)
+
+    assert [ship['name'] for ship in carried] == ['Ning Hai (Retrofit)', 'Kawakaze']

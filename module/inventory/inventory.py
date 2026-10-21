@@ -7,6 +7,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
+from difflib import SequenceMatcher
 
 import cv2
 import numpy as np
@@ -63,6 +64,10 @@ CHECKPOINT = 50
 # A ship of the last full scan that a scan reaching the end of the dock did not read is kept, this many scans in a
 # row at most: a card a drag skipped does not drop her, a ship gone from the dock is forgotten after that
 MISSED_SCANS_MAX = 1
+# A name read differently on two scans, like "Friedrich der GroBe" and "GroSe" (0.94), is this similar at least.
+# "Kawakaze" and "Kawakaze META" are 0.80. "Ning Hai" and "Ping Hai" are 0.93, a name read the same way is matched
+# first and takes its ship.
+NAME_SIMILARITY = 0.9
 
 # Still parts of the Info tab: gear, power, level and stats.
 # Not the name, which META ships animate, nor the rest of the row of the level, whose "Awakening" and
@@ -242,7 +247,10 @@ def ship_key(name):
 def carry_missed_ships(ships, previous):
     """
     Ships of the last full scan that a scan reaching the end of the dock did not read, as a drag can skip a card:
-    833 cards of 913 were seen once. Copies of a ship are told apart by level, the closest one read stands for each.
+    833 cards of 913 were seen once.
+
+    A ship is read again under the same name, the copy closest in level for copies. Then under a name read a little
+    differently, the most similar pairs first, with the same hull and a level not lower.
 
     Args:
         ships (list[dict]): Ships read by the scan
@@ -252,15 +260,43 @@ def carry_missed_ships(ships, previous):
         list[dict]: The ships of the last full scan not read, with `missed` the scans in a row that missed them.
             A ship missed more than MISSED_SCANS_MAX times in a row is left out, she most likely left the dock.
     """
-    read = defaultdict(list)
-    for ship in ships:
-        read[ship_key(ship.get('name'))].append(ship.get('level') or 0)
-    carried = []
+    by_key = defaultdict(list)
+    for index, ship in enumerate(ships):
+        by_key[ship_key(ship.get('name'))].append(index)
+    claimed = set()
+    unmatched = []
     for old in previous:
-        levels = read.get(ship_key(old.get('name')))
-        if levels:
-            level = old.get('level') or 0
-            levels.remove(min(levels, key=lambda read_level: abs(read_level - level)))
+        level = old.get('level') or 0
+        same = [index for index in by_key.get(ship_key(old.get('name')), []) if index not in claimed]
+        if same:
+            claimed.add(min(same, key=lambda index: abs((ships[index].get('level') or 0) - level)))
+        else:
+            unmatched.append(old)
+
+    pairs = []
+    for number, old in enumerate(unmatched):
+        key = ship_key(old.get('name'))
+        for index, ship in enumerate(ships):
+            if index in claimed:
+                continue
+            if old.get('hull') and ship.get('hull') and old['hull'] != ship['hull']:
+                continue
+            # OCR may read a level one off
+            if (ship.get('level') or 0) < (old.get('level') or 0) - 2:
+                continue
+            similarity = SequenceMatcher(None, key, ship_key(ship.get('name'))).ratio()
+            if similarity >= NAME_SIMILARITY:
+                pairs.append((similarity, number, index))
+    found = set()
+    for _, number, index in sorted(pairs, reverse=True):
+        if number in found or index in claimed:
+            continue
+        found.add(number)
+        claimed.add(index)
+
+    carried = []
+    for number, old in enumerate(unmatched):
+        if number in found:
             continue
         missed = int(old.get('missed') or 0) + 1
         if missed > MISSED_SCANS_MAX:
