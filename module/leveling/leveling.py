@@ -7,7 +7,8 @@ A ship comes in if the fleet keeps the minimum with her, raised with EXP Data Pa
 with packs storage can spare (module.leveling.boost). A fleet below the minimum has its lowest ships raised.
 The fleet that fights the boss is kept strong with ships at CARRY_LEVEL and above, the most powerful ones free:
 two ships at 73 and 77 in its vanguard lost the boss of 12-4.
-Every ship of the fleets has gear at +10 in all of her slots, from storage, see module.leveling.gear.
+Every ship of the fleets has gear at +10 in all of her slots, from storage, the gear module.leveling.policy picks
+for her hull type, see module.leveling.gear.
 
 The queue comes from the dock as the Inventory task read it. The ships of the fleets are the ones whose levels go up,
 the fleet page tells them every time and they are written back to the inventory.
@@ -32,10 +33,11 @@ QUEUE_LOG = 8
 MOB_SWAPS = 1
 # Trips to the detail page of a ship in a run for gear or EXP Data Packs, each takes a minute or so
 GEAR_TRIES = 3
-# Gear from storage, off until it picks decent gear for the slot and the hull, the user's rule of 2026-10-20:
-# gold or better first, no sonar nor depth charges on 12-4, no AVI but on carriers, no TRP on battleships and
-# carriers. A ship without gear at +10 in all 6 slots does not come in meanwhile, ships of the fleets keep theirs.
-GEAR_TRANSFER = False
+# Gear from storage for ships without gear at +10 in all 6 slots, decent gear for the slot and the hull, the user's
+# rule of 2026-10-20, see module.leveling.policy: gold or better first, no sonar nor depth charges on 12-4, no AVI
+# but on carriers, no TRP on battleships and carriers, a Repair Toolkit on destroyers.
+# Off, a ship without gear at +10 in all 6 slots does not come in, ships of the fleets keep theirs.
+GEAR_TRANSFER = True
 # A ship storage could not gear well enough is tried again after this
 GEAR_RETRY = timedelta(days=1)
 TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
@@ -211,7 +213,7 @@ class Leveling(LevelingBoost):
                 missing.add(target.character)
         return swapped
 
-    def leveling_member(self, slot, gear=False, level=None):
+    def leveling_member(self, slot, gear=False, level=None, hull=None):
         """
         Gear from storage and EXP Data Packs for the ship in a slot.
 
@@ -219,6 +221,7 @@ class Leveling(LevelingBoost):
             slot (Slot):
             gear (bool): If she gets gear, see gear_fill()
             level (int): Level she goes to, None to leave it
+            hull (str): Her hull type, for her gear
 
         Returns:
             tuple[list[int], int]: As ship_prepare()
@@ -233,7 +236,7 @@ class Leveling(LevelingBoost):
         self.fleet_ship_enter(slot)
         levels = None
         if gear:
-            levels = self.gear_fill()
+            levels = self.gear_fill(hull=hull)
             if levels is None:
                 logger.warning(f'Gear of {slot.name} left unfinished')
                 self.ui_ensure(page_fleet)
@@ -269,7 +272,7 @@ class Leveling(LevelingBoost):
             record['gear_tried'] = now.strftime(TIME_FORMAT)
             if save is not None:
                 save()
-            levels, _ = self.leveling_member(slot, gear=True)
+            levels, _ = self.leveling_member(slot, gear=True, hull=record.get('hull'))
             if levels is not None:
                 record.update(gear_record(levels))
                 if save is not None:

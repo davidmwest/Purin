@@ -360,7 +360,7 @@ class LevelingBoost(LevelingGear):
                              skip_first_screenshot=False)
         levels = None
         if gear:
-            levels = self.gear_fill()
+            levels = self.gear_fill(hull=target.hull)
             if levels is None:
                 logger.warning(f'Gear of {target.ship} left unfinished')
                 self.ui_ensure(page_dock)

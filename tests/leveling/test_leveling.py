@@ -209,11 +209,12 @@ def test_ships_of_the_fleets_get_gear_at_10():
     slots = mob_fleet()
     # Maury has an auxiliary at +6 and no augment, the others are at +10
     records = {id(slot): {'name': slot.name, 'gear_levels': GEARED[:5], 'augment_level': 10} for slot in slots}
-    records[id(slots[3])].update(gear_levels=[11, 10, 11, 13, 6], augment_level=0)
+    records[id(slots[3])].update(gear_levels=[11, 10, 11, 13, 6], augment_level=0, hull='DD')
     leveling = SimpleNamespace(leveling_member=Mock(return_value=([11, 10, 11, 13, 10, 10], None)))
 
     assert Leveling.leveling_gear_members(leveling, slots, records) == 1
-    assert leveling.leveling_member.call_args == call(slots[3], gear=True)
+    # Her hull type tells her auxiliaries
+    assert leveling.leveling_member.call_args == call(slots[3], gear=True, hull='DD')
     assert records[id(slots[3])]['gear_levels'] == [11, 10, 11, 13, 10]
     assert records[id(slots[3])]['augment_level'] == 10
     # Not again the same day

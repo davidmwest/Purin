@@ -1,17 +1,20 @@
 """
 Gear from storage for a ship that comes into a fleet without gear worth the name.
 
-On the detail page of a ship, the Info tab shows her 5 gear slots and her augment, and their enhancement. On the Gear
-tab, a tap on an empty slot opens the depot with the gear that fits it, the rarest first. A tap on gear opens its popup instead, whose
-Change button opens the depot with a REMOVE card first. The EQUIPPED switch of the depot lists the gear other ships
-wear too: it is turned off, so only gear in storage is listed and no ship loses hers. Gear picked there asks to
-Confirm, beside the gear it replaces.
+On the detail page of a ship, the Info tab shows her 5 gear slots and her augment, their enhancement and the rarity
+of her gear by its color. On the Gear tab, a tap on an empty slot opens the depot with the gear that fits it, the
+rarest first. A tap on gear opens its popup instead, its name and stats, whose Change button opens the depot with a
+REMOVE card first. The EQUIPPED switch of the depot lists the gear other ships wear too: it is turned off, so only
+gear in storage is listed and no ship loses hers. Gear picked there shows its popup beside the gear it replaces,
+with Cancel and Confirm.
 
-The most enhanced gear of the depot goes in each empty slot, and in place of gear below GEARED_LEVEL when storage has
-better: gear at +0 lost a battle of 12-4 that gear at +10 won. Her enhancements are read again at the end.
-The augment is the sixth slot, the user's rule wants it at +10 too. A tap on it empty opens the depot of augments:
-a "Craft" section first, the augments in storage under a "Depot" header, with the same EQUIPPED switch, tags on the
-cards and Confirm as the depot of gear.
+What goes in a slot is the choice of module.leveling.policy: gold weapons at +10, auxiliaries for her hull type,
+nothing against submarines. Gear she wears stays if the policy keeps it, else the depot is looked through: the
+popups of its likely best cards are read, MAX_LOOKS of them at most, and the best one goes on if it beats what she
+has. Her enhancements are read again at the end.
+The augment is the sixth slot, the user's rule wants it at +10 too, any that fits. A tap on it empty opens the depot
+of augments: a "Craft" section first, the augments in storage under a "Depot" header, with the same EQUIPPED switch,
+tags on the cards and Confirm as the depot of gear.
 A step that does not go as planned comes back to the Gear tab, closing what it opened.
 """
 import cv2
@@ -25,6 +28,8 @@ from module.equipment.equipment_change import EQUIPMENT_GRID
 from module.inventory.info import AUGMENT_LEVEL_AREA, GEAR_LEVEL_AREAS, parse_trailing_number
 from module.leveling.fleet import LevelingFleet, area_button
 from module.leveling.plan import GEARED_LEVEL
+from module.leveling.policy import AUX_SLOTS, MAX_LOOKS, WEAPON_SLOTS, card_item, card_order, describe, gear_good, \
+    gear_ideal, gear_item, gear_score, is_better, parse_stats, rarity_of
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr
 from module.retire.assets import DOCK_CHECK
@@ -81,6 +86,20 @@ GEAR_CANCEL_BUTTON = area_button((328, 630, 482, 670), 'GEAR_CANCEL')
 TEMPLATE_SIMILARITY = 0.85
 # Seconds for each step
 GEAR_TIMEOUT = 10
+# Icons of her gear on the Info tab, their background is the color of their rarity
+INFO_GEAR_ICON_LEFTS = [696 + 85 * index for index in range(5)]
+INFO_GEAR_ICON_TOP = 129
+# Popups of gear: gear picked in the depot is shown on the right, beside what the slot has, gear in a slot in the
+# middle. Its name is on top, a long one scrolls and can be cut at both ends. Its stats are rows under its picture,
+# the label on the left and the amount on the right, then come its skills.
+POPUP_PANELS = {'confirm': (698, 1052), 'worn': (462, 818)}
+POPUP_TITLES = {'confirm': (692, 92, 1058, 122), 'worn': (482, 92, 818, 122)}
+POPUP_ROWS = 4
+POPUP_ROW_TOP = 278
+POPUP_ROW_HEIGHT = 36
+POPUP_VALUE_COLOR = (200, 175, 50)
+# Seconds for a popup to fade in
+POPUP_SETTLE = 0.4
 
 
 def gray(image):
@@ -218,6 +237,56 @@ def depot_card_levels(image, cards=None, tags=None):
     return levels
 
 
+def card_names(cards):
+    """
+    Args:
+        cards (list[Button]): Cards of a depot, DEPOT_CARDS or augment_depot_layout()
+
+    Returns:
+        list[Button]: Where the name of each card is, under it, cut by the game, "Repair To.."
+    """
+    return [area_button((card.area[0] - 8, card.area[1] + 130, card.area[0] + 130, card.area[1] + 157),
+                        f'{card.name}_NAME') for card in cards]
+
+
+def card_rarity(image, card):
+    """
+    Args:
+        image (np.ndarray):
+        card (Button): A card of a depot
+
+    Returns:
+        str: Rarity by the color of its top left corner, see module.leveling.policy
+    """
+    x, y = card.area[0], card.area[1]
+    color = crop(image, (x + 4, y + 4, x + 24, y + 24), copy=False).reshape(-1, 3).mean(axis=0)
+    return rarity_of(tuple(float(value) for value in color))
+
+
+def depot_cards_read(image, cards=None, tags=None):
+    """
+    Args:
+        image (np.ndarray): The depot of a slot
+        cards (list[Button]): Cards on screen, DEPOT_CARDS if None
+        tags (list[Button]): Their tags
+
+    Returns:
+        list[dict]: Each card that is there: index, level, rarity, name as cut by the game
+    """
+    if cards is None:
+        cards, tags = DEPOT_CARDS, DEPOT_TAGS
+    levels = depot_card_levels(image, cards, tags)
+    present = [index for index, level in enumerate(levels) if level >= 0]
+    if not present:
+        return []
+    buttons = card_names([cards[index] for index in present])
+    names = Ocr(buttons, lang='cnocr', letter=(255, 255, 255), threshold=128, name='CARD_NAME').ocr(image)
+    if not isinstance(names, list):
+        names = [names]
+    return [{'index': index, 'level': levels[index], 'rarity': card_rarity(image, cards[index]),
+             'name': str(name).strip()} for index, name in zip(present, names)]
+
+
 def best_card(levels):
     """
     Args:
@@ -231,6 +300,60 @@ def best_card(levels):
         if level >= 0 and (best < 0 or level > levels[best]):
             best = index
     return best
+
+
+def gear_rarities(image, empty=()):
+    """
+    Args:
+        image (np.ndarray): Info tab of the detail page of a ship
+        empty (iterable[int]): Empty slots, empty_gear_slots()
+
+    Returns:
+        list[str]: Rarity of the gear in her 5 slots, by the background of its icon, None for an empty slot
+    """
+    rarities = []
+    for index, x in enumerate(INFO_GEAR_ICON_LEFTS):
+        if index in empty:
+            rarities.append(None)
+            continue
+        area = (x + 4, INFO_GEAR_ICON_TOP + 3, x + 20, INFO_GEAR_ICON_TOP + 13)
+        color = crop(image, area, copy=False).reshape(-1, 3).mean(axis=0)
+        rarities.append(rarity_of(tuple(float(value) for value in color)))
+    return rarities
+
+
+def popup_buttons(panel):
+    """
+    Args:
+        panel (str): 'confirm' for gear picked in the depot, 'worn' for gear in a slot
+
+    Returns:
+        tuple[Button, list[Button], list[Button]]: Its name, the labels and the amounts of its rows
+    """
+    left, right = POPUP_PANELS[panel]
+    title = area_button(POPUP_TITLES[panel], f'POPUP_TITLE_{panel}')
+    labels, values = [], []
+    for row in range(POPUP_ROWS):
+        top = POPUP_ROW_TOP + POPUP_ROW_HEIGHT * row
+        labels.append(area_button((left + 6, top, left + 190, top + 28), f'POPUP_LABEL_{row}'))
+        values.append(area_button((right - 110, top, right - 8, top + 28), f'POPUP_VALUE_{row}'))
+    return title, labels, values
+
+
+def popup_read(image, panel):
+    """
+    Args:
+        image (np.ndarray):
+        panel (str): 'confirm' or 'worn', see popup_buttons()
+
+    Returns:
+        dict: Gear of the popup, its name and stats, see module.leveling.policy
+    """
+    title, labels, values = popup_buttons(panel)
+    name = Ocr([title], lang='cnocr', letter=(255, 255, 255), threshold=128, name='POPUP_TITLE').ocr(image)
+    texts = Ocr(labels, lang='cnocr', letter=(255, 255, 255), threshold=128, name='POPUP_LABEL').ocr(image)
+    amounts = Digit(values, letter=POPUP_VALUE_COLOR, threshold=128, name='POPUP_VALUE').ocr(image)
+    return gear_item(name=str(name).strip(), stats=parse_stats(texts, amounts))
 
 
 class LevelingGear(LevelingFleet):
@@ -375,26 +498,17 @@ class LevelingGear(LevelingFleet):
         self.gear_tab_ensure()
         return False
 
-    def gear_slot_fill(self, index, current=None):
+    def depot_storage_only(self):
         """
-        Put the most enhanced gear of storage that fits in a slot.
-
-        Args:
-            index (int): 0 to 4, AUGMENT_INDEX for the augment
-            current (int): Enhancement of the gear in the slot, None if empty.
-                Gear is only replaced by gear at GEARED_LEVEL or above, more enhanced.
+        Turn off the EQUIPPED switch of the depot, so it lists the gear in storage only.
 
         Returns:
-            int: Enhancement of the gear that went on, None if none did
+            bool: If done, else back on the Gear tab
 
         Pages:
-            in: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab
-            out: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab, unless a step could not come back to it
+            in: the depot of a slot
+            out: the depot of a slot, gear in storage only
         """
-        if not self.gear_depot_enter(index):
-            return None
-
-        # Gear in storage only
         self.interval_clear(EQUIPPED_SWITCH)
         for _ in self.loop(timeout=GEAR_TIMEOUT):
             if not self.depot_lists_equipped():
@@ -403,44 +517,72 @@ class LevelingGear(LevelingFleet):
         else:
             logger.warning('The depot keeps listing gear worn by other ships')
             self.gear_tab_ensure()
-            return None
+            return False
         # The list is drawn again
         self.device.sleep(0.5)
         self.device.screenshot()
-        cards, tags = DEPOT_CARDS, DEPOT_TAGS
-        if index == AUGMENT_INDEX:
-            top = self.augment_header_top()
-            cards, tags = augment_depot_layout(top) if top is not None else ([], [])
-        levels = depot_card_levels(self.device.image, cards, tags)
-        best = best_card(levels)
-        logger.attr(f'Depot of slot {index}', levels)
-        if best < 0:
-            logger.info(f'No gear in storage for slot {index}')
-            self.gear_tab_ensure()
-            return None
-        level = levels[best]
-        if current is not None and (level < GEARED_LEVEL or level <= current):
-            logger.info(f'Storage has no better gear for slot {index}, +{level} at best for +{current}')
-            self.gear_tab_ensure()
-            return None
+        return True
 
-        card = cards[best]
+    def gear_card_open(self, card):
+        """
+        Pick gear of the depot, its popup shows beside the gear of the slot.
+
+        Args:
+            card (Button):
+
+        Returns:
+            bool: If the popup shows
+
+        Pages:
+            in: the depot of a slot
+            out: gear picked, Cancel and Confirm
+        """
         self.interval_clear(card)
         for _ in self.loop(timeout=GEAR_TIMEOUT):
             if self.is_gear_confirm():
-                break
+                self.device.sleep(POPUP_SETTLE)
+                self.device.screenshot()
+                return True
             if self.is_in_depot():
                 self.gear_click(card)
-        else:
-            logger.warning(f'Gear {best} of the depot did not open')
-            self.gear_tab_ensure()
-            return None
+        logger.warning(f'{card} of the depot did not open')
+        return False
 
+    def gear_card_cancel(self):
+        """
+        Returns:
+            bool: If back in the depot
+
+        Pages:
+            in: gear picked, Cancel and Confirm
+            out: the depot of a slot
+        """
+        self.interval_clear(GEAR_CANCEL_BUTTON)
+        for _ in self.loop(timeout=GEAR_TIMEOUT):
+            if self.is_gear_confirm():
+                self.gear_click(GEAR_CANCEL_BUTTON)
+                continue
+            if self.is_in_depot():
+                return True
+        logger.warning('Gear picked was not cancelled')
+        return False
+
+    def gear_card_confirm(self, index):
+        """
+        Args:
+            index (int): Slot, for the log
+
+        Returns:
+            bool: If the gear went on
+
+        Pages:
+            in: gear picked, Cancel and Confirm
+            out: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab
+        """
         self.interval_clear(GEAR_CONFIRM_BUTTON)
         for _ in self.loop(timeout=GEAR_TIMEOUT):
             if self.is_gear_tab():
-                logger.info(f'Gear slot {index} takes gear at +{level}')
-                return level
+                return True
             if self.is_gear_confirm():
                 self.gear_click(GEAR_CONFIRM_BUTTON)
                 continue
@@ -448,12 +590,153 @@ class LevelingGear(LevelingFleet):
                 continue
         logger.warning(f'Gear slot {index} not confirmed')
         self.gear_tab_ensure()
-        return None
+        return False
 
-    def gear_read(self):
+    def gear_worn_read(self, index):
+        """
+        Read the gear in a slot on its popup.
+
+        Args:
+            index (int): 0 to 4
+
+        Returns:
+            dict: Its name and stats, see module.leveling.policy. None if the popup did not open.
+
+        Pages:
+            in: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab
+            out: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab
+        """
+        slot = GEAR_SLOTS[index]
+        self.interval_clear(slot)
+        for _ in self.loop(timeout=GEAR_TIMEOUT):
+            if self.is_gear_popup():
+                break
+            if self.is_gear_tab():
+                self.gear_click(slot)
+        else:
+            logger.warning(f'Gear of slot {index} did not show its popup')
+            self.gear_tab_ensure()
+            return None
+        self.device.sleep(POPUP_SETTLE)
+        self.device.screenshot()
+        item = popup_read(self.device.image, 'worn')
+        self.gear_tab_ensure()
+        return item
+
+    def augment_slot_fill(self, current=None):
+        """
+        Put the most enhanced augment of storage that fits on her.
+
+        Args:
+            current (int): Enhancement of her augment, None for none.
+                It is only replaced by one at GEARED_LEVEL or above, more enhanced.
+
+        Returns:
+            int: Enhancement of the augment that went on, None if none did
+
+        Pages:
+            in: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab
+            out: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab, unless a step could not come back to it
+        """
+        self.device.click_record_clear()
+        if not self.gear_depot_enter(AUGMENT_INDEX):
+            return None
+        if not self.depot_storage_only():
+            return None
+        top = self.augment_header_top()
+        cards, tags = augment_depot_layout(top) if top is not None else ([], [])
+        levels = depot_card_levels(self.device.image, cards, tags)
+        best = best_card(levels)
+        logger.attr('Depot of augments', levels)
+        if best < 0:
+            logger.info('No augment in storage')
+            self.gear_tab_ensure()
+            return None
+        level = levels[best]
+        if current is not None and (level < GEARED_LEVEL or level <= current):
+            logger.info(f'Storage has no better augment, +{level} at best for +{current}')
+            self.gear_tab_ensure()
+            return None
+        if not self.gear_card_open(cards[best]):
+            self.gear_tab_ensure()
+            return None
+        if not self.gear_card_confirm(AUGMENT_INDEX):
+            return None
+        logger.info(f'Augment at +{level} goes on')
+        return level
+
+    def gear_slot_fill(self, index, hull=None, current=None, other=None):
+        """
+        Put the gear of storage the policy likes best in a slot, if it beats what she has.
+        The popups of the likely best cards of the depot are read, MAX_LOOKS of them at most.
+
+        Args:
+            index (int): 0 to 4
+            hull (str): Her hull type, 'DD'
+            current (dict): Gear in the slot, None if empty, see module.leveling.policy
+            other (dict): Gear in her other auxiliary slot, for slots 3 and 4
+
+        Returns:
+            dict: Gear that went on, None if none did
+
+        Pages:
+            in: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab
+            out: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab, unless a step could not come back to it
+        """
+        # Taps on Cancel and on the cards of a depot add up
+        self.device.click_record_clear()
+        if not self.gear_depot_enter(index):
+            return None
+        if not self.depot_storage_only():
+            return None
+
+        cards = depot_cards_read(self.device.image)
+        logger.attr(f'Depot of slot {index}', [f'{card["name"]} {card["rarity"]} +{card["level"]}' for card in cards])
+        current_score = gear_score(index, hull, current, other)
+        order = card_order(index, hull, cards, other)
+        if index in WEAPON_SLOTS:
+            # The card of a weapon tells its score, but for gear against submarines
+            order = [card for card in order if is_better(gear_score(index, hull, card_item(card)), current_score)]
+        best, best_score, best_button, opened = None, None, None, None
+        for card in order[:MAX_LOOKS]:
+            button = DEPOT_CARDS[card['index']]
+            if not self.gear_card_open(button):
+                self.gear_tab_ensure()
+                return None
+            item = popup_read(self.device.image, 'confirm')
+            item.update(rarity=card['rarity'], level=card['level'])
+            score = gear_score(index, hull, item, other)
+            logger.info(f'Slot {index}: {describe(item)}, ' + ('left out' if score is None else f'score {score}'))
+            if is_better(score, best_score):
+                best, best_score, best_button = item, score, button
+            if gear_ideal(index, hull, score):
+                opened = button
+                break
+            if not self.gear_card_cancel():
+                self.gear_tab_ensure()
+                return None
+
+        if not is_better(best_score, current_score):
+            logger.info(f'Storage has nothing better for slot {index} than {describe(current)}')
+            self.gear_tab_ensure()
+            return None
+        if opened is not best_button:
+            if opened is not None and not self.gear_card_cancel():
+                self.gear_tab_ensure()
+                return None
+            if not self.gear_card_open(best_button):
+                self.gear_tab_ensure()
+                return None
+        if not self.gear_card_confirm(index):
+            return None
+        logger.info(f'Gear slot {index}: {describe(current)} -> {describe(best)}')
+        return best
+
+    def gear_read_info(self):
         """
         Returns:
-            list[int]: Enhancement of the 5 gear slots, -1 for an empty one, and of the augment, 0 for none
+            tuple[list[int], list[str]]: Enhancement of the 5 gear slots, -1 for an empty one, and of the augment,
+                0 for none. Rarity of the gear in the 5 slots, None for an empty one.
 
         Pages:
             in: detail page of a ship
@@ -467,11 +750,27 @@ class LevelingGear(LevelingFleet):
         levels = gear_levels(self.device.image)
         augment = parse_trailing_number(str(Ocr([INFO_AUGMENT_LEVEL], letter=(255, 255, 255), threshold=128,
                                                 name='AUGMENT_LEVEL').ocr(self.device.image)), maximum=13)
-        return [-1 if index in empty else level for index, level in enumerate(levels)] + [augment]
+        levels = [-1 if index in empty else level for index, level in enumerate(levels)] + [augment]
+        return levels, gear_rarities(self.device.image, empty)
 
-    def gear_fill(self):
+    def gear_read(self):
         """
-        Gear from storage for the ship shown: in each empty slot, and in place of gear below GEARED_LEVEL.
+        Returns:
+            list[int]: Enhancement of the 5 gear slots, -1 for an empty one, and of the augment, 0 for none
+
+        Pages:
+            in: detail page of a ship
+            out: detail page of a ship, the Info tab
+        """
+        return self.gear_read_info()[0]
+
+    def gear_fill(self, hull=None):
+        """
+        Gear from storage for the ship shown, by the choice of module.leveling.policy: weapons the policy does not
+        keep, auxiliaries the worst first, and an augment below GEARED_LEVEL.
+
+        Args:
+            hull (str): Her hull type, 'DD'. None if unknown, auxiliaries go as for a hull of no list.
 
         Returns:
             list[int]: Enhancement of her 5 gear slots and of her augment after it, 0 for an empty one.
@@ -481,20 +780,53 @@ class LevelingGear(LevelingFleet):
             in: detail page of a ship
             out: detail page of a ship, the Info tab. Unknown if None.
         """
-        levels = self.gear_read()
+        levels, rarities = self.gear_read_info()
         logger.attr('Gear', levels)
-        slots = [index for index, level in enumerate(levels) if level < GEARED_LEVEL]
-        if not slots:
-            return levels
-
+        logger.attr('Rarity', rarities)
+        worn = [None if levels[index] < 0 else gear_item(rarity=rarities[index], level=levels[index])
+                for index in range(len(GEAR_SLOTS))]
+        weapons = [index for index in WEAPON_SLOTS if not gear_good(index, hull, worn[index])]
         self.ship_side_navbar_ensure(bottom=2)
         if not self.gear_tab_ensure():
             return None
-        for index in slots:
-            self.gear_slot_fill(index, current=None if levels[index] < 0 else levels[index])
+        # Auxiliaries are judged by their name and stats
+        for index in AUX_SLOTS:
+            if worn[index] is not None:
+                read = self.gear_worn_read(index)
+                if read is not None:
+                    worn[index].update(name=read['name'], stats=read['stats'])
+                logger.info(f'Slot {index}: {describe(worn[index])}')
+
+        for index in weapons:
+            put = self.gear_slot_fill(index, hull=hull, current=worn[index])
+            if put is not None:
+                worn[index] = put
             # A popup that stays open hides the side navbar
             if not self.gear_tab_ensure():
                 return None
+
+        def other_of(index):
+            return worn[AUX_SLOTS[1] if index == AUX_SLOTS[0] else AUX_SLOTS[0]]
+
+        def badness(index):
+            score = gear_score(index, hull, worn[index], other_of(index))
+            return score is None, score or ()
+
+        # The worst first: a destroyer without a Repair Toolkit has it in place of her worse auxiliary
+        for index in sorted(AUX_SLOTS, key=badness, reverse=True):
+            if gear_good(index, hull, worn[index], other_of(index)):
+                continue
+            put = self.gear_slot_fill(index, hull=hull, current=worn[index], other=other_of(index))
+            if put is not None:
+                worn[index] = put
+            if not self.gear_tab_ensure():
+                return None
+
+        if levels[AUGMENT_INDEX] < GEARED_LEVEL:
+            self.augment_slot_fill(current=levels[AUGMENT_INDEX])
+            if not self.gear_tab_ensure():
+                return None
+
         levels = self.gear_read()
         logger.attr('Gear', levels)
         return [max(level, 0) for level in levels]
@@ -523,7 +855,7 @@ class LevelingGear(LevelingFleet):
             return None
         self.ship_info_enter(click_button=ship.button, check_button=EQUIPMENT_OPEN, long_click=False,
                              skip_first_screenshot=False)
-        levels = self.gear_fill()
+        levels = self.gear_fill(hull=target.hull)
         if levels is None:
             logger.warning(f'Gear of {target.ship} left unfinished')
             self.ui_ensure(page_dock)
