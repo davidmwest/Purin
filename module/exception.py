@@ -81,3 +81,8 @@ class RequestHumanTakeover(Exception):
 
 class HardNotSatisfied(RequestHumanTakeover):
     pass
+
+
+class EmulatorBusy(RequestHumanTakeover):
+    # An other process holds the emulator, see module/device/owner.py: this one does not tap over it
+    pass

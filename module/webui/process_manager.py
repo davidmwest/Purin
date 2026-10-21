@@ -158,7 +158,8 @@ class ProcessManager:
         except psutil.Error as e:
             logger.warning(f"[{self.config_name}] Failed to stop: {e}")
             return
-        remove_scheduler_state(self.config_name)
+        # Only the file of the scheduler killed, one started since then keeps its own
+        remove_scheduler_state(self.config_name, owner=state["pid"])
         self.renderables.append(f"[{self.config_name}] exited. Reason: Manual stop\n")
 
     def follow_log_file(self) -> None:

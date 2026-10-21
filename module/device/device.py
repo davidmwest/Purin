@@ -5,6 +5,7 @@ from datetime import datetime
 import numpy as np
 from lxml import etree
 
+from module.device.owner import acquire_device
 from module.device.env import IS_WINDOWS
 # Patch pkg_resources before importing adbutils and uiautomator2
 from module.device.pkg_resources import get_distribution
@@ -110,6 +111,9 @@ class Device(Screenshot, Control, AppControl):
                         f'please set a correct serial'
                     )
                     raise RequestHumanTakeover
+
+        # One controller per emulator, from its serial on and before any screenshot
+        acquire_device(self.serial, self.config.config_name)
 
         # Auto-fill emulator info
         if IS_WINDOWS and self.config.EmulatorInfo_Emulator == 'auto':

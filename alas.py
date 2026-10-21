@@ -79,6 +79,9 @@ class AzurLaneAutoScript:
             # Starts the emulator if it is not running
             device = Device(config=self.config)
             return device
+        except EmulatorBusy as e:
+            logger.critical(f'{e}, this scheduler does not tap over it')
+            exit(1)
         except RequestHumanTakeover:
             logger.critical('Request human takeover')
             exit(1)
@@ -826,9 +829,19 @@ class AzurLaneAutoScript:
     def loop(self):
         logger.set_file_logger(self.config_name)
         logger.info(f'Start scheduler loop: {self.config_name}')
+        # One controller per emulator: a scheduler started on an emulator held by an other process stops here, before
+        # it writes over the status of the one that holds it. An auto serial is taken once the device resolves it.
+        serial = str(self.config.Emulator_Serial or '')
+        if serial and serial != 'auto':
+            from module.device.owner import acquire_device
+            try:
+                acquire_device(serial, self.config_name)
+            except EmulatorBusy as e:
+                logger.critical(f'{e}, this scheduler does not start')
+                exit(1)
         # Let the GUI know, wherever this scheduler was started from
         write_scheduler_state(self.config_name)
-        atexit.register(remove_scheduler_state, self.config_name)
+        atexit.register(remove_scheduler_state, self.config_name, owner=os.getpid())
 
         while 1:
             # Check update event from GUI

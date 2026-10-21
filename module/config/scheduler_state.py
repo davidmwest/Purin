@@ -26,9 +26,25 @@ def write_scheduler_state(config_name, task=None, paused=False):
         logger.warning(f'Failed to write scheduler state: {e}')
 
 
-def remove_scheduler_state(config_name):
+def remove_scheduler_state(config_name, owner=None):
+    """
+    Args:
+        config_name (str):
+        owner (int): Pid the file must have to be removed, None for any. A scheduler that ends removes only its
+            own file: one started after it wrote its own, and lost it to the first one's exit.
+    """
+    file = filepath_running(config_name)
+    if owner is not None:
+        try:
+            if int(json.loads(atomic_read_bytes(file))['pid']) != owner:
+                return
+        except FileNotFoundError:
+            return
+        except Exception:
+            # Unreadable, nobody's
+            pass
     try:
-        os.remove(filepath_running(config_name))
+        os.remove(file)
     except FileNotFoundError:
         pass
     except Exception as e:
