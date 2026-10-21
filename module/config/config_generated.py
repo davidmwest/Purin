@@ -294,6 +294,7 @@ class GeneratedConfig:
 
     # Group `Leveling`
     Leveling_UltraTo125 = False
+    Leveling_ExpDataPacks = False
     Leveling_CheckInterval = 180
 
     # Group `GeneralShop`

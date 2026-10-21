@@ -15,7 +15,7 @@ import re
 
 from module.base.button import Button
 from module.base.timer import Timer
-from module.equipment.assets import FLEET_DETAIL, FLEET_DETAIL_CHECK
+from module.equipment.assets import EQUIPMENT_OPEN, FLEET_DETAIL, FLEET_DETAIL_CHECK
 from module.formation.formation import Formation
 from module.leveling.plan import RETROFIT, ShipMatcher, Slot, load_ship_data, name_key
 from module.logger import logger
@@ -33,6 +33,8 @@ def area_button(area, name):
 INFO_CARD_LEFTS = (62, 248, 434, 687, 873, 1059)
 INFO_ROWS = ('main', 'main', 'main', 'vanguard', 'vanguard', 'vanguard')
 INFO_NAMES = [area_button((x + 4, 463, x + 152, 486), f'INFO_NAME_{i}') for i, x in enumerate(INFO_CARD_LEFTS)]
+# A tap on a card opens the detail page of her ship
+INFO_CARDS = [area_button((x + 30, 230, x + 125, 400), f'INFO_CARD_{i}') for i, x in enumerate(INFO_CARD_LEFTS)]
 # Levels are right aligned, read without the "Lv." in front of them
 INFO_LEVELS = [area_button((x + 116, 156, x + 145, 180), f'INFO_LEVEL_{i}') for i, x in enumerate(INFO_CARD_LEFTS)]
 # Where to tap a ship on the 3D view: on her, above the label of her level. By the order of the Info view.
@@ -195,6 +197,23 @@ class LevelingFleet(Formation):
         ]
         logger.attr(f'Fleet {fleet}', ', '.join(f'{slot.name or "-"} Lv.{slot.level}' for slot in slots))
         return slots
+
+    def fleet_ship_enter(self, slot):
+        """
+        Open the detail page of the ship of a slot, from the Info view. ui_back(check_button=FLEET_DETAIL_CHECK)
+        comes back.
+
+        Args:
+            slot (Slot):
+
+        Pages:
+            in: page_fleet, showing the fleet of the slot
+            out: detail page of her ship, the Info tab
+        """
+        self.fleet_info_ensure()
+        index = (0 if slot.row == 'main' else 3) + slot.index
+        self.ship_info_enter(click_button=INFO_CARDS[index], check_button=EQUIPMENT_OPEN, long_click=False,
+                             skip_first_screenshot=False)
 
     def fleet_slot_enter(self, slot):
         """

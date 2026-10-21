@@ -115,3 +115,46 @@ def test_a_battle_of_auto_search_forgets_the_rank_of_the_one_before():
         combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=1)
 
     assert combat.combat_won is False and combat.combat_lost is False
+
+
+def auto_search_battle(lost_fleet=None):
+    combat = object.__new__(AutoSearchCombat)
+    combat.device = SimpleNamespace(image=None, screenshot=Mock(), stuck_record_clear=Mock(), click_record_clear=Mock(),
+                                    screenshot_interval_set=Mock(), stuck_record_add=Mock())
+    combat.interval_timer = {}
+    combat.config = SimpleNamespace(Submarine_Fleet=0, Fleet_Fleet1Mode='combat_auto', Fleet_Fleet2Mode='combat_auto')
+    for name in ['handle_combat_automation_confirm', 'handle_story_skip', 'handle_vote_popup', 'is_in_auto_search_menu',
+                 '_handle_auto_search_menu_missing', 'handle_submarine_call', 'handle_combat_auto',
+                 'handle_combat_manual', 'handle_popup_confirm', 'handle_urgent_commission', 'handle_guild_popup_cancel',
+                 'handle_mission_popup_ack', 'handle_get_ship', 'is_auto_search_running', 'auto_search_combat_end',
+                 'appear']:
+        setattr(combat, name, Mock(return_value=False))
+    for name in ['submarine_call_reset', 'combat_auto_reset', 'combat_manual_reset']:
+        setattr(combat, name, Mock())
+    # The battle starts, then ends lost
+    executing = iter([True])
+    combat.is_combat_executing = Mock(side_effect=lambda: next(executing, False))
+    combat.is_battle_lost_shown = Mock(return_value=True)
+    if lost_fleet is not None:
+        combat.run_lost_fleet = lost_fleet
+    return combat
+
+
+@pytest.mark.parametrize('fleet_index', [1, 2])
+def test_a_battle_lost_in_auto_search_marks_the_run(fleet_index):
+    # The trial of the average level of the mob fleet counts the runs whose mob fleet lost a battle
+    combat = auto_search_battle()
+
+    combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=fleet_index)
+
+    assert combat.run_lost is True
+    assert combat.run_lost_fleet == fleet_index
+
+
+def test_a_battle_lost_by_the_mob_fleet_stays_known():
+    # Fleet 2 fights on once fleet 1 sinks, and may lose too
+    combat = auto_search_battle(lost_fleet=1)
+
+    combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=2)
+
+    assert combat.run_lost_fleet == 1

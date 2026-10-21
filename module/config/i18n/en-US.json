@@ -1957,6 +1957,10 @@
       "name": "Ultra Rares to Lv.125 First",
       "help": "For a mature account: ultra rares, Bulins aside, go to level 125 before any other ship. Off, they wait in the queue like the others, their awakenings cost the most chips"
     },
+    "ExpDataPacks": {
+      "name": "Use EXP Data Packs",
+      "help": "The mob fleet of Main keeps an average level of at least 95: 86.8 lost a run of 12-4 in three. A ship short of the level it takes to come in, and the lowest ships of a fleet below the minimum, are raised with T1 EXP Data Packs from the Lecture Hall, to level 100 at most. A ship coming in below 100 goes to 100 when storage keeps 300 packs after it. Off, a fleet below the minimum takes the most powerful free ship for its lowest one. Which average holds is kept in ./config/leveling/<config>.json"
+    },
     "CheckInterval": {
       "name": "Check Interval (Minutes)",
       "help": "Minutes between looks at the fleets. 0 to look once a day, at server update"

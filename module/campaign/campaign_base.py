@@ -16,6 +16,8 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
     MAP: CampaignMap
     # If a battle of the last run of the map was lost
     run_lost = False
+    # Which fleet lost it in auto search, 1 the mob fleet, 2 the boss fleet. None if not known.
+    run_lost_fleet = None
 
     def combat(self, *args, **kwargs):
         """
@@ -218,6 +220,7 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
     def run(self):
         logger.hr(self.ENTRANCE, level=2)
         self.run_lost = False
+        self.run_lost_fleet = None
         # The battle lost in the run before, its map is not this one
         self.combat_lost = False
 

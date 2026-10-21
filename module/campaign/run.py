@@ -9,6 +9,7 @@ from module.campaign.stage import StageNotFound, load_stage, stage_names
 from module.config.config import AzurLaneConfig
 from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import to_map_file_name, to_map_input_name
+from module.leveling.record import record_leveling_run
 from module.logger import logger
 from module.notify import handle_notify
 from module.ui.page import page_campaign
@@ -481,6 +482,9 @@ class CampaignRun(CampaignEvent):
 
             # After run
             self.run_count += 1
+            # The fleets Leveling fills, how the run went with them
+            if self.config.task.command == 'Main':
+                record_leveling_run(self.config, self.campaign)
             if self.config.StopCondition_RunCount:
                 self.config.StopCondition_RunCount -= 1
             # A stage too hard for the fleet for now

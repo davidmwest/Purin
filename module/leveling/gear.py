@@ -1,14 +1,17 @@
 """
 Gear from storage for a ship that comes into a fleet without gear worth the name.
 
-On the detail page of a ship, the Info tab shows her 5 gear slots and their enhancement. On the Gear tab, a tap on an
-empty slot opens the depot with the gear that fits it, the rarest first. A tap on gear opens its popup instead, whose
+On the detail page of a ship, the Info tab shows her 5 gear slots and her augment, and their enhancement. On the Gear
+tab, a tap on an empty slot opens the depot with the gear that fits it, the rarest first. A tap on gear opens its popup instead, whose
 Change button opens the depot with a REMOVE card first. The EQUIPPED switch of the depot lists the gear other ships
 wear too: it is turned off, so only gear in storage is listed and no ship loses hers. Gear picked there asks to
 Confirm, beside the gear it replaces.
 
 The most enhanced gear of the depot goes in each empty slot, and in place of gear below GEARED_LEVEL when storage has
 better: gear at +0 lost a battle of 12-4 that gear at +10 won. Her enhancements are read again at the end.
+The augment is the sixth slot, the user's rule wants it at +10 too. A tap on it empty opens the depot of augments:
+a "Craft" section first, the augments in storage under a "Depot" header, with the same EQUIPPED switch, tags on the
+cards and Confirm as the depot of gear.
 A step that does not go as planned comes back to the Gear tab, closing what it opened.
 """
 import cv2
@@ -19,7 +22,7 @@ from module.base.utils import crop, load_image
 from module.equipment.assets import (EQUIP_TAKE_ON_0, EQUIP_TAKE_ON_1, EQUIP_TAKE_ON_2, EQUIP_TAKE_ON_3,
                                      EQUIP_TAKE_ON_4, EQUIPMENT_OPEN, SHIP_INFO_EQUIPMENT_CHECK)
 from module.equipment.equipment_change import EQUIPMENT_GRID
-from module.inventory.info import GEAR_LEVEL_AREAS, parse_trailing_number
+from module.inventory.info import AUGMENT_LEVEL_AREA, GEAR_LEVEL_AREAS, parse_trailing_number
 from module.leveling.fleet import LevelingFleet, area_button
 from module.leveling.plan import GEARED_LEVEL
 from module.logger import logger
@@ -54,6 +57,17 @@ INFO_GEAR_LEVELS = [area_button(area, f'INFO_GEAR_LEVEL_{index}') for index, are
 # A gear slot of the Info tab is empty below this sharpness, gear at +0 is about 30
 EMPTY_SLOT_EDGE = 10
 GEAR_SLOTS = [EQUIP_TAKE_ON_0, EQUIP_TAKE_ON_1, EQUIP_TAKE_ON_2, EQUIP_TAKE_ON_3, EQUIP_TAKE_ON_4]
+# The augment, index 5 of the slots, below the ship on the Gear tab, and its enhancement on the Info tab
+AUGMENT_INDEX = 5
+AUGMENT_SLOT = area_button((428, 595, 498, 660), 'AUGMENT_SLOT')
+INFO_AUGMENT_LEVEL = area_button(AUGMENT_LEVEL_AREA, 'INFO_AUGMENT_LEVEL')
+# The "Depot" header of the depot of augments, its cards start this far below its top, a row every 178 pixels.
+# The list ends above the bottom bar.
+AUGMENT_HEADER = './assets/leveling/augment_depot_header.png'
+AUGMENT_HEADER_AREA = (128, 60, 300, 640)
+AUGMENT_CARD_LEFTS = [131 + round(156.5 * column) for column in range(7)]
+AUGMENT_ROW_OFFSET = 53
+AUGMENT_LIST_BOTTOM = 640
 # The popup of gear in a slot: Unequip, Change, Enhance. A tap below it, out of it, closes it.
 GEAR_CHANGE = './assets/leveling/gear_change.png'
 GEAR_CHANGE_AREA = (540, 600, 740, 700)
@@ -155,19 +169,46 @@ def tag_level(digit):
     return 0
 
 
-def depot_card_levels(image):
+def augment_depot_layout(top):
+    """
+    Args:
+        top (int): Top of the "Depot" header of the depot of augments
+
+    Returns:
+        tuple[list[Button], list[Button]]: Cards of the augments in storage whole on screen, and their tags
+    """
+    cards, tags = [], []
+    row, y = 0, top + AUGMENT_ROW_OFFSET
+    while y + 130 <= AUGMENT_LIST_BOTTOM:
+        for column, x in enumerate(AUGMENT_CARD_LEFTS):
+            cards.append(area_button((x + 6, y + 6, x + 124, y + 126), f'AUGMENT_CARD_{row}_{column}'))
+            tags.append(area_button((x + 2, y + 80, x + 48, y + 102), f'AUGMENT_TAG_{row}_{column}'))
+        row, y = row + 1, y + 178
+    return cards, tags
+
+
+def depot_card_levels(image, cards=None, tags=None):
     """
     Args:
         image (np.ndarray): The depot of a slot
+        cards (list[Button]): Cards on screen, DEPOT_CARDS of the depot of gear if None
+        tags (list[Button]): Their tags, DEPOT_TAGS if None
 
     Returns:
         list[int]: Enhancement of each card on screen, -1 where there is no card, a dimmed one or the REMOVE card.
             A digit read where a card has no tag is dropped, a tag reads "+10".
     """
-    digits = Digit(DEPOT_TAGS, letter=(255, 255, 255), threshold=128, name='DEPOT_TAG').ocr(image)
-    texts = Ocr(DEPOT_TAGS, lang='cnocr', letter=(255, 255, 255), threshold=128, name='DEPOT_TAG_TEXT').ocr(image)
+    if cards is None:
+        cards, tags = DEPOT_CARDS, DEPOT_TAGS
+    if not cards:
+        return []
+    digits = Digit(tags, letter=(255, 255, 255), threshold=128, name='DEPOT_TAG').ocr(image)
+    texts = Ocr(tags, lang='cnocr', letter=(255, 255, 255), threshold=128, name='DEPOT_TAG_TEXT').ocr(image)
+    # OCR of a single button gives its result alone
+    if not isinstance(digits, list):
+        digits, texts = [digits], [texts]
     levels = []
-    for card, digit, text in zip(DEPOT_CARDS, digits, texts):
+    for card, digit, text in zip(cards, digits, texts):
         if not is_card(image, card):
             levels.append(-1)
         elif '+' in str(text):
@@ -204,6 +245,22 @@ class LevelingGear(LevelingFleet):
     @cached_property
     def _equipped_off(self):
         return gray(load_image(EQUIPPED_OFF))
+
+    @cached_property
+    def _augment_header(self):
+        return gray(load_image(AUGMENT_HEADER))
+
+    def augment_header_top(self):
+        """
+        Returns:
+            int: Top of the "Depot" header of the depot of augments, None if it is not on screen
+        """
+        region = gray(crop(self.device.image, AUGMENT_HEADER_AREA, copy=False))
+        result = cv2.matchTemplate(region, self._augment_header, cv2.TM_CCOEFF_NORMED)
+        _, score, _, location = cv2.minMaxLoc(result)
+        if score < TEMPLATE_SIMILARITY:
+            return None
+        return AUGMENT_HEADER_AREA[1] + location[1]
 
     @cached_property
     def _gear_change(self):
@@ -303,7 +360,7 @@ class LevelingGear(LevelingFleet):
             in: SHIP_INFO_EQUIPMENT_CHECK, the Gear tab
             out: the depot of the slot
         """
-        slot = GEAR_SLOTS[index]
+        slot = AUGMENT_SLOT if index == AUGMENT_INDEX else GEAR_SLOTS[index]
         self.interval_clear([slot, GEAR_CHANGE_BUTTON])
         for _ in self.loop(timeout=GEAR_TIMEOUT):
             if self.is_in_depot():
@@ -323,7 +380,7 @@ class LevelingGear(LevelingFleet):
         Put the most enhanced gear of storage that fits in a slot.
 
         Args:
-            index (int): 0 to 4
+            index (int): 0 to 4, AUGMENT_INDEX for the augment
             current (int): Enhancement of the gear in the slot, None if empty.
                 Gear is only replaced by gear at GEARED_LEVEL or above, more enhanced.
 
@@ -350,7 +407,11 @@ class LevelingGear(LevelingFleet):
         # The list is drawn again
         self.device.sleep(0.5)
         self.device.screenshot()
-        levels = depot_card_levels(self.device.image)
+        cards, tags = DEPOT_CARDS, DEPOT_TAGS
+        if index == AUGMENT_INDEX:
+            top = self.augment_header_top()
+            cards, tags = augment_depot_layout(top) if top is not None else ([], [])
+        levels = depot_card_levels(self.device.image, cards, tags)
         best = best_card(levels)
         logger.attr(f'Depot of slot {index}', levels)
         if best < 0:
@@ -363,7 +424,7 @@ class LevelingGear(LevelingFleet):
             self.gear_tab_ensure()
             return None
 
-        card = DEPOT_CARDS[best]
+        card = cards[best]
         self.interval_clear(card)
         for _ in self.loop(timeout=GEAR_TIMEOUT):
             if self.is_gear_confirm():
@@ -392,7 +453,7 @@ class LevelingGear(LevelingFleet):
     def gear_read(self):
         """
         Returns:
-            list[int]: Enhancement of the 5 gear slots, -1 for an empty one
+            list[int]: Enhancement of the 5 gear slots, -1 for an empty one, and of the augment, 0 for none
 
         Pages:
             in: detail page of a ship
@@ -404,14 +465,16 @@ class LevelingGear(LevelingFleet):
                 break
         empty = empty_gear_slots(self.device.image)
         levels = gear_levels(self.device.image)
-        return [-1 if index in empty else level for index, level in enumerate(levels)]
+        augment = parse_trailing_number(str(Ocr([INFO_AUGMENT_LEVEL], letter=(255, 255, 255), threshold=128,
+                                                name='AUGMENT_LEVEL').ocr(self.device.image)), maximum=13)
+        return [-1 if index in empty else level for index, level in enumerate(levels)] + [augment]
 
     def gear_fill(self):
         """
         Gear from storage for the ship shown: in each empty slot, and in place of gear below GEARED_LEVEL.
 
         Returns:
-            list[int]: Enhancement of her 5 gear slots after it, 0 for an empty one.
+            list[int]: Enhancement of her 5 gear slots and of her augment after it, 0 for an empty one.
                 None if a step could not come back to the Gear tab.
 
         Pages:

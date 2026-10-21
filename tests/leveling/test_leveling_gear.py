@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 import module.config.server as server
-from module.leveling.gear import LevelingGear, best_card, depot_card_levels, depot_has_item, \
+from module.leveling.gear import LevelingGear, augment_depot_layout, best_card, depot_card_levels, depot_has_item, \
     empty_gear_slots, gear_levels, tag_level
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
@@ -267,3 +267,25 @@ def test_the_gear_tab_from_where_a_step_stopped():
 
         assert gear_on(device).gear_tab_ensure()
         assert device.screen == 'tab'
+
+
+def test_augments_in_storage_are_below_the_depot_header():
+    # The depot of augments of Isokaze, EQUIPPED off: Craft first, then the augments in storage,
+    # Hammer +10, Hammer, Hammer, Hammer, Dual Sword +10, Dual Sword +10, Dual Sword
+    gear = gear_page(frame(('augment_depot_storage.png', 125, 320)))
+
+    top = gear.augment_header_top()
+    assert top == 330
+    cards, tags = augment_depot_layout(top)
+    # The second row is cut by the bottom bar
+    assert len(cards) == 7
+    levels = depot_card_levels(gear.device.image, cards, tags)
+    assert levels == [10, 0, 0, 0, 10, 10, 0]
+    assert best_card(levels) == 0
+
+
+def test_no_augments_on_the_depot_of_gear():
+    gear = gear_page(depot('off'))
+
+    assert gear.augment_header_top() is None
+    assert depot_card_levels(gear.device.image, [], []) == []

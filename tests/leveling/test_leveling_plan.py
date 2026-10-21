@@ -2,8 +2,8 @@ import pytest
 
 from module.leveling.plan import (
     AWAKEN_CHIPS, HULL_ROW, HULL_WEIGHT, MAX_STARS, POWER_WEIGHTS, RETROFIT, ShipMatcher, Slot, Target, awaken_cost,
-    awakenings_done, campaign_fleets, carry_targets, is_geared, leveling_queue, load_ship_data, name_key, plan_carries,
-    plan_over_passengers, plan_swaps, update_levels,
+    awakenings_done, campaign_fleets, carry_targets, fleet_average, gear_record, is_geared, level_needed, leveling_queue,
+    load_ship_data, name_key, plan_boosts, plan_carries, plan_lift, plan_swaps, update_levels,
 )
 
 GEARED = [10, 10, 10, 10, 10]
@@ -16,11 +16,12 @@ def data():
 
 def ship(name, level, stars=6, exp_next=1000, affinity='stranger', gear=None, power=3000, index=0):
     """
-    A ship as the Inventory task saves her.
+    A ship as the Inventory task saves her, her augment at +10 with gear given
     """
     return {
         'name': name, 'level': level, 'stars': stars, 'exp': 0 if exp_next else None, 'exp_next': exp_next,
         'affinity': affinity, 'power': power, 'gear_levels': gear or [0, 0, 0, 0, 0], 'index': index,
+        'augment_level': 10 if gear else 0,
     }
 
 
@@ -107,12 +108,22 @@ def test_awaken_cost():
 
 
 def test_is_geared():
-    assert is_geared({'gear_levels': GEARED})
-    assert is_geared({'gear_levels': [10, 10, 10, 7, 10]})
-    assert is_geared({'gear_levels': [13, 10, 11, 10, 0]})
-    assert not is_geared({'gear_levels': [10, 0, 0, 10, 10]})
-    assert not is_geared({'gear_levels': [0, 0, 0, 0, 0]})
+    # All 6 slots at +10 or better, the augment too, the user's rule
+    assert is_geared({'gear_levels': GEARED, 'augment_level': 10})
+    assert is_geared({'gear_levels': [13, 10, 11, 10, 10], 'augment_level': 10})
+    # No augment
+    assert not is_geared({'gear_levels': GEARED, 'augment_level': 0})
+    assert not is_geared({'gear_levels': GEARED})
+    # Hasty, and Maury with an auxiliary at +6
+    assert not is_geared({'gear_levels': [10, 10, 10, 7, 10], 'augment_level': 10})
+    assert not is_geared({'gear_levels': [11, 10, 11, 13, 6], 'augment_level': 10})
+    assert not is_geared({'gear_levels': [0, 0, 0, 0, 0], 'augment_level': 10})
     assert not is_geared({})
+
+
+def test_gear_as_the_inventory_keeps_it():
+    assert gear_record([10, 13, -1, 10, 10, 10]) == {'gear_levels': [10, 13, 0, 10, 10], 'augment_level': 10}
+    assert gear_record([10, 10, 10, 10, 10]) == {'gear_levels': [10, 10, 10, 10, 10], 'augment_level': 0}
 
 
 def test_ultra_rares_first(data):
@@ -380,29 +391,54 @@ def test_ships_without_gear_come_in_where_rows_take_them(data, monkeypatch):
     assert plan_names(plan_swaps(slots, queue, data)) == [((1, 1), ['Isokaze'])]
 
 
-def test_a_row_over_its_passengers_makes_room(data):
-    # Hasty at 73 in a vanguard that takes no ship below 90
-    queue = queue_of(('Isokaze', 'vanguard', False), ('Hasty', 'vanguard', True), ('Maury (Retrofit)', 'vanguard', True),
-                     ('Ning Hai (Retrofit)', 'vanguard', True))
-    for target, level in zip(queue, [70, 73, 92, 91]):
-        target.level = level
-    slots = slots_of(1, 'vanguard', 'Hasty', 'Ning Hai(Retrofit', 'Ping Hai Retrofit')
-    for slot, level in zip(slots, [73, 91, 91]):
+def mob_fleet(*levels):
+    slots = slots_of(1, 'main', 'Hakuhou', 'Gangut', 'Kansas') \
+        + slots_of(1, 'vanguard', 'Maury (Retrofit)', 'Ping Hai Retrofit', 'Nicholas (Retrofit)')
+    for slot, level in zip(slots, levels):
         slot.level = level
+    return slots
+
+
+def test_average_of_a_fleet():
+    assert fleet_average(mob_fleet(89, 99, 93, 95, 95, 91)) == pytest.approx(93.67, abs=0.01)
+    # An empty slot counts as 0
+    slots = mob_fleet(89, 99, 93, 95, 95, 91)
+    slots[5].name = ''
+    assert fleet_average(slots) == pytest.approx(78.5)
+
+
+def test_level_a_ship_coming_in_needs():
+    slots = mob_fleet(89, 99, 93, 95, 95, 91)
+    # Nicholas leaves, the others are at 471
+    assert level_needed(slots, slots[5], 85) == 39
+    assert level_needed(slots, slots[5], 95) == 99
+    assert level_needed(slots, slots[5], 70) == 0
+
+
+def test_a_fleet_below_its_minimum_raises_its_lowest_ships():
+    # Two destroyers at 70 and 72, 56 levels short of an average of 95
+    slots = mob_fleet(89, 99, 93, 70, 72, 91)
+
+    assert [(slot.name, level) for slot, level in plan_boosts(slots, 95)] == [
+        ('Maury (Retrofit)', 100), ('Ping Hai Retrofit', 98)]
+    assert plan_boosts(slots, 85) == []
+
+
+def test_ships_at_100_are_not_raised():
+    slots = mob_fleet(100, 100, 100, 100, 100, 90)
+
+    assert [(slot.name, level) for slot, level in plan_boosts(slots, 99)] == [('Nicholas (Retrofit)', 94)]
+    # 100 is the most packs give
+    assert [(slot.name, level) for slot, level in plan_boosts(slots, 100)] == [('Nicholas (Retrofit)', 100)]
+    slots[5].level = 100
+    assert plan_boosts(slots, 105) == []
+
+
+def test_without_packs_the_lowest_ship_makes_room_for_a_carry(data):
+    slots = mob_fleet(89, 99, 93, 70, 72, 91)
     carries = [Target(name='Eldridge (Retrofit)', ship='Eldridge (Retrofit)', hull='DD', row='vanguard',
                       rarity='Super Rare', level=125, goal=125, chips=0, arrays=0, gain=0, tech=0, score=6046,
                       priority=3, geared=True, index=0)]
 
-    plans = plan_over_passengers(slots, queue, carries, data)
-
-    # Ships at 90 and above of the queue first, then the most powerful ones
-    assert plan_names(plans) == [((1, 0), ['Maury (Retrofit)', 'Eldridge (Retrofit)'])]
-
-
-def test_a_row_within_its_passengers_is_left(data):
-    queue = queue_of(('Tirpitz', 'main', True))
-    slots = slots_of(1, 'main', 'Hakuhou', 'Gangut', 'Kansas')
-    for slot, level in zip(slots, [81, 97, 86]):
-        slot.level = level
-
-    assert plan_over_passengers(slots, queue, [], data) == []
+    assert plan_names(plan_lift(slots, carries, 95, data)) == [((1, 0), ['Eldridge (Retrofit)'])]
+    assert plan_lift(slots, carries, 85, data) == []

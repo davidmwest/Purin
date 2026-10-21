@@ -532,6 +532,7 @@ Awaken:
   CheckInterval: 0
 Leveling:
   UltraTo125: false
+  ExpDataPacks: false
   CheckInterval: 180
 GeneralShop:
   UseGems: false

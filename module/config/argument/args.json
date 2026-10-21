@@ -9011,6 +9011,10 @@
         "type": "checkbox",
         "value": false
       },
+      "ExpDataPacks": {
+        "type": "checkbox",
+        "value": false
+      },
       "CheckInterval": {
         "type": "input",
         "value": 180

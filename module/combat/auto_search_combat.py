@@ -306,6 +306,11 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 break
             if self.is_battle_lost_shown():
                 logger.warning('Battle lost in auto search')
+                # The run had a battle lost, fleet index 1 is the mob fleet, 2 the boss fleet.
+                # Fleet 2 fights on once fleet 1 sinks, a battle lost by fleet 1 stays known.
+                self.run_lost = True
+                if getattr(self, 'run_lost_fleet', None) != 1:
+                    self.run_lost_fleet = fleet_index
                 self.device.screenshot_interval_set()
                 break
             if self.auto_search_combat_end():
@@ -354,9 +359,11 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if self.appear_then_click(DEFEAT_TIPS, offset=(20, 20), interval=2):
                 # Its status C or D comes next
                 self._auto_search_status_confirm = True
+                self.run_lost = True
                 continue
             if not self._auto_search_status_confirm and self.is_battle_lost_shown():
                 self._auto_search_status_confirm = True
+                self.run_lost = True
 
             # Handle low emotion combat
             # Combat status

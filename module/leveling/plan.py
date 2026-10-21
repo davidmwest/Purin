@@ -15,6 +15,7 @@ Bulins are not part of it, they give no Fleet Technology and are levelled last.
 """
 import difflib
 import json
+import math
 import os
 import re
 import unicodedata
@@ -72,11 +73,10 @@ HULL_ROW = {
     'SS': 'submarine', 'SSV': 'submarine', 'IXs': 'submarine',
 }
 # A ship fights her share in a stage like 12-4, enemies at level 113, with this many gear slots enhanced
-# to this level. A ship without gear sinks early and misses the EXP of the battles after.
-# Gear of a destroyer adds less to her stats than the gear of a battleship, so the enhancements tell,
-# the ships that clear 12-4 have +10 in all of their 5 slots.
-GEARED_SLOTS = 4
-GEARED_LEVEL = 6
+# to this level: all 5 of them at +10 or better, the user's rule of 2026-10-20.
+# A ship without gear sinks early and misses the EXP of the battles after.
+GEARED_SLOTS = 5
+GEARED_LEVEL = 10
 # Rows of the mob fleet that take ships without gear: they get gear from storage as they come in, and come in
 # only if it makes them geared. Two ships at +0 in the vanguard lost a battle of the mobs of 12-4 that ships at +10
 # won.
@@ -151,14 +151,28 @@ def power(stats):
 def is_geared(ship):
     """
     Args:
-        ship (dict): Ship of the inventory, with the enhancement levels of her 5 gear slots.
+        ship (dict): Ship of the inventory, with the enhancement levels of her 5 gear slots and of her augment.
             An empty slot and gear at +0 both read 0.
 
     Returns:
-        bool: If she has gear to fight with
+        bool: If she has gear to fight with: all 6 slots at GEARED_LEVEL, the augment too, the user's rule
     """
     levels = ship.get('gear_levels') or []
-    return sum(1 for level in levels if (level or 0) >= GEARED_LEVEL) >= GEARED_SLOTS
+    if sum(1 for level in levels if (level or 0) >= GEARED_LEVEL) < GEARED_SLOTS:
+        return False
+    return (ship.get('augment_level') or 0) >= GEARED_LEVEL
+
+
+def gear_record(levels):
+    """
+    Args:
+        levels (list[int]): Enhancement of the 5 gear slots and of the augment, as module.leveling.gear reads them
+
+    Returns:
+        dict: gear_levels and augment_level, as the inventory keeps them
+    """
+    levels = [max(level or 0, 0) for level in levels]
+    return {'gear_levels': levels[:5], 'augment_level': levels[5] if len(levels) > 5 else 0}
 
 
 def name_key(name):
@@ -510,11 +524,17 @@ def plan_swaps(slots, queue, data=None, others=()):
     return plans
 
 
-# A ship below this level rides along in the mob fleet. Its main fleet takes two of them at most, as it cleared
-# 12-4 for 626 runs with Hakuhou at 77 and Kansas at 84. Its vanguard takes none: it fights 6 battles a run and
-# the damage adds up, Hasty at 73 with gear at +10 sank in the sixth of them and lost it.
-PASSENGER_LEVEL = 90
-PASSENGERS = {'vanguard': 0, 'main': 2}
+# The mob fleet of 12-4 keeps its average level at a minimum, the user's rule of 2026-10-20: try 85, and 95 if that
+# fails. 85 was tried already: an average of 86.8 lost a run of 12-4 in three, with Hakuhou 81, Gangut 97, Kansas 87
+# and Hasty 74, Ning Hai 91, Ping Hai 91 (Hasty had an auxiliary at +7). So the user said to go straight to 95.
+# It is a minimum: the queue decides who levels, a ship comes in if the fleet keeps the minimum with her.
+# A step past the last one is not known, a battle lost there is only recorded, see module.leveling.record.
+AVERAGE_STEPS = (95,)
+# Averages tried before, they are in the record as history
+AVERAGES_FAILED = [{'average': 86.8, 'time': '2026-10-20', 'stage': '12-4', 'runs': 3, 'lost': 1,
+                    'fleet': 'Hakuhou 81, Gangut 97, Kansas 87 / Hasty 74, Ning Hai 91, Ping Hai 91'}]
+# EXP Data Packs take a ship up to this level at most, past it she waits for an awakening
+BOOST_CAP = 100
 # Ships of the boss fleet are at this level at least, the boss of 12-4 is at 114
 CARRY_LEVEL = 100
 
@@ -599,54 +619,76 @@ def plan_carries(boss_slots, slots, carries, data=None):
     return plans
 
 
-def is_passenger(level):
-    return 0 < level < PASSENGER_LEVEL
-
-
-def plan_over_passengers(slots, queue, carries, data=None, others=()):
+def fleet_average(slots):
     """
-    A row of the mob fleet with more ships below PASSENGER_LEVEL than PASSENGERS allows has its lowest ranked of
-    them replaced by the best ships at PASSENGER_LEVEL or above: ships of the queue first, then the most powerful
-    geared ships.
+    Args:
+        slots (list[Slot]): Slots of a fleet
+
+    Returns:
+        float: Average level of its ships, an empty slot counts as level 0
+    """
+    if not slots:
+        return 0.
+    return sum(slot.level if slot.name else 0 for slot in slots) / len(slots)
+
+
+def level_needed(slots, slot, minimum):
+    """
+    Args:
+        slots (list[Slot]): Slots of a fleet
+        slot (Slot): One of them, a ship comes into it
+        minimum (float): Average level the fleet keeps
+
+    Returns:
+        int: Level the ship coming in needs at least, for the fleet to keep the minimum
+    """
+    others = sum(other.level if other.name else 0 for other in slots if other is not slot)
+    return max(0, math.ceil(minimum * len(slots) - others - 1e-9))
+
+
+def plan_boosts(slots, minimum):
+    """
+    A fleet below its minimum average has its lowest ships below BOOST_CAP raised with EXP Data Packs,
+    the lowest first, as few levels as it takes.
 
     Args:
-        slots (list[Slot]): Slots of the mob fleet, as read
-        queue (list[Target]): leveling_queue()
+        slots (list[Slot]): Slots of a fleet
+        minimum (float): Average level the fleet keeps
+
+    Returns:
+        list[tuple[Slot, int]]: Slots and the level their ship goes to
+    """
+    missing = math.ceil(minimum * len(slots) - sum(slot.level if slot.name else 0 for slot in slots) - 1e-9)
+    plans = []
+    for slot in sorted([slot for slot in slots if slot.name and 0 < slot.level < BOOST_CAP],
+                       key=lambda slot: (slot.level, slot.row, slot.index)):
+        if missing <= 0:
+            break
+        level = min(BOOST_CAP, slot.level + missing)
+        plans.append((slot, level))
+        missing -= level - slot.level
+    return plans
+
+
+def plan_lift(slots, carries, minimum, data=None, others=()):
+    """
+    A fleet below its minimum average, with no EXP Data Packs to raise it, has its lowest ship replaced by the most
+    powerful ship free of her row.
+
+    Args:
+        slots (list[Slot]): Slots of a fleet
         carries (list[Target]): carry_targets()
+        minimum (float): Average level the fleet keeps
         data (dict[str, ShipData]):
         others (list[Slot]): Slots of the other fleets read, their ships are not free to come in
 
     Returns:
         list[tuple[Slot, list[Target]]]: Slots to change, with the ships to try in them, the best first
     """
-    matcher = ShipMatcher(data if data is not None else load_ship_data())
-
-    def character(slot):
-        match = matcher.match(slot.name) if slot.name else None
-        return match.character if match is not None else None
-
-    elsewhere = {character(slot) for slot in others} - {None}
-    plans = []
-    for row, budget in PASSENGERS.items():
-        ranked = [target for target in queue if target.row == row and (target.geared or row in GEARLESS_ROWS)]
-        rank = {target.character: index for index, target in enumerate(ranked)}
-        for fleet in sorted({slot.fleet for slot in slots if slot.row == row}):
-            fleet_slots = [slot for slot in slots if slot.fleet == fleet and slot.row == row]
-            passengers = [slot for slot in fleet_slots if slot.name and is_passenger(slot.level)]
-            excess = len(passengers) - budget
-            if excess <= 0:
-                continue
-            seated = {character(slot) for slot in fleet_slots} - {None}
-            candidates = []
-            for target in ranked + [carry for carry in carries if carry.row == row]:
-                if not is_passenger(target.level) and target.character not in seated | elsewhere \
-                        and target.character not in {c.character for c in candidates}:
-                    candidates.append(target)
-            # The lowest ranked passengers make room
-            passengers.sort(key=lambda slot: rank.get(character(slot), len(ranked)), reverse=True)
-            for slot in passengers[:excess]:
-                logger.info(f'Fleet {fleet} {row} has {len(passengers)} ships below {PASSENGER_LEVEL}, '
-                            f'{budget} at most, {slot.name} makes room')
-                if candidates:
-                    plans.append((slot, candidates))
-    return plans
+    if fleet_average(slots) >= minimum:
+        return []
+    filled = [slot for slot in slots if slot.name and slot.level > 0]
+    if not filled:
+        return []
+    lowest = min(filled, key=lambda slot: (slot.level, slot.row, slot.index))
+    return plan_carries([lowest], list(slots) + list(others), carries, data)
