@@ -91,15 +91,19 @@ INFO_GEAR_ICON_LEFTS = [696 + 85 * index for index in range(5)]
 INFO_GEAR_ICON_TOP = 129
 # Popups of gear: gear picked in the depot is shown on the right, beside what the slot has, gear in a slot in the
 # middle. Its name is on top, a long one scrolls and can be cut at both ends. Its stats are rows under its picture,
-# the label on the left and the amount on the right, then come its skills.
+# the label on the left and the amount on the right, then come its skills. Gear picked to replace other gear lists
+# the stats of the other gear first, at 0.
 POPUP_PANELS = {'confirm': (698, 1052), 'worn': (462, 818)}
 POPUP_TITLES = {'confirm': (692, 92, 1058, 122), 'worn': (482, 92, 818, 122)}
-POPUP_ROWS = 4
+POPUP_ROWS = 7
 POPUP_ROW_TOP = 278
 POPUP_ROW_HEIGHT = 36
 POPUP_VALUE_COLOR = (200, 175, 50)
 # Seconds for a popup to fade in
 POPUP_SETTLE = 0.4
+# Seconds for the list of a depot to show, after its title
+AUGMENT_WAIT = 3
+DEPOT_LIST_WAIT = 2
 
 
 def gray(image):
@@ -523,6 +527,27 @@ class LevelingGear(LevelingFleet):
         self.device.screenshot()
         return True
 
+    def depot_list_wait(self, cards):
+        """
+        Wait for the cards of the depot to stop changing, the list shows a moment after the title.
+
+        Args:
+            cards (list[Button]):
+
+        Returns:
+            bool: If cards show, the same in two screenshots
+
+        Pages:
+            in: the depot of a slot
+        """
+        previous = None
+        for _ in self.loop(timeout=DEPOT_LIST_WAIT):
+            present = tuple(is_card(self.device.image, card) for card in cards)
+            if any(present) and present == previous:
+                return True
+            previous = present
+        return False
+
     def gear_card_open(self, card):
         """
         Pick gear of the depot, its popup shows beside the gear of the slot.
@@ -643,7 +668,12 @@ class LevelingGear(LevelingFleet):
             return None
         if not self.depot_storage_only():
             return None
-        top = self.augment_header_top()
+        # The list shows a moment after the title, the EQUIPPED switch may already be off
+        top = None
+        for _ in self.loop(timeout=AUGMENT_WAIT):
+            top = self.augment_header_top()
+            if top is not None:
+                break
         cards, tags = augment_depot_layout(top) if top is not None else ([], [])
         levels = depot_card_levels(self.device.image, cards, tags)
         best = best_card(levels)
@@ -689,6 +719,7 @@ class LevelingGear(LevelingFleet):
             return None
         if not self.depot_storage_only():
             return None
+        self.depot_list_wait(DEPOT_CARDS)
 
         cards = depot_cards_read(self.device.image)
         logger.attr(f'Depot of slot {index}', [f'{card["name"]} {card["rarity"]} +{card["level"]}' for card in cards])

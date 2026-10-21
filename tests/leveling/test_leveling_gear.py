@@ -220,7 +220,7 @@ class ScreenDevice:
     Shows a screen, a click on a button goes to the screen of moves[screen, button name] if any.
     """
 
-    def __init__(self, moves, screen='tab'):
+    def __init__(self, moves, screen='tab', after_shot=None):
         depot_title = ('depot_change_title.png', 90, 0)
         self.screens = {
             'tab': frame(('gear_tab_bottom.png', 300, 600)),
@@ -234,6 +234,11 @@ class ScreenDevice:
                                 ('popup_worn_sonar_rows.png', 440, 272)),
             'aux_on': frame(depot_title, ('depot_equipped_on_switch.png', 0, 480), *AUX_CARDS),
             'aux_off': frame(depot_title, ('depot_equipped_off_switch.png', 0, 480), *AUX_CARDS),
+            # The depot of augments of Isokaze, its list shows a moment after its title
+            'aug_drawing': frame(depot_title, ('depot_equipped_off_switch.png', 0, 480)),
+            'aug_drawing_2': frame(depot_title, ('depot_equipped_off_switch.png', 0, 480)),
+            'aug_off': frame(depot_title, ('depot_equipped_off_switch.png', 0, 480),
+                             ('augment_depot_storage.png', 125, 320)),
         }
         for tag in PICKS.values():
             self.screens[f'pick_{tag}'] = frame(('gear_confirm_empty_buttons.png', 300, 600),
@@ -242,13 +247,19 @@ class ScreenDevice:
         self.moves = moves
         self.screen = screen
         self.clicks = []
+        # Screens that change by themselves, after a screenshot of them
+        self.after_shot = after_shot or {}
+        self.last = None
 
     @property
     def image(self):
-        return self.screens[self.screen]
+        # The last screenshot, as the device of Alas
+        return self.last if self.last is not None else self.screens[self.screen]
 
     def screenshot(self):
-        return self.image
+        self.last = self.screens[self.screen]
+        self.screen = self.after_shot.get(self.screen, self.screen)
+        return self.last
 
     def click(self, button):
         self.clicks.append(button.name)
@@ -405,6 +416,27 @@ def test_the_best_gear_looked_at_is_picked_again():
     assert device.clicks[2:-2:2] == ['DEPOT_CARD_0_1', 'DEPOT_CARD_0_6', 'DEPOT_CARD_0_3', 'DEPOT_CARD_2_3',
                                      'DEPOT_CARD_0_5', 'DEPOT_CARD_1_2']
     assert device.clicks[-2:] == ['DEPOT_CARD_0_1', 'GEAR_CONFIRM']
+
+
+def test_augments_are_read_once_their_list_shows():
+    # The EQUIPPED switch is already off, the list shows after the title
+    moves = {('tab', 'AUGMENT_SLOT'): 'aug_drawing', ('aug_off', 'AUGMENT_CARD_0_0'): 'confirm',
+             ('confirm', 'GEAR_CONFIRM'): 'tab', ('aug_off', 'BACK_ARROW'): 'tab'}
+    device = ScreenDevice(moves, after_shot={'aug_drawing': 'aug_drawing_2', 'aug_drawing_2': 'aug_off'})
+
+    assert gear_on(device).augment_slot_fill(current=0) == 10
+    # The Hammer at +10
+    assert device.clicks == ['AUGMENT_SLOT', 'AUGMENT_CARD_0_0', 'GEAR_CONFIRM']
+    assert device.screen == 'tab'
+
+
+def test_no_augment_better_than_hers(short_steps):
+    moves = {('tab', 'AUGMENT_SLOT'): 'aug_off', ('aug_off', 'BACK_ARROW'): 'tab'}
+    device = ScreenDevice(moves)
+
+    assert gear_on(device).augment_slot_fill(current=10) is None
+    assert device.clicks == ['AUGMENT_SLOT', 'BACK_ARROW']
+    assert device.screen == 'tab'
 
 
 def gear_stubbed(levels, rarities, worn, picks):

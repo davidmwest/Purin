@@ -54,6 +54,8 @@ def test_stats_of_a_popup_as_read():
     assert parse_stats(['HP', 'LcK', 'skills', ''], [350, 2, 11131055, 0]) == {'HP': 350, 'LCK': 2}
     assert parse_stats(['RLD', 'FP', 'Gear Properties ', 'Equippable by'], [35, 7, 0, 0]) == {'RLD': 35, 'FP': 7}
     assert parse_stats(['HP', 'skills', '', 'ca-unaaio-'], [500, 310015111, 0, 0]) == {'HP': 500}
+    # A Repair Toolkit picked for the slot of an Advanced Sonar, 2026-10-21: the stats of the sonar come first, at 0
+    assert parse_stats(['Asw', 'Hit', 'AS R', 'HP', 'skills'], [0, 0, 0, 500, 0]) == {'HP': 500}
 
 
 def test_gear_against_submarines():

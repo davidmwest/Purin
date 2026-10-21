@@ -142,13 +142,14 @@ def parse_stats(labels, values):
 
     Returns:
         dict[str, int]: Stats, like {'HP': 500}. Rows after them, Skills and such, are left out.
+            Gear picked to replace other gear lists the stats of the other gear too, at 0: they are left out.
     """
     stats = {}
     for label, value in zip(labels, values):
         key = re.sub(r'[^A-Z]', '', str(label).upper())
         if any(key.startswith(end) for end in POPUP_ENDS):
             break
-        if key in STAT_LABELS:
+        if key in STAT_LABELS and int(value) > 0:
             stats[key] = int(value)
     return stats
 
