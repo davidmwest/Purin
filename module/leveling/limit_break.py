@@ -1,12 +1,14 @@
 """
-Limit break the ships of the fleets that the campaign uses, with copies of themselves.
+Limit break the ships of the fleets that the campaign uses, with the material the game's Quick Select picks.
 
 The user's rules for the F2P account, 2026-10-21: "Remember to limit break ships as needed!", "It's urgent to enhance
-ships and limit break them in the f2p account because its fleet strength is so low."
+ships and limit break them in the f2p account because its fleet strength is so low." Spending Bulins is fine.
 
 A limit break raises the level cap by 10, from 70 with none to 100 with three: Long Island stopped at 70.
-The game asks for levels 10, 30 and 70, and coins. Its Quick Select puts a copy in the material slot,
-and a Bulin when the dock has no copy: a ship is limit broken only as many times as the dock has copies of her.
+The game asks for levels 10, 30 and 70, and coins. Quick Select puts a copy of the ship in the material slot, or a
+Bulin, and its pick is confirmed as it is, not checked. The copies of a ship in the dock are how many tries she gets:
+a ship without a copy is not tried, and the material used up may still be a Bulin.
+An Elite or higher material asks "You've selected a Elite and above ship. Continue?", which is confirmed.
 
 Pages:
     in: Any page
@@ -126,21 +128,27 @@ class LimitBreak(LevelingFleet):
     def limit_break_once(self):
         """
         Returns:
-            bool: If a copy was used up
+            bool: If the material in the slot was used up, a copy or a Bulin
 
         Pages:
             in: limit break tab
             out: limit break tab
         """
-        # Quick Select puts a copy in the slot
+        # Quick Select puts a copy or a Bulin in the slot. An Elite one asks to continue first, and its popup
+        # covers the slot and Confirm: Laffey's copy was taken as no material, Confirm as not lit.
         timeout = Timer(SELECT_WAIT, count=6).start()
         clicked = False
         for _ in self.loop():
-            if not self.is_slot_empty():
-                break
             if timeout.reached():
                 logger.info('No material for a limit break')
                 return False
+            if self.handle_popup_confirm('LIMIT_BREAK_MATERIAL'):
+                timeout.reset()
+                continue
+            if not self.is_limit_break_tab():
+                continue
+            if not self.is_slot_empty():
+                break
             if not clicked:
                 self.device.click(QUICK_SELECT_BUTTON)
                 clicked = True
@@ -170,16 +178,16 @@ class LimitBreak(LevelingFleet):
                 if self.is_slot_empty():
                     if result:
                         return True
-                    # The copy is taken, the result comes after it
+                    # The material is taken, the result comes after it
                     if not emptied.started():
                         emptied.start()
                     if emptied.reached():
-                        logger.info('The copy was taken, no result shown')
+                        logger.info('The material was taken, no result shown')
                         return True
                     continue
                 emptied.clear()
                 if result and tap.reached():
-                    logger.warning('Back on the tab with the copy still in the slot')
+                    logger.warning('Back on the tab with the material still in the slot')
                     return True
                 if retry.reached():
                     # The tap on Confirm did not get through
@@ -211,7 +219,7 @@ class LimitBreak(LevelingFleet):
         cards = self.limit_break_cards(name)
         copies = len(cards) - 1
         if copies < 1:
-            logger.info(f'{name} has no copy in the dock')
+            logger.info(f'{name} has no copy in the dock, not tried')
             return 0
         keeper = cards[0]
         self.ship_info_enter(click_button=keeper.button, check_button=EQUIPMENT_OPEN, long_click=False,
@@ -229,6 +237,12 @@ class LimitBreak(LevelingFleet):
                 logger.info(f'{name} limit broken, {done} time(s)')
         else:
             logger.info(f'{name} has no limit break tab, fully limit broken or a research ship')
+        # A popup left open takes the tap on the back arrow
+        for _ in range(3):
+            self.device.screenshot()
+            if not self.handle_popup_cancel('LIMIT_BREAK_LEAVE'):
+                break
+            self.device.sleep(1)
         self.ui_back(check_button=DOCK_CHECK)
         return done
 

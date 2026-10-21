@@ -68,7 +68,7 @@
     },
     "LimitBreak": {
       "name": "Limit Break",
-      "help": "Limit breaks the ships of the fleets that the task Main uses, with copies of themselves from the dock, as many times as there are copies: the game asks levels 10, 30 and 70 and coins, each limit break raises the level cap by 10. A ship without a copy is left alone, so no Bulin is used. Runs every 3 hours"
+      "help": "Limit breaks the ships of the fleets that the task Main uses with the material the game's Quick Select picks, a copy of the ship or a Bulin, confirmed as it is: the game asks levels 10, 30 and 70 and coins, each limit break raises the level cap by 10. A ship is tried as many times as the dock has copies of her, not at all without a copy. Runs every 3 hours"
     },
     "GemsFarming": {
       "name": "Commission Farming",
