@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from scipy import signal
 
+from module.base.button import Button
 from module.base.timer import Timer
 from module.base.utils import *
 from module.combat.assets import *
@@ -16,6 +17,7 @@ from module.exception import GameStuckError, OilMaxed, RequestHumanTakeover
 from module.handler.info_handler import InfoHandler
 from module.logger import logger
 from module.map.map_grids import SelectedGrids
+from module.ocr.ocr import DigitCounter
 from module.retire.assets import DOCK_CHECK
 from module.ui.assets import BACK_ARROW, REWARD_GOTO_COMMISSION
 from module.ui.page import page_commission, page_reward
@@ -80,6 +82,37 @@ def requirement_unmet(image, top):
 
 # Commissions tried in a run at most, those that can not start included
 COMMISSION_TRIES = 10
+# "Available Fleet 2/3" on top of the commission list: fleets free for a commission, of all. A young account has 3,
+# not the 4 the slots are counted to, and started commissions over and over with its 3 busy.
+COMMISSION_FLEET_AREA = (1040, 14, 1150, 44)
+OCR_COMMISSION_FLEET = DigitCounter(
+    Button(area=COMMISSION_FLEET_AREA, color=(), button=COMMISSION_FLEET_AREA, name='COMMISSION_FLEET'),
+    letter=(255, 255, 255), threshold=128, name='COMMISSION_FLEET')
+# Accounts have up to this many fleets for commissions, more is a misread
+COMMISSION_FLEET_MAX = 6
+
+
+def commission_fleet_free(image):
+    """
+    Args:
+        image (np.ndarray): Commission list
+
+    Returns:
+        int | None: Fleets free for a commission, None if the counter is not read
+    """
+    free, _, total = OCR_COMMISSION_FLEET.ocr(image)
+    if not 0 < total <= COMMISSION_FLEET_MAX or not 0 <= free <= total:
+        logger.warning(f'Commission fleets not read: {free}/{total}')
+        return None
+    return free
+
+
+def commission_kind(comm):
+    """
+    Returns:
+        tuple: Genre and duration of a commission, those of a kind ask for the same ships
+    """
+    return getattr(comm, 'genre', None), str(getattr(comm, 'duration', None))
 
 
 def commission_candidates(daily_choose, urgent_choose, comm_choose):
@@ -90,10 +123,11 @@ def commission_candidates(daily_choose, urgent_choose, comm_choose):
         comm_choose (SelectedGrids): Every commission the filter takes, in its order, with 'shortest' and the like
 
     Returns:
-        list[Commission]: The chosen ones first, daily then urgent, then the others of the filter
+        list[Commission]: Commissions in the order of the filter, the chosen ones are its first.
+            Daily ones went before urgent ones, an urgent cube commission waited behind daily resource ones.
     """
     out = []
-    for comm in list(daily_choose) + list(urgent_choose) + list(comm_choose):
+    for comm in list(comm_choose) + list(daily_choose) + list(urgent_choose):
         if isinstance(comm, str) or any(comm == other for other in out):
             continue
         out.append(comm)
@@ -183,6 +217,11 @@ class RewardCommission(UI, InfoHandler):
         running_count = int(
             np.sum([1 for c in total if c.status == 'running']))
         logger.attr('Running', f'{running_count}/{self.max_commission}')
+        free = self.max_commission - running_count
+        fleet_free = getattr(self, 'fleet_free', None)
+        if fleet_free is not None and fleet_free < free:
+            logger.info(f'Fleets free for commissions: {fleet_free}')
+            free = fleet_free
 
         # Load filter string
         preset = self.config.Commission_PresetFilter
@@ -208,7 +247,7 @@ class RewardCommission(UI, InfoHandler):
 
         # Add shortest
         no_shortest = run.delete(SelectedGrids(['shortest']))
-        if no_shortest.count + running_count < self.max_commission:
+        if no_shortest.count < free:
             if daily.count:
                 logger.info('Not enough commissions to run, add shortest daily commissions')
                 COMMISSION_FILTER.load(SHORTEST_FILTER)
@@ -220,11 +259,11 @@ class RewardCommission(UI, InfoHandler):
                 logger.info('Not enough commissions to run')
 
         self.comm_choose = run
-        if running_count >= self.max_commission:
+        if free <= 0:
             return SelectedGrids([]), SelectedGrids([])
 
         # Separate daily and urgent
-        run = run[:self.max_commission - running_count]
+        run = run[:free]
         daily_choose = run.intersect_by_eq(daily)
         urgent_choose = run.intersect_by_eq(urgent)
         if daily_choose:
@@ -332,6 +371,7 @@ class RewardCommission(UI, InfoHandler):
         logger.hr('Commission scan', level=1)
         # Urgent list is lazy loaded. Check it first for a force update.
         self._commission_ensure_mode('urgent')
+        self.fleet_free = commission_fleet_free(self.device.image)
 
         logger.hr('Scan daily', level=2)
         self._commission_ensure_mode('daily')
@@ -398,6 +438,9 @@ class RewardCommission(UI, InfoHandler):
         self.interval_clear(COMMISSION_START)
         comm_timer = Timer(7)
         count = 0
+        # START tapped, and if it was lit then
+        start_clicked = False
+        start_lit = False
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -406,6 +449,18 @@ class RewardCommission(UI, InfoHandler):
 
             # End
             if self.info_bar_count():
+                if not start_clicked:
+                    # An info bar before START is no start
+                    continue
+                if start_lit:
+                    break
+                # START tapped while it did not look lit: the game took it unless its requirements are still red
+                self.device.sleep(1.5)
+                self.device.screenshot()
+                if self.appear(COMMISSION_ADVICE, offset=(5, 20)) \
+                        and requirement_unmet(self.device.image, COMMISSION_ADVICE.button[1]):
+                    logger.warning(f'Requirements of commission {comm} are not met, skip it')
+                    return False
                 break
             if count >= 3:
                 # Restart game and handle commission recommend bug.
@@ -417,6 +472,8 @@ class RewardCommission(UI, InfoHandler):
             # Click
             if self.match_template_color(COMMISSION_START, offset=(5, 20), interval=7):
                 self.device.click(COMMISSION_START)
+                start_clicked = True
+                start_lit = True
                 self.interval_reset(COMMISSION_ADVICE)
                 comm_timer.reset()
                 continue
@@ -432,9 +489,22 @@ class RewardCommission(UI, InfoHandler):
                 continue
             # Check if is the right commission
             if self.appear(COMMISSION_ADVICE, offset=(5, 20), interval=7):
-                # Recommended already, and still a requirement no ship can meet, START stays grey
-                if count and requirement_unmet(self.device.image, COMMISSION_ADVICE.button[1]):
-                    logger.warning(f'Requirements of commission {comm} are not met, skip it')
+                if count and not start_clicked:
+                    # Recommended already and START not lit: a requirement no free ship meets, like "Have at least
+                    # 1 lv. 10 ship." when Recommend could only add locked ships of level 1
+                    if requirement_unmet(self.device.image, COMMISSION_ADVICE.button[1]):
+                        logger.warning(f'Requirements of commission {comm} are not met, skip it')
+                        return False
+                    # Requirements met and START not recognized, the game may still take it: tapped once
+                    logger.info(f'START of commission {comm} is not lit after Recommend, tapped anyway')
+                    self.device.click(COMMISSION_START)
+                    start_clicked = True
+                    self.interval_reset(COMMISSION_ADVICE)
+                    comm_timer.reset()
+                    continue
+                if count and start_clicked:
+                    # START tapped and the panel still open, no info bar
+                    logger.warning(f'Commission {comm} did not start, START was tapped')
                     return False
                 area = (0, 0, image_size(self.device.image)[0], COMMISSION_ADVICE.button[1])
                 current = self.commission_detect(area=area)
@@ -537,9 +607,15 @@ class RewardCommission(UI, InfoHandler):
         slots = self.daily_choose.count + self.urgent_choose.count
         started = 0
         tries = 0
+        # Commissions of a kind and duration that did not start: the others of it ask for the same.
+        # OCR reads a name a little differently from a scan to an other, the same commission was tried 3 times.
+        failed = set()
         for comm in commission_candidates(self.daily_choose, self.urgent_choose, self.comm_choose):
             if started >= slots or tries >= COMMISSION_TRIES:
                 break
+            kind = commission_kind(comm)
+            if kind in failed:
+                continue
             tries += 1
             is_urgent = bool(self.urgent.intersect_by_eq(SelectedGrids([comm])).count)
             self._commission_ensure_mode('urgent' if is_urgent else 'daily')
@@ -550,6 +626,7 @@ class RewardCommission(UI, InfoHandler):
                 started += 1
             else:
                 logger.info(f'Commission {comm} did not start, the next one is tried')
+                failed.add(kind)
             self._commission_mode_reset()
         logger.info(f'Commissions started: {started} of {slots}, {tries} tried')
 

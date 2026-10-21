@@ -22,6 +22,42 @@ COMMISSION_FILTER = Filter(
 )
 
 
+# Wisdom Cube among the rewards of a commission, like the "May Find" of a Daily Resource Extraction III.
+# Cut from a 2560x1440 screen brought to 1280x720: a cube scores 0.97-1.00 there, other rewards 0.54 at most.
+REWARD_CUBE = './assets/commission/reward_cube.png'
+# Rewards right of the name and the duration, from the white line under a commission
+REWARD_AREA = (615, -110, 1165, -8)
+REWARD_CUBE_SIMILARITY = 0.8
+# Genres a cube among the rewards does not change
+REWARD_CUBE_KEEP = ('cube', 'event')
+_reward_cube = None
+
+
+def reward_cube_template():
+    global _reward_cube
+    if _reward_cube is None:
+        _reward_cube = cv2.cvtColor(cv2.imread(REWARD_CUBE), cv2.COLOR_BGR2RGB)
+    return _reward_cube
+
+
+def has_reward_cube(image, y):
+    """
+    Args:
+        image (np.ndarray): Screenshot of the commission list
+        y (int): White line under a commission
+
+    Returns:
+        bool: If the commission may give Wisdom Cubes
+    """
+    template = reward_cube_template()
+    x1, y1, x2, y2 = REWARD_AREA
+    region = crop(image, (x1, y + y1, x2, y + y2), copy=False)
+    if region.shape[0] < template.shape[0] or region.shape[1] < template.shape[1]:
+        return False
+    result = cv2.matchTemplate(region, template, cv2.TM_CCOEFF_NORMED)
+    return float(cv2.minMaxLoc(result)[1]) > REWARD_CUBE_SIMILARITY
+
+
 def crop_suffix_image(image, area):
     """
     Args:
@@ -113,6 +149,9 @@ class Commission:
         self.image = image
         self.valid = True
         self.commission_parse()
+        # The filter sees only names: every Daily Resource Extraction is "resource", the one of them that may give cubes
+        # among them
+        self.cube = has_reward_cube(image, y)
 
         if not self.duration.total_seconds():
             self.valid = False
@@ -125,6 +164,8 @@ class Commission:
         self.duration_hm = 'unknown'
         if self.valid:
             self.category_str, self.genre_str = self.genre.split('_', 1)
+            if self.cube and self.genre_str not in REWARD_CUBE_KEEP:
+                self.genre_str = 'cube'
             self.duration_hour = str(int(self.duration.total_seconds() / 36) / 100).strip('.0')
             self.duration_hm = str(self.duration).rsplit(':', 1)[0]
 
@@ -139,6 +180,8 @@ class Commission:
         result = ocr.ocr(self.image).upper()
         # DALY RESOURCE EXTRACTION -> DAILY RESOURCE EXTRACTION
         result = result.replace('DALY', 'DAILY')
+        # DAILY RESOURCE EXTRATION III, the Wisdom Cube one was left out as a name of no genre
+        result = re.sub(r'RESOURCE EXTR\w*', 'RESOURCE EXTRACTION', result)
         result = result.replace('NVB', 'NYB')
         # PYEIN PROTECTION COMMISSION I
         result = result.replace('PYEIN', 'VEIN').replace('YEIN', 'VEIN')
@@ -327,6 +370,8 @@ class Commission:
         info = {'Genre': self.genre, 'Status': self.status, 'Duration': self.duration}
         if self.expire:
             info['Expire'] = self.expire
+        if self.cube:
+            info['Reward'] = 'cube'
         if self.repeat_count > 1:
             info['Repeat'] = self.repeat_count
         info = ', '.join([f'{k}: {v}' for k, v in info.items()])
@@ -344,6 +389,9 @@ class Commission:
             return False
         threshold = timedelta(seconds=120)
         if not self.valid or not other.valid:
+            return False
+        # Two Daily Resource Extraction III, only one of them may give cubes
+        if self.cube != other.cube:
             return False
         if self.genre != other.genre or self.status != other.status:
             return False

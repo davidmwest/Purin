@@ -68,3 +68,67 @@ def test_commissions_that_can_not_start_give_way_to_the_next_ones():
     comm_choose = SelectedGrids([iii, ii, gear, 'shortest', Comm('Daily Resource Extraction I')])
 
     assert commission_candidates(daily_choose, urgent_choose, comm_choose) == [iii, ii, gear, i]
+
+
+def test_an_urgent_cube_commission_goes_before_daily_ones():
+    # The filter put cubes first, the chosen daily ones were still started before an urgent one
+    from module.commission.commission import commission_candidates
+    from module.map.map_grids import SelectedGrids
+
+    class Comm:
+        def __init__(self, name):
+            self.name = name
+
+        def __eq__(self, other):
+            return isinstance(other, Comm) and other.name == self.name
+
+        def __repr__(self):
+            return self.name
+
+    rescue, iii, ii = Comm('Merchant Rescue'), Comm('Daily Resource Extraction III'), Comm('Daily Resource Extraction II')
+    daily_choose = SelectedGrids([iii, ii])
+    urgent_choose = SelectedGrids([rescue])
+    comm_choose = SelectedGrids([rescue, iii, ii])
+
+    assert commission_candidates(daily_choose, urgent_choose, comm_choose) == [rescue, iii, ii]
+
+
+def list_screen():
+    """
+    The daily list of the F2P account, 2560x1440 brought to 1280x720, black but for the rewards of its 4 commissions:
+    Daily Resource Extraction II (may find a tech box), Self Training I, III (may find a Wisdom Cube), IV (a drill).
+    White lines under them at y = 205, 351, 497, 643.
+    """
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    part = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'commission_list_rewards.png')), cv2.COLOR_BGR2RGB)
+    image[90:90 + part.shape[0], 610:610 + part.shape[1]] = part
+    return image
+
+
+def test_the_daily_resource_extraction_that_may_give_cubes():
+    from module.commission.project import has_reward_cube
+
+    image = list_screen()
+    assert [has_reward_cube(image, y) for y in (205, 351, 497, 643)] == [False, False, True, False]
+
+
+def test_no_cube_on_an_empty_screen():
+    from module.commission.project import has_reward_cube
+
+    assert has_reward_cube(np.zeros((720, 1280, 3), dtype=np.uint8), 497) is False
+
+
+def test_fleets_free_for_commissions():
+    # "Available Fleet 2/3": the young account has 3 fleets for commissions, not 4
+    from module.commission.commission import commission_fleet_free
+
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    part = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'commission_fleet_2_of_3.png')), cv2.COLOR_BGR2RGB)
+    image[0:part.shape[0], 1000:1000 + part.shape[1]] = part
+    assert commission_fleet_free(image) == 2
+
+
+def test_fleets_not_read_leave_the_count_of_slots():
+    from module.commission.commission import commission_fleet_free
+
+    assert commission_fleet_free(np.zeros((720, 1280, 3), dtype=np.uint8)) is None
