@@ -22,12 +22,12 @@ def card(level=1, rarity='common', fleet=0, status='free'):
     return SimpleNamespace(level=level, rarity=rarity, fleet=fleet, status=status)
 
 
-def census(*cards):
+def census(*cards, matcher=None):
     """
     Args:
         cards: Names, or (name, locked, fleet)
     """
-    out = Census()
+    out = Census(matcher)
     for item in cards:
         name, locked, fleet = (item, False, 0) if isinstance(item, str) else item
         out.add(name, locked=locked, fleet=fleet)
@@ -161,3 +161,15 @@ def test_no_popup_no_tap():
         controller, FleetEnhance = popup_controller(screen('popup_elite_material.png', 300, 160), cancel_found=False)
         assert FleetEnhance.handle_popup_confirm_loose(controller, 'LIMIT_BREAK_MATERIAL') is False
         controller.device.click.assert_not_called()
+
+
+def test_names_read_their_own_way_are_the_same_ship(matcher):
+    # The census read ".Beaglem" four times, the picker "Beagle": no card of that name, no extra
+    dock = census('.Beaglem', '.Beaglem', '.Beaglem', '.Beaglem', matcher=matcher)
+    assert dock.extras('Beagle') == 4
+    assert material_fits('Beagle', card(), dock, matcher) == ''
+    dock = census('_Raleighm', matcher=matcher)
+    assert material_fits('R aleigh', card(), dock, matcher) == ''
+    # Kept the same way: a locked McCall read "__McCall", her copies "McC all"
+    dock = census(('__McCall', True, 0), 'McC all', 'McCall', matcher=matcher)
+    assert material_fits('McC all', card(), dock, matcher).startswith('kept to limit break')

@@ -58,6 +58,9 @@ MATERIAL_RARITY = ('common', 'rare', 'elite')
 MATERIAL_SLOTS = 12
 # Copies a ship needs to be limit broken fully from none: 1, 1, then 2
 MLB_COPIES = 4
+# Rows found by their gap start 2 below the cards of CARD_GRIDS: the name read there took a letter of the frame,
+# ".Beaglem" for the Beagle the picker read
+CENSUS_NAME_SHIFT = -2
 # Seconds for each step
 STEP_TIMEOUT = 20
 
@@ -72,7 +75,13 @@ class Census:
     The cards of the whole dock by name, see the docstring of this module.
     """
 
-    def __init__(self):
+    def __init__(self, matcher=None):
+        """
+        Args:
+            matcher (ShipMatcher): Names read are taken as the ship they are closest to, the census and the picker
+                read a name each their way. None to keep them as read.
+        """
+        self.matcher = matcher
         self.total = Counter()
         # Locked, or in a fleet: each keeps MLB_COPIES copies
         self.keepers = Counter()
@@ -81,8 +90,12 @@ class Census:
         # Picked as material during this run
         self.taken = Counter()
 
+    def key(self, read):
+        data = self.matcher.match(read) if self.matcher is not None and read else None
+        return name_key(data.name) if data is not None else name_key(read)
+
     def add(self, read, locked=False, fleet=0):
-        key = name_key(read)
+        key = self.key(read)
         self.total[key] += 1
         if locked or fleet:
             self.keepers[key] += 1
@@ -94,11 +107,11 @@ class Census:
         Returns:
             int: Cards of her name that can still be material
         """
-        key = name_key(read)
+        key = self.key(read)
         return max(0, self.free[key] - MLB_COPIES * self.keepers[key] - self.taken[key])
 
     def take(self, read):
-        self.taken[name_key(read)] += 1
+        self.taken[self.key(read)] += 1
 
     def __len__(self):
         return sum(self.total.values())
@@ -115,7 +128,7 @@ def material_fits(read, ship, census, matcher):
     Returns:
         str: Why she is no material, '' if she is one
     """
-    key = name_key(read)
+    key = census.key(read)
     if not key:
         return 'name not read'
     if ship.level > MATERIAL_LEVEL_MAX:
@@ -208,7 +221,7 @@ class FleetEnhance(LevelingFleet):
             return False
         return True
 
-    def enhance_census(self):
+    def enhance_census(self, matcher=None):
         """
         Returns:
             Census: Cards of each name in the whole dock
@@ -222,15 +235,15 @@ class FleetEnhance(LevelingFleet):
         self.ui_ensure(page_dock)
         self.dock_favourite_set(False, wait_loading=False)
         self.dock_filter_set(sort='level', index='all', faction='all', rarity='all', extra='no_limit')
-        census = Census()
+        census = Census(matcher)
         for card, fleet in DockWalker(self).cards():
             x1, y1, x2, y2 = CARD_NAME
-            left = CARD_LEFTS[card.column]
-            button = area_button((left + x1, card.top + y1, left + x2, card.top + y2), 'CENSUS_NAME')
+            left, top = CARD_LEFTS[card.column], card.top + CENSUS_NAME_SHIFT
+            button = area_button((left + x1, top + y1, left + x2, top + y2), 'CENSUS_NAME')
             read = Ocr(button, lang='cnocr', letter=(255, 255, 255), threshold=128, name='CENSUS_NAME').ocr(
                 self.device.image)
             census.add(str(read), locked=card.locked, fleet=fleet)
-        extras = sum(census.extras(key) for key in census.total)
+        extras = sum(max(0, census.free[key] - MLB_COPIES * census.keepers[key]) for key in census.total)
         logger.info(f'Enhance census: {len(census)} cards, {sum(census.keepers.values())} locked or in a fleet, '
                     f'{extras} extras')
         return census
@@ -391,7 +404,7 @@ class FleetEnhance(LevelingFleet):
         """
         if not members:
             return 0
-        census = self.enhance_census()
+        census = self.enhance_census(matcher)
         used = 0
         for slot, name in members:
             used += self.enhance_ship(slot, name, census, matcher)
