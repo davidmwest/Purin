@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 import module.config.server as server
-from module.leveling.fleet import LevelingFleet, is_input_shown, is_search_open, name_fits, search_term
+from module.leveling.fleet import LevelingFleet, card_level, is_input_shown, is_search_open, name_fits, \
+    search_term
 from module.leveling.plan import ShipMatcher, Target, load_ship_data
 from module.retire.dock import CARD_GRIDS
 
@@ -146,6 +147,12 @@ def test_search_term(name, term):
     ('Cooper', 'Cooper', True),
     ('London (Ret..', 'London (Retrofit)', True),
     ('Vittorio Cu..', 'Vittorio Cuniberti', True),
+    # Its dots read as a letter, one, or a colon, 2026-10-21
+    ('Vittorio Cu.x', 'Vittorio Cuniberti', True),
+    ('London (Ret.', 'London (Retrofit)', True),
+    ('London (Ret:', 'London (Retrofit)', True),
+    ('Vampire MET.x', 'Vampire', False),
+    ('St. Louis', 'St. Louis', True),
     ('Hasty', 'Cooper', False),
     ('Vampire MET..', 'Vampire', False),
     ('Vampire MET..', 'Vampire META', True),
@@ -186,3 +193,80 @@ def test_two_ships_as_close_are_no_match():
     assert matcher.match_score('Ning Hai(Retrofit') == (matcher.ships['Ning Hai (Retrofit)'], 1.)
     ship, score = matcher.match_score('na Astar Deviluk')
     assert ship.name == 'Nana Astar Deviluke' and 0.8 < score < 1
+
+
+@pytest.mark.parametrize('read, level', [
+    (73, 73), (125, 125), (1, 1),
+    # Dmitri Donskoi at 101, 2026-10-21: a stray digit
+    (1011, 101), (1250, 125), (9999, 99),
+    (0, 0), (None, 0),
+])
+def test_level_on_a_card(read, level):
+    assert card_level(read) == level
+
+
+class Card:
+    def __init__(self, level):
+        self.level = level
+        self.button = CARD_GRIDS[(1, 0)]
+
+
+def dock_with(monkeypatch, cards):
+    """
+    The dock after a search, its cards as (name read, level read). ShipScanner and the OCR of names give them.
+    """
+    limits = {}
+
+    class Scanner:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def disable(self, *args):
+            pass
+
+        def set_limitation(self, **kwargs):
+            limits.update(kwargs)
+
+        def scan(self, image, output=False):
+            # The scanner drops cards out of its limits of level
+            ships = [Card(level) for _, level in cards]
+            if limits.get('level', ()) is not None:
+                ships = [ship for ship in ships if 1 <= ship.level <= 125]
+            return ships
+
+    class Names:
+        def __init__(self, buttons, **kwargs):
+            self.buttons = buttons
+
+        def ocr(self, image):
+            names = [name for name, level in cards if limits.get('level', ()) is None or 1 <= level <= 125]
+            return names[0] if len(names) == 1 else names
+
+    monkeypatch.setattr('module.leveling.fleet.ShipScanner', Scanner)
+    monkeypatch.setattr('module.leveling.fleet.Ocr', Names)
+    return fleet_page(np.zeros((720, 1280, 3), dtype=np.uint8))
+
+
+def test_a_level_read_with_a_stray_digit_is_her_level(monkeypatch):
+    # Dmitri Donskoi at 101, read 1011, the dock read had 100
+    fleet = dock_with(monkeypatch, [('Dmitri Donsk..', 1011)])
+
+    ship = fleet.dock_find(target('Dmitri Donskoi', 100))
+    assert ship is not None and ship.level == 101
+    # Still below the dock read, an other copy
+    assert dock_with(monkeypatch, [('Dmitri Donsk..', 1011)]).dock_find(target('Dmitri Donskoi', 110)) is None
+
+
+def test_a_name_cut_and_read_with_a_letter_is_found(monkeypatch):
+    # Vittorio Cuniberti at 108, the dock read had 105
+    fleet = dock_with(monkeypatch, [('Vittorio Cu.x', 108)])
+
+    ship = fleet.dock_find(target('Vittorio Cuniberti', 105))
+    assert ship is not None and ship.level == 108
+
+
+def test_a_card_whose_level_can_not_be_read_is_not_taken(monkeypatch):
+    # It could be an other copy of her
+    fleet = dock_with(monkeypatch, [('Cooper', 0)])
+
+    assert fleet.dock_find(target('Cooper', 73)) is None

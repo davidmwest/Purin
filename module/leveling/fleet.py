@@ -19,7 +19,7 @@ from module.base.button import Button
 from module.base.timer import Timer
 from module.equipment.assets import EQUIPMENT_OPEN, FLEET_DETAIL, FLEET_DETAIL_CHECK
 from module.formation.formation import Formation
-from module.leveling.plan import FARM_LEVEL_MAX, RETROFIT, ShipMatcher, Slot, load_ship_data, name_key
+from module.leveling.plan import FARM_LEVEL_MAX, LEVEL_MAX, RETROFIT, ShipMatcher, Slot, load_ship_data, name_key
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr
 from module.retire.assets import DOCK_CHECK
@@ -140,9 +140,13 @@ def card_name_area(button):
     return x1 + dx1, y1 + dy1, x1 + dx2, y1 + dy2
 
 
+# What the OCR reads for the ".." of a name cut on a card: "..", ".", ".x", ".u", ":", "…"
+CUT_MARK = re.compile(r'\s*[.:\u2026]+[A-Za-z]?$')
+
+
 def name_fits(read, name):
     """
-    A dock card cuts a long name, "London (Ret..".
+    A dock card cuts a long name, "London (Ret..", its dots read as ".x" at times: "Vittorio Cu.x", 2026-10-21.
 
     Args:
         read (str): Name read on a card
@@ -151,11 +155,30 @@ def name_fits(read, name):
     Returns:
         bool:
     """
+    read = CUT_MARK.sub('', str(read).strip())
     read, name = name_key(read), name_key(name)
     if len(read) < 3:
         return False
     # "Vampire MET.." is not Vampire
     return name.startswith(read)
+
+
+def card_level(level):
+    """
+    Args:
+        level (int): Level read on a dock card
+
+    Returns:
+        int: The level. A read over LEVEL_MAX is the level and a stray digit: 1011 for Dmitri Donskoi at 101,
+            2026-10-21, its first digits that make a level are taken. 0 if it can not be read.
+    """
+    if not level or level < 1:
+        return 0
+    text = str(int(level))
+    while len(text) > 1 and int(text) > LEVEL_MAX:
+        text = text[:-1]
+    level = int(text)
+    return level if 1 <= level <= LEVEL_MAX else 0
 
 
 class LevelingFleet(Formation):
@@ -337,6 +360,8 @@ class LevelingFleet(Formation):
         """
         scanner = ShipScanner(fleet=0, status='free')
         scanner.disable('emotion', 'rarity')
+        # A level read out of range is kept, see card_level()
+        scanner.set_limitation(level=None)
         ships = scanner.scan(self.device.image, output=False)
         if not ships:
             logger.info(f'No free ship found for {target.ship}')
@@ -349,9 +374,19 @@ class LevelingFleet(Formation):
             names = [names]
         fits = [ship for ship, read in zip(ships, names) if name_fits(read, target.ship)]
         for ship in fits:
+            level = card_level(ship.level)
+            if level != ship.level:
+                logger.info(f'Level of a card of {target.ship} read {ship.level}, '
+                            + (f'taken as {level}' if level else 'not a level'))
+                ship.level = level
+        for ship in fits:
             if ship.level == target.level:
                 return ship
         if len(fits) == 1:
+            # A level not read can not tell her from an other copy: not taken, the next ship is tried
+            if not fits[0].level:
+                logger.warning(f'{target.ship} found, her level can not be read: not taken')
+                return None
             # A ship goes up in level after the dock read, never down. One below it is an other copy, a level 1
             # duplicate when the copy looked for is on a commission: taken, it came in as the geared level 110 one.
             if fits[0].level < target.level:
