@@ -19,7 +19,8 @@ import cv2
 from module.base.timer import Timer
 from module.base.utils import crop, load_image
 from module.equipment.assets import FLEET_DETAIL_CHECK
-from module.leveling.fleet import LevelingFleet, area_button, card_name_area, name_fits, search_term
+from module.leveling.enhance import FleetEnhance
+from module.leveling.fleet import area_button, card_name_area, name_fits, search_term
 from module.leveling.plan import ShipMatcher, load_ship_data
 from module.logger import logger
 from module.ocr.ocr import Ocr
@@ -47,8 +48,6 @@ RESULT = './assets/leveling/limit_break_result.png'
 RESULT_AREA = (660, 110, 1095, 265)
 # Seconds on the tab with the slot emptied and no result shown, before the limit break is taken as done
 RESULT_WAIT = 5
-# Her name on top of the detail page, white letters
-DETAIL_NAME = area_button((230, 86, 420, 118), 'LIMIT_BREAK_NAME')
 # A ship is limit broken 3 times at most
 LIMIT_BREAK_MAX = 3
 # Seconds for Quick Select to fill the slot, and for a limit break to come back to the tab
@@ -74,7 +73,7 @@ def confirm_orange(image):
     return r - b > CONFIRM_ORANGE
 
 
-class LimitBreak(LevelingFleet):
+class LimitBreak(FleetEnhance):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._templates = {}
@@ -143,7 +142,7 @@ class LimitBreak(LevelingFleet):
             if timeout.reached():
                 logger.info('No material for a limit break')
                 return False
-            if self.handle_popup_confirm('LIMIT_BREAK_MATERIAL'):
+            if self.handle_popup_confirm_loose('LIMIT_BREAK_MATERIAL'):
                 timeout.reset()
                 continue
             if not self.is_limit_break_tab():
@@ -173,7 +172,7 @@ class LimitBreak(LevelingFleet):
                     self.device.click(SAFE_TAP)
                     tap.reset()
                 continue
-            if self.handle_popup_confirm('LIMIT_BREAK'):
+            if self.handle_popup_confirm_loose('LIMIT_BREAK'):
                 continue
             if self.is_limit_break_tab():
                 if self.is_slot_empty():
@@ -199,26 +198,6 @@ class LimitBreak(LevelingFleet):
             if tap.reached():
                 self.device.click(SAFE_TAP)
                 tap.reset()
-
-    def limit_break_name_fits(self, name, matcher):
-        """
-        Args:
-            name (str): Name of the ship of the slot, on the wiki
-            matcher (ShipMatcher):
-
-        Returns:
-            bool: False if the detail page shows an other ship, True if hers or not read
-
-        Pages:
-            in: detail page of a ship
-        """
-        read = Ocr(DETAIL_NAME, lang='cnocr', letter=(255, 255, 255), threshold=128, name='LIMIT_BREAK_NAME').ocr(
-            self.device.image)
-        data = matcher.match(str(read)) if read else None
-        if data is not None and data.name != name:
-            logger.warning(f'The detail page shows {data.name}, not {name}')
-            return False
-        return True
 
     def limit_break_ship(self, slot, name, matcher):
         """
@@ -254,7 +233,7 @@ class LimitBreak(LevelingFleet):
         self.device.sleep(1)
         self.device.screenshot()
         done = 0
-        if not self.limit_break_name_fits(name, matcher):
+        if not self.detail_name_fits(name, matcher):
             pass
         elif self.is_limit_break_tab():
             for _ in range(min(copies, LIMIT_BREAK_MAX)):
@@ -267,7 +246,7 @@ class LimitBreak(LevelingFleet):
         # A popup left open takes the tap on the back arrow
         for _ in range(3):
             self.device.screenshot()
-            if not self.handle_popup_cancel('LIMIT_BREAK_LEAVE'):
+            if not self.handle_popup_cancel_loose('LIMIT_BREAK_LEAVE'):
                 break
             self.device.sleep(1)
         self.ui_back(check_button=FLEET_DETAIL_CHECK)
@@ -294,7 +273,9 @@ class LimitBreak(LevelingFleet):
         if members:
             for slot, name in members:
                 total += self.limit_break_ship(slot, name, matcher)
-            self.ui_ensure(page_fleet)
-            self.fleet_formation_ensure()
         logger.info(f'Limit breaks done: {total}')
+        # Then enhancement, with ships no limit break needs: the copies just used are gone from the census
+        self.enhance_fleet(members, matcher)
+        self.ui_ensure(page_fleet)
+        self.fleet_formation_ensure()
         self.config.task_delay(success=True)

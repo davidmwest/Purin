@@ -84,8 +84,9 @@ def test_the_ship_of_the_fleet_is_limit_broken_not_a_higher_copy():
         fleet_read_slots=Mock(return_value=[slot]),
         fleet_formation_ensure=Mock(), limit_break_cards=Mock(return_value=[other_ship, fleet_ship]),
         fleet_ship_enter=Mock(), ship_info_enter=Mock(), ship_side_navbar_ensure=Mock(),
-        limit_break_name_fits=Mock(return_value=True), is_limit_break_tab=Mock(return_value=True),
-        limit_break_once=Mock(side_effect=[True, False]), handle_popup_cancel=Mock(return_value=False), ui_back=Mock(),
+        detail_name_fits=Mock(return_value=True), is_limit_break_tab=Mock(return_value=True),
+        limit_break_once=Mock(side_effect=[True, False]), handle_popup_cancel_loose=Mock(return_value=False), ui_back=Mock(),
+        enhance_fleet=Mock(return_value=0),
     )
     controller.limit_break_ship = lambda *args: LimitBreak.limit_break_ship(controller, *args)
 
@@ -99,15 +100,15 @@ def test_the_ship_of_the_fleet_is_limit_broken_not_a_higher_copy():
 def test_an_other_ship_on_the_detail_page_is_not_limit_broken():
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
-    from module.leveling.limit_break import LimitBreak
+    from module.leveling.enhance import FleetEnhance
     from module.leveling.plan import ShipMatcher, load_ship_data
     matcher = ShipMatcher(load_ship_data())
     controller = SimpleNamespace(device=SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8)))
-    with patch('module.leveling.limit_break.Ocr') as ocr:
+    with patch('module.leveling.enhance.Ocr') as ocr:
         ocr.return_value.ocr.return_value = 'Hammann'
-        assert LimitBreak.limit_break_name_fits(controller, 'Cooper', matcher) is False
+        assert FleetEnhance.detail_name_fits(controller, 'Cooper', matcher) is False
         ocr.return_value.ocr.return_value = 'Cooper'
-        assert LimitBreak.limit_break_name_fits(controller, 'Cooper', matcher) is True
+        assert FleetEnhance.detail_name_fits(controller, 'Cooper', matcher) is True
         # Not read, the ship of the slot is trusted
         ocr.return_value.ocr.return_value = ''
-        assert LimitBreak.limit_break_name_fits(controller, 'Cooper', matcher) is True
+        assert FleetEnhance.detail_name_fits(controller, 'Cooper', matcher) is True
