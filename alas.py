@@ -944,9 +944,12 @@ class AzurLaneAutoScript:
                     if not self.wait_until(self.login_retry_at):
                         del_cached_property(self, 'config')
                         continue
-                    del_cached_property(self, 'config')
-                task = 'Restart'
+                # Taken like any task, the config bound to it: Restart puts itself off once logged in
                 self.config.task_call('Restart')
+                del_cached_property(self, 'config')
+                task = self.get_next_task()
+                if task != 'Restart':
+                    logger.warning(f'Restart is not the next task but `{task}`, it runs first')
             # Init device and change server
             try:
                 _ = self.device

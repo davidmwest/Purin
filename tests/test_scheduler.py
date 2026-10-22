@@ -345,10 +345,13 @@ class Looping(SimpleNamespace):
     """
 
     def __init__(self, tasks, results, offline=0):
-        tasks, results = list(tasks), list(results)
+        tasks, results, called = list(tasks), list(results), []
         self.ran, self.waits, self.offline = [], [], offline
 
         def get_next_task():
+            # A task called comes first, like Restart, first of all in priority
+            if called:
+                return called.pop(0)
             if not tasks:
                 raise StopLoop
             return tasks.pop(0)
@@ -359,7 +362,8 @@ class Looping(SimpleNamespace):
             self.ran.append(command)
             return results.pop(0)
 
-        config = SimpleNamespace(Emulator_Serial='', task_call=Mock(), task_delay=Mock(), Error_KeepRunning=True,
+        config = SimpleNamespace(Emulator_Serial='', task_call=Mock(side_effect=called.append), task_delay=Mock(),
+                                 Error_KeepRunning=True,
                                  Error_HandleError=True, Error_OnePushConfig='provider: null')
         super().__init__(
             config_name='f2p', config=config, stop_event=None, wait_while_paused=Mock(),
