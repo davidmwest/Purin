@@ -149,3 +149,28 @@ def test_a_stage_with_every_star_keeps_clear_mode(monkeypatch):
     assert switch.calls == ['on']
     assert handler.map_is_clear_mode is True
     assert handler.map_is_auto_search is True
+
+
+def settled(reads):
+    handler = FastForwardHandler.__new__(FastForwardHandler)
+    handler.device = SimpleNamespace(screenshot=lambda: None)
+    reads = iter(reads)
+    handler.map_read_stars = lambda: next(reads)
+    return FastForwardHandler.map_stars_settled(handler)
+
+
+def test_stars_still_lighting_up_are_read_again():
+    # 1-4 of the F2P account, 2026-10-22: star 3 alone as the map information opened
+    lit = (True, True, True)
+    assert settled([(False, False, True), (True, False, True), lit, lit]) == lit
+
+
+def test_stars_that_agree_at_once_are_kept():
+    stars = (True, False, True)
+    assert settled([stars, stars]) == stars
+
+
+def test_stars_that_never_settle_end_on_the_last_read(monkeypatch):
+    monkeypatch.setattr('module.handler.fast_forward.Timer', lambda *a, **k: SimpleNamespace(
+        start=lambda: SimpleNamespace(reached=lambda: True)))
+    assert settled([(True, False, False), (False, True, False)]) == (False, True, False)

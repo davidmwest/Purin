@@ -153,9 +153,7 @@ class FastForwardHandler(AutoSearchHandler):
             | INFO | [Map_info] 98%, star_1, star_2, star_3, clear, 3_star, green, fast_forward
         """
         self.map_clear_percentage = self.get_map_clear_percentage()
-        self.map_achieved_star_1 = self._is_map_star_active(MAP_STAR_1)
-        self.map_achieved_star_2 = self._is_map_star_active(MAP_STAR_2)
-        self.map_achieved_star_3 = self._is_map_star_active(MAP_STAR_3)
+        self.map_achieved_star_1, self.map_achieved_star_2, self.map_achieved_star_3 = self.map_stars_settled()
         self.map_is_100_percent_clear = self.map_clear_percentage > 0.95
         self.map_is_3_stars = self.map_achieved_star_1 and self.map_achieved_star_2 and self.map_achieved_star_3
         self.map_is_threat_safe = self.appear(MAP_GREEN, offset=(20, 20))
@@ -245,6 +243,37 @@ class FastForwardHandler(AutoSearchHandler):
 
     def _is_map_star_active(self, button):
         return self.image_color_count(button, color=(250, 232, 140), threshold=75, count=35)
+
+    def map_read_stars(self):
+        """
+        Returns:
+            tuple[bool, bool, bool]: Stars 1 to 3 lit on the screenshot
+        """
+        return tuple(bool(self._is_map_star_active(star)) for star in (MAP_STAR_1, MAP_STAR_2, MAP_STAR_3))
+
+    def map_stars_settled(self):
+        """
+        The stars light up as the map information opens. 1-4 of the F2P account read star 3 alone, 20 ms after the
+        clear percentage reached 99% (2026-10-22): a pass for stars would replay a stage that has them, or leave one
+        that does not. They are read again until two screenshots in a row agree, a second at most.
+
+        Returns:
+            tuple[bool, bool, bool]: Stars 1 to 3
+
+        Pages:
+            in: MAP_PREPARATION
+        """
+        stars = self.map_read_stars()
+        timeout = Timer(1, count=3).start()
+        while 1:
+            self.device.screenshot()
+            again = self.map_read_stars()
+            if again == stars:
+                return stars
+            logger.info(f'Stars read {stars}, then {again}')
+            stars = again
+            if timeout.reached():
+                return stars
 
     def handle_map_fleet_lock(self, enable=None):
         """
