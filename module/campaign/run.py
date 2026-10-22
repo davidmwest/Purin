@@ -7,6 +7,7 @@ from module.campaign.campaign_base import CampaignBase
 from module.campaign.campaign_event import CampaignEvent
 from module.campaign.campaign_ui import MODE_SWITCH_1
 from module.campaign.stage import StageNotFound, load_stage, stage_names
+from module.campaign.star_pass import STAR_RUNS_MAX, add_star_run
 from module.config.config import AzurLaneConfig
 from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import to_map_file_name, to_map_input_name
@@ -374,6 +375,25 @@ class CampaignRun(CampaignEvent):
         self.campaign.call_then_task()
         return True
 
+    def handle_star_runs_max(self):
+        """
+        A pass for 3 stars goes on to the next stage after STAR_RUNS_MAX runs of one, see module/campaign/star_pass.py.
+
+        Returns:
+            bool: If the stage changed
+        """
+        if self.config.StopCondition_MapAchievement != 'map_3_stars' or not self.config.StopCondition_StageIncrease:
+            return False
+        stage = to_map_input_name(self.config.Campaign_Name)
+        runs = add_star_run(self.config.config_name, stage)
+        logger.attr('Star_pass_runs', f'{stage} {runs}/{STAR_RUNS_MAX}')
+        if runs < STAR_RUNS_MAX:
+            return False
+        logger.hr('Star pass runs', level=2)
+        logger.warning(f'{stage} has no 3 stars after {runs} runs, the pass goes on to the next stage')
+        self.campaign.handle_map_stop()
+        return True
+
     def handle_stage_retreat(self):
         """
         With StageIncrease, a battle lost sends the task back to the stage before, to level the fleet for
@@ -540,6 +560,8 @@ class CampaignRun(CampaignEvent):
             if self.handle_end_on_loss():
                 break
             if self.handle_stage_retreat():
+                break
+            if self.handle_star_runs_max():
                 break
             # End
             if self.triggered_stop_condition(oil_check=False):
