@@ -121,3 +121,44 @@ def test_collect_taps_every_mission_then_stops():
     assert hb.handbook_collect() == 2
     collects = [c for c in clicks if abs(c[0] - 1108) <= 3]
     assert [c[1] for c in collects] == [175, 275]
+
+
+def test_a_collect_where_other_pages_had_one_is_taken():
+    # 2026-10-22: Rookie Missions and two Dev. Missions pages each had a Collect at the top, the third was left
+    dev = load('dev')
+    badge = dev[157 - 12:157 + 13, 1185 - 12:1185 + 13].copy()
+    blank = without_badges(dev, [b for b in find_badges(dev) if b[1] > 100])
+    state = {'page': 0, 'collected': set()}
+    pages = [145, 207, 269]
+
+    def screen():
+        image = blank.copy()
+        for i, y in enumerate(pages):
+            if i not in state['collected']:
+                image[y - 12:y + 13, 154 - 12:154 + 13] = badge
+        if state['page'] not in state['collected']:
+            image[157 - 12:157 + 13, 1185 - 12:1185 + 13] = badge
+        return image
+
+    def click(button):
+        x1, y1, x2, y2 = button.area
+        x, y = (x1 + x2) // 2, (y1 + y2) // 2
+        if abs(x - 1108) <= 3 and abs(y - 175) <= 3:
+            state['collected'].add(state['page'])
+        for i, top in enumerate(pages):
+            if abs(x - 199) <= 3 and abs(y - (top + 20)) <= 3:
+                state['page'] = i
+
+    device = SimpleNamespace(click=click, sleep=Mock(), swipe=Mock(), image=screen())
+
+    def screenshot():
+        device.image = screen()
+        return device.image
+
+    device.screenshot = screenshot
+    hb = handbook(device.image)
+    hb.device = device
+    hb.appear = Mock(return_value=False)
+
+    assert hb.handbook_collect() == 3
+    assert state['collected'] == {0, 1, 2}

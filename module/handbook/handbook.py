@@ -256,8 +256,14 @@ class Handbook(UI):
                 self.device.sleep(1)
                 self.handbook_close_reward()
             else:
-                # A page or a tab opened: its lists start from their top
-                swipes = {'missions': 0, 'pages': 0} if kind == 'tab' else {**swipes, 'missions': 0}
+                # A page or a tab opened: its lists start from their top, and its badges are new ones even where
+                # badges were before (2026-10-22, a third page with a Collect where two pages had one was left)
+                if kind == 'tab':
+                    swipes = {'missions': 0, 'pages': 0}
+                    taps = {k: v for k, v in taps.items() if k[0] == 'tab'}
+                else:
+                    swipes = {**swipes, 'missions': 0}
+                    taps = {k: v for k, v in taps.items() if k[0] in ('tab', 'page')}
                 self.device.sleep(1.5)
         return collected
 
