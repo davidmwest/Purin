@@ -557,8 +557,8 @@ p {
 }
 
 ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -568,23 +568,29 @@ p {
 ::-webkit-scrollbar-thumb {
     background-color: var(--p-scroll);
     border-radius: 10px;
-    border: 3px solid transparent;
+    border: 2px solid transparent;
     background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--p-faint);
 }
 
 /* Header */
 
 #pywebio-scope-header {
-    background-color: var(--p-surface);
+    background: linear-gradient(90deg, var(--p-rail-top) 0, var(--p-rail-top) 4.75rem, var(--p-surface) 4.75rem);
     border-bottom: 1px solid var(--p-border);
     box-shadow: none;
     min-height: 3.5rem;
     align-items: center;
+    grid-template-columns: 4.75rem auto auto 1fr !important;
+    column-gap: .75rem;
 }
 
 *[style*="--header-icon--"] {
     border-radius: 12px;
-    box-shadow: 0 0 0 2px var(--p-surface), 0 0 0 3px var(--p-border);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.14);
 }
 
 *[style*="--header-text--"] {
@@ -612,6 +618,10 @@ p {
     height: 1rem !important;
     border-width: .15em !important;
     color: var(--p-accent);
+}
+
+*[style*="--header-text--"] {
+    margin: auto 0 auto .25rem !important;
 }
 
 #pywebio-scope-header_title > p {
@@ -680,6 +690,7 @@ p {
 }
 
 #pywebio-scope-menu summary {
+    list-style: none;
     padding: .4rem .7rem;
     border-radius: 10px;
     color: var(--p-muted);
@@ -687,6 +698,28 @@ p {
     font-weight: 600;
     cursor: pointer;
     transition: background-color .12s ease, color .12s ease;
+}
+
+#pywebio-scope-menu summary::-webkit-details-marker {
+    display: none;
+}
+
+#pywebio-scope-menu summary::before {
+    content: "";
+    display: inline-block;
+    width: .38rem;
+    height: .38rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    margin: 0 .6rem .1rem .1rem;
+    opacity: .6;
+    transition: transform .15s ease;
+}
+
+#pywebio-scope-menu details[open] > summary::before {
+    transform: rotate(45deg);
+    margin-bottom: .2rem;
 }
 
 #pywebio-scope-menu summary:hover {
