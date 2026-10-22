@@ -182,6 +182,34 @@ def card_level(level):
     return level if 1 <= level <= LEVEL_MAX else 0
 
 
+def choose_pull(slots, level):
+    """
+    The ship a commission takes from a fleet that farms, when no free ship has the level it asks for.
+
+    Args:
+        slots (list[Slot]): The 6 slots of the fleet
+        level (int): Level the commission asks a ship for
+
+    Returns:
+        Slot: The highest ship at that level or above, she is the nearest to her level cap, or None.
+            Never the flagship, never the last ship of the vanguard: the fleet still sorties.
+    """
+    ships = [slot for slot in slots if slot.name and slot.level]
+    vanguard = [slot for slot in ships if slot.row == 'vanguard']
+    candidates = []
+    for slot in ships:
+        if slot.level < level:
+            continue
+        if slot.row == 'main' and slot.index == 0:
+            continue
+        if slot.row == 'vanguard' and len(vanguard) <= 1:
+            continue
+        candidates.append(slot)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda slot: slot.level)
+
+
 class LevelingFleet(Formation):
     def fleet_info_ensure(self, skip_first_screenshot=True):
         """
@@ -442,3 +470,64 @@ class LevelingFleet(Formation):
         # She comes in at her level now, the fleet's average and the records follow it
         target.level = ship.level
         return True
+
+    def fleet_remove(self, slot):
+        """
+        Take the ship of a slot out of her fleet: the dock of the slot starts with a REMOVE card.
+
+        Args:
+            slot (Slot):
+
+        Returns:
+            bool: If the slot is empty now
+
+        Pages:
+            in: page_fleet, the 3D view, showing the fleet of the slot
+            out: page_fleet, the 3D view
+        """
+        from module.retire.dock import CARD_GRIDS
+        logger.info(f'Remove {slot.name} (Lv.{slot.level}) from fleet {slot.fleet} {slot.row} {slot.index + 1}')
+        self.fleet_slot_enter(slot)
+        self.device.click(CARD_GRIDS[(0, 0)])
+        timeout = Timer(15).start()
+        for _ in self.loop():
+            if self.appear(FLEET_CHECK, offset=(20, 20)):
+                return True
+            if timeout.reached():
+                logger.warning(f'{slot.name} not removed')
+                break
+            if self.handle_popup_confirm('FLEET_REMOVE'):
+                continue
+            if self.appear(DOCK_CHECK, offset=(20, 20), interval=3):
+                from module.retire.assets import SHIP_CONFIRM
+                if self.appear_then_click(SHIP_CONFIRM, offset=(200, 50), interval=3):
+                    continue
+        self.ui_back(check_button=FLEET_CHECK)
+        return False
+
+    def fleet_pull_ship(self, level):
+        """
+        Free a ship of the fleets that farm for a commission.
+
+        Args:
+            level (int): Level the commission asks a ship for
+
+        Returns:
+            Slot: Her slot as it was, None if no ship of the fleets can leave
+
+        Pages:
+            in: Any page
+            out: page_fleet, the 3D view
+        """
+        from module.ui.page import page_fleet
+        for index in self.formation_fleets():
+            self.ui_ensure(page_fleet)
+            self.formation_goto_fleet(index)
+            slots = self.fleet_read_slots(index)
+            slot = choose_pull(slots, level)
+            self.fleet_formation_ensure()
+            if slot is None:
+                continue
+            if self.fleet_remove(slot):
+                return slot
+        return None

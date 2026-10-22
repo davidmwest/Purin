@@ -1583,6 +1583,10 @@
     "DoMajorCommission": {
       "name": "做主要委託 (1200油/1000油委託)",
       "help": "1200油委託現在已經過時，收益很低，建議關閉"
+    },
+    "PullFleetShip": {
+      "name": "Commission.PullFleetShip.name",
+      "help": "Commission.PullFleetShip.help"
     }
   },
   "Tactical": {

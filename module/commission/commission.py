@@ -17,7 +17,7 @@ from module.exception import GameStuckError, OilMaxed, RequestHumanTakeover
 from module.handler.info_handler import InfoHandler
 from module.logger import logger
 from module.map.map_grids import SelectedGrids
-from module.ocr.ocr import DigitCounter
+from module.ocr.ocr import Digit, DigitCounter
 from module.retire.assets import DOCK_CHECK
 from module.ui.assets import BACK_ARROW, REWARD_GOTO_COMMISSION
 from module.ui.page import page_commission, page_reward
@@ -78,6 +78,41 @@ def requirement_unmet(image, top):
     x1, y1, x2, y2 = TEAM_AREA
     team = crop(image, (x1, top + y1, x2, top + y2), copy=False)
     return float(np.std(team)) > TEAM_STD
+
+
+# The first requirement, like "Have at least 1 lv. 30 ship.", from the top of COMMISSION_ADVICE. It scrolls in its box.
+# Its numbers are green, the words red: the level is the green number furthest right.
+REQUIREMENT_LEVEL_AREA = (318, -86, 594, -60)
+REQUIREMENT_DIGIT = (137, 233, 96)
+LEVEL_MAX = 125
+
+
+def requirement_level(image, top):
+    """
+    Args:
+        image (np.ndarray): Screenshot of a commission unfolded
+        top (int): Top of COMMISSION_ADVICE
+
+    Returns:
+        int: Level the first requirement asks a ship for, 0 if it is not read
+    """
+    x1, y1, x2, y2 = REQUIREMENT_LEVEL_AREA
+    area = crop(image, (x1, top + y1, x2, top + y2), copy=False).astype(np.int16)
+    distance = np.abs(area - np.array(REQUIREMENT_DIGIT)).max(axis=2)
+    mask = (distance < 60).astype(np.uint8)
+    columns = np.where(mask.any(axis=0))[0]
+    if not len(columns):
+        return 0
+    # Numbers are columns of green with gaps under 6 px between their digits
+    groups = np.split(columns, np.where(np.diff(columns) > 6)[0] + 1)
+    last = groups[-1]
+    left, right = int(last[0]) - 3, int(last[-1]) + 4
+    rows = np.where(mask[:, last[0]:last[-1] + 1].any(axis=1))[0]
+    box = (x1 + max(left, 0), top + y1 + max(int(rows[0]) - 2, 0),
+           x1 + min(right, x2 - x1), top + y1 + min(int(rows[-1]) + 3, y2 - y1))
+    button = Button(area=box, color=(), button=box, name='REQUIREMENT_LEVEL')
+    level = Digit(button, letter=REQUIREMENT_DIGIT, threshold=128, name='REQUIREMENT_LEVEL').ocr(image)
+    return level if 1 <= level <= LEVEL_MAX else 0
 
 
 # Commissions tried in a run at most, those that can not start included
@@ -441,6 +476,10 @@ class RewardCommission(UI, InfoHandler):
         # START tapped, and if it was lit then
         start_clicked = False
         start_lit = False
+        # Level the first requirement asks a ship for, read before Recommend fills the team.
+        # Set when no free ship has it, see commission_start()
+        need_level = 0
+        self.commission_no_ship = 0
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -477,6 +516,13 @@ class RewardCommission(UI, InfoHandler):
                 self.interval_reset(COMMISSION_ADVICE)
                 comm_timer.reset()
                 continue
+            if count and not start_clicked and need_level > 1 and self.handle_popup_cancel('COMMISSION_NO_SHIP'):
+                # After Recommend: "No suitable shipgirls found. Would you like to automatically add a locked Lv. 1
+                # shipgirl?" Ships of level 1 would not meet "Have at least 1 lv. 30 ship." either
+                logger.warning(f'No free ship at level {need_level} for commission {comm}')
+                self.commission_no_ship = need_level
+                self.device.sleep(1)
+                return False
             if self.handle_popup_confirm('COMMISSION_START'):
                 self.interval_reset(COMMISSION_ADVICE)
                 comm_timer.reset()
@@ -519,6 +565,9 @@ class RewardCommission(UI, InfoHandler):
                         return False
                 else:
                     logger.warning('No selected commission detected, assuming correct')
+                if not count:
+                    need_level = requirement_level(self.device.image, COMMISSION_ADVICE.button[1])
+                    logger.attr('Commission_need_level', need_level)
                 self.device.click(COMMISSION_ADVICE)
                 count += 1
                 self.interval_reset(COMMISSION_ADVICE)
@@ -610,6 +659,8 @@ class RewardCommission(UI, InfoHandler):
         # Commissions of a kind and duration that did not start: the others of it ask for the same.
         # OCR reads a name a little differently from a scan to an other, the same commission was tried 3 times.
         failed = set()
+        # Commissions no free ship had the level for, (commission, is_urgent, level), the first in the filter first
+        no_ship = []
         for comm in commission_candidates(self.daily_choose, self.urgent_choose, self.comm_choose):
             if started >= slots or tries >= COMMISSION_TRIES:
                 break
@@ -621,14 +672,64 @@ class RewardCommission(UI, InfoHandler):
             self._commission_ensure_mode('urgent' if is_urgent else 'daily')
             self._commission_swipe_to_top()
             self.handle_info_bar()
+            self.commission_no_ship = 0
             if self._commission_find_and_start(comm, is_urgent=is_urgent):
                 comm.convert_to_running()
                 started += 1
             else:
                 logger.info(f'Commission {comm} did not start, the next one is tried')
                 failed.add(kind)
+                if self.commission_no_ship:
+                    no_ship.append((comm, is_urgent, self.commission_no_ship))
             self._commission_mode_reset()
         logger.info(f'Commissions started: {started} of {slots}, {tries} tried')
+        if started < slots and no_ship:
+            started += self.commission_start_with_fleet_ships(no_ship, slots - started)
+
+    def commission_start_with_fleet_ships(self, no_ship, free):
+        """
+        The user, 2026-10-22: "Commissions are higher priority than farming, so pull a ship from the main or boss
+        fleet", "Number one priority is to keep 4/4 commissions running". A commission no free ship has the level
+        for takes one from the fleets that farm, the Formation task fills her slot again.
+
+        Args:
+            no_ship (list[tuple[Commission, bool, int]]): (commission, is_urgent, level asked), first ones first
+            free (int): Fleets free for commissions
+
+        Returns:
+            int: Commissions started
+
+        Pages:
+            in: page_commission
+            out: page_commission
+        """
+        if not self.config.Commission_PullFleetShip:
+            logger.info(f'{len(no_ship)} commission(s) wait for a free ship of their level, '
+                        f'Commission.PullFleetShip is off')
+            return 0
+        from module.leveling.fleet import LevelingFleet
+        started = 0
+        for comm, is_urgent, level in no_ship:
+            if started >= free:
+                break
+            logger.hr(f'Fleet ship for {comm}', level=2)
+            fleet = LevelingFleet(config=self.config, device=self.device)
+            ship = fleet.fleet_pull_ship(level)
+            self.ui_ensure(page_commission)
+            if ship is None:
+                logger.info(f'No ship of the fleets that farm can leave for a level {level} commission')
+                break
+            self._commission_ensure_mode('urgent' if is_urgent else 'daily')
+            self._commission_swipe_to_top()
+            self.handle_info_bar()
+            if self._commission_find_and_start(comm, is_urgent=is_urgent):
+                comm.convert_to_running()
+                started += 1
+                logger.info(f'Commission {comm} started with {ship.name} of the fleet {ship.fleet}')
+            else:
+                logger.warning(f'Commission {comm} did not start with {ship.name} free')
+            self._commission_mode_reset()
+        return started
 
     def _commission_receive(self, skip_first_screenshot=True):
         """

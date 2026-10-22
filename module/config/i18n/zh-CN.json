@@ -1583,6 +1583,10 @@
     "DoMajorCommission": {
       "name": "做主要委托（1200油/1000油委托）",
       "help": "1200油委托现在已经过时，收益很低，建议关闭"
+    },
+    "PullFleetShip": {
+      "name": "Commission.PullFleetShip.name",
+      "help": "Commission.PullFleetShip.help"
     }
   },
   "Tactical": {

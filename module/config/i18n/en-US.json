@@ -1583,6 +1583,10 @@
     "DoMajorCommission": {
       "name": "Do Major Commissions",
       "help": "1200 oil commission is now outdated, the yield is very low, it is recommended to disable"
+    },
+    "PullFleetShip": {
+      "name": "Take a Ship From the Farming Fleets",
+      "help": "A commission that asks for a ship of a level no free ship has, like 'Have at least 1 lv. 30 ship.', takes the highest ship of that level from the fleets of the Main task, never the flagship nor the last ship of the vanguard. The Formation task fills her slot again. For young accounts: commissions before farming"
     }
   },
   "Tactical": {

@@ -8055,6 +8055,10 @@
       "DoMajorCommission": {
         "type": "checkbox",
         "value": false
+      },
+      "PullFleetShip": {
+        "type": "checkbox",
+        "value": false
       }
     },
     "Storage": {

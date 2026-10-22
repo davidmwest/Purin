@@ -1583,6 +1583,10 @@
     "DoMajorCommission": {
       "name": "Commission.DoMajorCommission.name",
       "help": "Commission.DoMajorCommission.help"
+    },
+    "PullFleetShip": {
+      "name": "Commission.PullFleetShip.name",
+      "help": "Commission.PullFleetShip.help"
     }
   },
   "Tactical": {
