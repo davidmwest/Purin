@@ -171,11 +171,21 @@ class FastForwardHandler(AutoSearchHandler):
         if self.map_achieved_star_1:
             # Story before boss spawn, Attribute "story_refresh_boss" in chapter_template.lua
             self.config.MAP_HAS_MAP_STORY = False
-        self.config.MAP_CLEAR_ALL_THIS_TIME = self.config.STAR_REQUIRE_3 \
-            and not self.__getattribute__(f'map_achieved_star_{self.config.STAR_REQUIRE_3}') \
+        # STAR_REQUIRE_3 is the star of clearing every enemy. STAR_REQUIRE_2, defeating a number of escort fleets,
+        # counts them over every run of the stage: a run that clears them all is the fewest runs to it. 1-1 of the
+        # F2P account, 2026-10-22, had stars 1 and 3 and never got 2 from runs that went for the boss.
+        self.config.MAP_CLEAR_ALL_THIS_TIME = bool(self.map_stars_missing()) \
             and (self.config.StopCondition_MapAchievement in ['map_3_stars', 'threat_safe'])
 
         self.map_show_info()
+
+    def map_stars_missing(self):
+        """
+        Returns:
+            list[int]: Stars of escort fleets and of a full clear the stage does not have yet
+        """
+        stars = [self.config.STAR_REQUIRE_2, self.config.STAR_REQUIRE_3]
+        return [star for star in stars if star and not self.__getattribute__(f'map_achieved_star_{star}')]
 
     def map_show_info(self):
         # Log
@@ -197,7 +207,15 @@ class FastForwardHandler(AutoSearchHandler):
             self.map_is_2x_book = False
             return False
 
-        if self.config.Campaign_UseClearMode:
+        use_clear_mode = self.config.Campaign_UseClearMode
+        if use_clear_mode and self.config.MAP_CLEAR_ALL_THIS_TIME:
+            # In clear mode the game may search by itself: on 1-1 of the F2P account, 2026-10-22, a battle started
+            # as the map opened, Purin found no map and the task ended. Its auto search switch is a template that
+            # scores too low at 2560x1440, so Purin cannot tell it is on. A pass for stars plays the map itself.
+            logger.info('Stars to get by clearing the map, clear mode off for this run')
+            use_clear_mode = False
+
+        if use_clear_mode:
             self.config.MAP_HAS_AMBUSH = False
             self.config.MAP_HAS_FLEET_STEP = False
             self.config.MAP_HAS_MOVABLE_ENEMY = False
@@ -209,11 +227,7 @@ class FastForwardHandler(AutoSearchHandler):
             self.config.MAP_HAS_BOUNCING_ENEMY = False
             self.config.MAP_HAS_DECOY_ENEMY = False
             self.map_is_clear_mode = True
-            if self.config.MAP_CLEAR_ALL_THIS_TIME:
-                logger.info('MAP_CLEAR_ALL_THIS_TIME does not work with auto search, disable auto search temporarily')
-                self.map_is_auto_search = False
-            else:
-                self.map_is_auto_search = self.config.Campaign_UseAutoSearch
+            self.map_is_auto_search = self.config.Campaign_UseAutoSearch
             self.map_is_2x_book = self.config.Campaign_Use2xBook
         else:
             # When disable fast forward, MAP_HAS_AMBUSH depends on map settings.
@@ -223,7 +237,7 @@ class FastForwardHandler(AutoSearchHandler):
             self.map_is_2x_book = False
             pass
 
-        state = 'on' if self.config.Campaign_UseClearMode else 'off'
+        state = 'on' if use_clear_mode else 'off'
         changed = CLEAR_MODE.set(state, main=self)
         if changed:
             self.map_wait_auto_search()

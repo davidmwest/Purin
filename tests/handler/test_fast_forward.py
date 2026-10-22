@@ -95,3 +95,57 @@ def test_a_pass_that_stops_enables_the_task_it_held():
 
     assert config.Scheduler_Enable is False
     config.task_call.assert_called_once_with('Event', force_call=True)
+
+
+def star_handler(stars, clear_all=False, use_clear_mode=True):
+    """
+    A handler on a stage with these stars, in its map preparation.
+    """
+    config = SimpleNamespace(
+        STAR_REQUIRE_1=1, STAR_REQUIRE_2=2, STAR_REQUIRE_3=3, MAP_CLEAR_ALL_THIS_TIME=clear_all,
+        Campaign_UseClearMode=use_clear_mode, Campaign_UseAutoSearch=True, Campaign_Use2xBook=False)
+    handler = FastForwardHandler.__new__(FastForwardHandler)
+    handler.config = config
+    handler.map_has_clear_mode = True
+    for star in (1, 2, 3):
+        setattr(handler, f'map_achieved_star_{star}', star in stars)
+    return handler
+
+
+@pytest.mark.parametrize('stars, missing', [
+    # 1-1 of the F2P account, 2026-10-22: the escort fleets were never enough
+    ((1, 3), [2]),
+    ((1, 2), [3]),
+    ((1,), [2, 3]),
+    ((1, 2, 3), []),
+    # The boss star alone is had on any clear
+    ((2, 3), []),
+])
+def test_the_stars_a_full_clear_gets(stars, missing):
+    assert star_handler(stars).map_stars_missing() == missing
+
+
+def test_a_stage_with_stars_to_get_is_played_out_of_clear_mode(monkeypatch):
+    switch = SimpleNamespace(calls=[])
+    switch.set = lambda state, main: switch.calls.append(state) or False
+    monkeypatch.setattr('module.handler.fast_forward.CLEAR_MODE', switch)
+    handler = star_handler((1, 3), clear_all=True)
+
+    FastForwardHandler.handle_fast_forward(handler)
+
+    assert switch.calls == ['off']
+    assert handler.map_is_clear_mode is False
+    assert handler.map_is_auto_search is False
+
+
+def test_a_stage_with_every_star_keeps_clear_mode(monkeypatch):
+    switch = SimpleNamespace(calls=[])
+    switch.set = lambda state, main: switch.calls.append(state) or False
+    monkeypatch.setattr('module.handler.fast_forward.CLEAR_MODE', switch)
+    handler = star_handler((1, 2, 3))
+
+    FastForwardHandler.handle_fast_forward(handler)
+
+    assert switch.calls == ['on']
+    assert handler.map_is_clear_mode is True
+    assert handler.map_is_auto_search is True
