@@ -397,6 +397,9 @@ Commission:
     > shortest
   DoMajorCommission: false
   PullFleetShip: false
+DockCare:
+  DryRun: true
+  CommissionPool: 24
 Tactical:
   TacticalFilter: |-
     SameT4 > SameT3 > SameT2 > SameT1

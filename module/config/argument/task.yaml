@@ -62,6 +62,9 @@ Farm:
       - Scheduler
     LimitBreak:
       - Scheduler
+    DockCare:
+      - Scheduler
+      - DockCare
     GemsFarming:
       - Scheduler
       - GemsFarming

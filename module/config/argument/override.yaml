@@ -311,6 +311,12 @@ RetireShips:
     SuccessInterval: 30
     FailureInterval: 120
     ServerUpdate: 00:00
+DockCare:
+  Scheduler:
+    # Ships drop all along: about 50 a day on the F2P account, 11 an hour while farming an event
+    SuccessInterval: 180
+    FailureInterval: 120
+    ServerUpdate: 00:00
 Handbook:
   Scheduler:
     # Missions of the Handbook get done all along, collected a few times a day

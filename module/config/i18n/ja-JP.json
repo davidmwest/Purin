@@ -70,6 +70,10 @@
       "name": "Task.LimitBreak.name",
       "help": "Task.LimitBreak.help"
     },
+    "DockCare": {
+      "name": "Task.DockCare.name",
+      "help": "Task.DockCare.help"
+    },
     "GemsFarming": {
       "name": "Commission Farming",
       "help": ""
@@ -1587,6 +1591,20 @@
     "PullFleetShip": {
       "name": "Commission.PullFleetShip.name",
       "help": "Commission.PullFleetShip.help"
+    }
+  },
+  "DockCare": {
+    "_info": {
+      "name": "DockCare._info.name",
+      "help": "DockCare._info.help"
+    },
+    "DryRun": {
+      "name": "DockCare.DryRun.name",
+      "help": "DockCare.DryRun.help"
+    },
+    "CommissionPool": {
+      "name": "DockCare.CommissionPool.name",
+      "help": "DockCare.CommissionPool.help"
     }
   },
   "Tactical": {

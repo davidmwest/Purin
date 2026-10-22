@@ -357,6 +357,10 @@ class AzurLaneAutoScript:
         from module.formation.formation import Formation
         Formation(config=self.config, device=self.device).run()
 
+    def dock_care(self):
+        from module.dock.care import DockCare
+        DockCare(config=self.config, device=self.device).run()
+
     def handbook(self):
         from module.handbook.handbook import Handbook
         Handbook(config=self.config, device=self.device).run()

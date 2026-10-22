@@ -373,6 +373,23 @@
       "Storage": {}
     }
   },
+  "DockCare": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "DockCare",
+      "SuccessInterval": 180,
+      "FailureInterval": 120,
+      "ServerUpdate": "00:00"
+    },
+    "DockCare": {
+      "DryRun": true,
+      "CommissionPool": 24
+    },
+    "Storage": {
+      "Storage": {}
+    }
+  },
   "GemsFarming": {
     "Scheduler": {
       "Enable": false,

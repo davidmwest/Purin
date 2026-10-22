@@ -70,6 +70,10 @@
       "name": "Limit Break and Enhance",
       "help": "For each ship of the fleets that the task Main uses, opened from her slot: limit break with the material the game's Quick Select picks, a copy or a Bulin, as many tries as the dock has copies of her (levels 10, 30 and 70 and coins, each raises the level cap by 10). Then enhance her: a locked ship, and one in a fleet, keeps 4 copies to be limit broken fully, the other cards of the dock are material at level 3 at most, common, rare or elite, no Bulin. The game's Fill is not used, it takes copies. Runs every 3 hours"
     },
+    "DockCare": {
+      "name": "Dock Care",
+      "help": "Keeps room in the dock of a young account: walks the whole dock, and decides each card by the dock policy (option (d) of the F2P dock doc): copies kept only for what the fleet ships still need, one copy of each ship with a retrofit, super rares and Bulins kept, the rest enhanced or retired"
+    },
     "GemsFarming": {
       "name": "Commission Farming",
       "help": ""
@@ -1587,6 +1591,20 @@
     "PullFleetShip": {
       "name": "Take a Ship From the Farming Fleets",
       "help": "A commission that asks for a ship of a level no free ship has, like 'Have at least 1 lv. 30 ship.', takes the highest ship of that level from the fleets of the Main task, never the flagship nor the last ship of the vanguard. The Formation task fills her slot again. For young accounts: commissions before farming"
+    }
+  },
+  "DockCare": {
+    "_info": {
+      "name": "Dock Care",
+      "help": ""
+    },
+    "DryRun": {
+      "name": "Dry Run",
+      "help": "Only log what would be kept, enhanced or retired, and save the census to ./config/dock/<config>.json. Retiring cannot be undone: review a run before turning this off"
+    },
+    "CommissionPool": {
+      "name": "Commission Pool",
+      "help": "Unlocked ships above level 3 kept for commissions, the highest first. Commissions ask for ships of level 12, 25 and 30"
     }
   },
   "Tactical": {
