@@ -74,6 +74,10 @@
       "name": "Task.DockCare.name",
       "help": "Task.DockCare.help"
     },
+    "DockExpand": {
+      "name": "Task.DockExpand.name",
+      "help": "Task.DockExpand.help"
+    },
     "GemsFarming": {
       "name": "刷緊急委託",
       "help": ""
@@ -1613,6 +1617,28 @@
     "CommissionPool": {
       "name": "DockCare.CommissionPool.name",
       "help": "DockCare.CommissionPool.help"
+    }
+  },
+  "DockExpand": {
+    "_info": {
+      "name": "DockExpand._info.name",
+      "help": "DockExpand._info.help"
+    },
+    "DryRun": {
+      "name": "DockExpand.DryRun.name",
+      "help": "DockExpand.DryRun.help"
+    },
+    "FreeBelow": {
+      "name": "DockExpand.FreeBelow.name",
+      "help": "DockExpand.FreeBelow.help"
+    },
+    "PriceMax": {
+      "name": "DockExpand.PriceMax.name",
+      "help": "DockExpand.PriceMax.help"
+    },
+    "GemsReserve": {
+      "name": "DockExpand.GemsReserve.name",
+      "help": "DockExpand.GemsReserve.help"
     }
   },
   "Tactical": {

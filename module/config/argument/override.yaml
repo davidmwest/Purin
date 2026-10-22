@@ -317,6 +317,12 @@ DockCare:
     SuccessInterval: 180
     FailureInterval: 120
     ServerUpdate: 00:00
+DockExpand:
+  Scheduler:
+    # The dock fills as ships drop: read after DockCare, every 3 hours
+    SuccessInterval: 180
+    FailureInterval: 120
+    ServerUpdate: 00:00
 Handbook:
   Scheduler:
     # Missions of the Handbook get done all along, collected a few times a day

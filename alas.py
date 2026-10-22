@@ -361,6 +361,10 @@ class AzurLaneAutoScript:
         from module.dock.care import DockCare
         DockCare(config=self.config, device=self.device).run()
 
+    def dock_expand(self):
+        from module.dock.expand import DockExpand
+        DockExpand(config=self.config, device=self.device).run()
+
     def handbook(self):
         from module.handbook.handbook import Handbook
         Handbook(config=self.config, device=self.device).run()

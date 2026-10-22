@@ -396,6 +396,25 @@
       "Storage": {}
     }
   },
+  "DockExpand": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "DockExpand",
+      "SuccessInterval": 180,
+      "FailureInterval": 120,
+      "ServerUpdate": "00:00"
+    },
+    "DockExpand": {
+      "DryRun": true,
+      "FreeBelow": 10,
+      "PriceMax": 200,
+      "GemsReserve": 0
+    },
+    "Storage": {
+      "Storage": {}
+    }
+  },
   "GemsFarming": {
     "Scheduler": {
       "Enable": false,

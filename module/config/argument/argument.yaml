@@ -402,6 +402,11 @@ Commission:
 DockCare:
   DryRun: true
   CommissionPool: 24
+DockExpand:
+  DryRun: true
+  FreeBelow: 10
+  PriceMax: 200
+  GemsReserve: 0
 Tactical:
   TacticalFilter: |-
     SameT4 > SameT3 > SameT2 > SameT1

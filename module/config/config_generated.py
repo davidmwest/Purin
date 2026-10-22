@@ -221,6 +221,12 @@ class GeneratedConfig:
     DockCare_DryRun = True
     DockCare_CommissionPool = 24
 
+    # Group `DockExpand`
+    DockExpand_DryRun = True
+    DockExpand_FreeBelow = 10
+    DockExpand_PriceMax = 200
+    DockExpand_GemsReserve = 0
+
     # Group `Tactical`
     Tactical_TacticalFilter = 'SameT4 > SameT3 > SameT2 > SameT1\n> BlueT2 > YellowT2 > RedT2\n> BlueT3 > YellowT3 > RedT3\n> BlueT4 > YellowT4 > RedT4\n> BlueT1 > YellowT1 > RedT1\n> first'
     Tactical_RapidTrainingSlot = 'do_not_use'  # do_not_use, slot_1, slot_2, slot_3, slot_4

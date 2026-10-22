@@ -74,6 +74,10 @@
       "name": "Dock Care",
       "help": "Keeps room in the dock of a young account: walks the whole dock, and decides each card by the dock policy (option (d) of the F2P dock doc): copies kept only for what the fleet ships still need, one copy of each ship with a retrofit, super rares and Bulins kept, the rest enhanced or retired"
     },
+    "DockExpand": {
+      "name": "Dock Expansion",
+      "help": "Buys 10 dock slots with gems when the dock is nearly full: the \"+\" before Dock capacity opens the Items of the shop, where a Dock Expansion costs 200 gems. It buys one per run, only at the price allowed and with the gems kept left, then checks the dock has 10 more slots. Runs every 3 hours, after Dock Care"
+    },
     "GemsFarming": {
       "name": "Commission Farming",
       "help": ""
@@ -1613,6 +1617,28 @@
     "CommissionPool": {
       "name": "Commission Pool",
       "help": "Unlocked ships above level 3 kept for commissions, the highest first. Commissions ask for ships of level 12, 25 and 30"
+    }
+  },
+  "DockExpand": {
+    "_info": {
+      "name": "Dock Expansion",
+      "help": ""
+    },
+    "DryRun": {
+      "name": "Dry Run",
+      "help": "Only log the Dock Expansion that would be bought. Gems spent are not given back: turn this off once a run reads right"
+    },
+    "FreeBelow": {
+      "name": "Buy Below Free Slots",
+      "help": "An expansion is bought when the dock has fewer free slots than this"
+    },
+    "PriceMax": {
+      "name": "Most Gems per Expansion",
+      "help": "No expansion is bought above this price. 200 gems for 10 slots on 2026-10-22"
+    },
+    "GemsReserve": {
+      "name": "Gems Kept",
+      "help": "Gems left after a purchase at least"
     }
   },
   "Tactical": {

@@ -65,6 +65,9 @@ Farm:
     DockCare:
       - Scheduler
       - DockCare
+    DockExpand:
+      - Scheduler
+      - DockExpand
     GemsFarming:
       - Scheduler
       - GemsFarming
