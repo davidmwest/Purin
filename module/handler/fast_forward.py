@@ -487,8 +487,19 @@ class FastForwardHandler(AutoSearchHandler):
             else:
                 logger.info(f'Stage {prev_stage} cannot increase, stop at current stage')
                 self.config.Scheduler_Enable = False
+                self.call_then_task()
         else:
             self.config.Scheduler_Enable = False
+            self.call_then_task()
+
+    def call_then_task(self):
+        """
+        The task that ends calls StopCondition.ThenTask, like the event that a pass over the stages held.
+        """
+        task = getattr(self.config, 'StopCondition_ThenTask', '')
+        if task:
+            logger.info(f'{self.config.task.command} ends, {task} runs again')
+            self.config.task_call(task, force_call=True)
 
     def campaign_name_last(self, name):
         """

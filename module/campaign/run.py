@@ -357,6 +357,23 @@ class CampaignRun(CampaignEvent):
 
         return self.run_count > 0 and self.campaign.map_is_auto_search
 
+    def handle_end_on_loss(self):
+        """
+        A pass over the stages ends at the first one its fleet loses on, like the pass that 3-stars them for the gems
+        of their missions (the user, 2026-10-22: gems are the rarest F2P resource, for dock expansions).
+        StopCondition.ThenTask is enabled again, the event the pass held.
+
+        Returns:
+            bool: If the task ended
+        """
+        if not self.config.StopCondition_EndOnLoss or not self.campaign.run_lost:
+            return False
+        logger.hr('End on loss', level=2)
+        logger.info(f'Battle lost on {to_map_input_name(self.config.Campaign_Name)}, the pass ends there')
+        self.config.Scheduler_Enable = False
+        self.campaign.call_then_task()
+        return True
+
     def handle_stage_retreat(self):
         """
         With StageIncrease, a battle lost sends the task back to the stage before, to level the fleet for
@@ -520,6 +537,8 @@ class CampaignRun(CampaignEvent):
             if self.config.StopCondition_RunCount:
                 self.config.StopCondition_RunCount -= 1
             # A stage too hard for the fleet for now
+            if self.handle_end_on_loss():
+                break
             if self.handle_stage_retreat():
                 break
             # End

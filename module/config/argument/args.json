@@ -546,6 +546,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -1017,6 +1025,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -1487,6 +1503,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",
@@ -2184,6 +2208,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -2677,6 +2709,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -3165,6 +3205,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",
@@ -3676,6 +3724,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -3859,6 +3915,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",
@@ -4122,6 +4186,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",
@@ -4660,6 +4732,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -5163,6 +5243,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",
@@ -5670,6 +5758,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -6175,6 +6271,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",
@@ -6682,6 +6786,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -7177,6 +7289,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",
@@ -7682,6 +7802,14 @@
         "type": "input",
         "value": 0
       },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
+      },
       "RetreatFrom": {
         "type": "input",
         "value": "",
@@ -7942,6 +8070,14 @@
       "StageRetreat": {
         "type": "input",
         "value": 0
+      },
+      "EndOnLoss": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ThenTask": {
+        "type": "input",
+        "value": ""
       },
       "RetreatFrom": {
         "type": "input",

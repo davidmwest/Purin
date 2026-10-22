@@ -97,3 +97,30 @@ def test_retreat_survives_loading_the_config():
 
     assert deep_get(new, 'Main.StopCondition.RetreatFrom') == '2-4'
     assert deep_get(new, 'Main.StopCondition.RetreatRemain') == 3
+
+
+def test_a_pass_ends_on_its_first_battle_lost():
+    # The 3-star pass, 2026-10-22: no retreat, the stages it can not win are left for later and the event runs again
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from module.campaign.run import CampaignRun
+    config = SimpleNamespace(StopCondition_EndOnLoss=True, Campaign_Name='4-3', Scheduler_Enable=True)
+    run = SimpleNamespace(config=config, campaign=SimpleNamespace(run_lost=True, call_then_task=Mock()))
+
+    assert CampaignRun.handle_end_on_loss(run) is True
+    assert config.Scheduler_Enable is False
+    run.campaign.call_then_task.assert_called_once_with()
+
+
+def test_a_won_run_or_the_option_off_goes_on():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from module.campaign.run import CampaignRun
+    won = SimpleNamespace(config=SimpleNamespace(StopCondition_EndOnLoss=True, Campaign_Name='4-2', Scheduler_Enable=True),
+                          campaign=SimpleNamespace(run_lost=False, call_then_task=Mock()))
+    off = SimpleNamespace(config=SimpleNamespace(StopCondition_EndOnLoss=False, Campaign_Name='4-3', Scheduler_Enable=True),
+                          campaign=SimpleNamespace(run_lost=True, call_then_task=Mock()))
+
+    assert CampaignRun.handle_end_on_loss(won) is False
+    assert CampaignRun.handle_end_on_loss(off) is False
+    assert won.config.Scheduler_Enable and off.config.Scheduler_Enable

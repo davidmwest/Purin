@@ -986,6 +986,14 @@
       "name": "Retreat after a battle lost",
       "help": "With stage increase, a battle lost sends the task to the stage before for this many runs, to level the fleet, then it tries the stage again. 0 to try again at once"
     },
+    "EndOnLoss": {
+      "name": "End on a Battle Lost",
+      "help": "With stage increase: the task stops at the first stage its fleet loses on, instead of retreating. For a pass over the stages, like 3-starring each one for the gems of its mission"
+    },
+    "ThenTask": {
+      "name": "Then Enable Task",
+      "help": "A task to enable and run when this one stops, like the Event a 3-star pass holds. Empty for none"
+    },
     "RetreatFrom": {
       "name": "Stage to try again",
       "help": "Set by the retreat, the stage that was lost"

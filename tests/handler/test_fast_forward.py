@@ -46,6 +46,7 @@ def stopped_on(stage, event='event_20261022_cn', one_time=False):
     handler = SimpleNamespace(config=config, STAGE_INCREASE=FastForwardHandler.STAGE_INCREASE)
     handler.campaign_name_increase = lambda name: FastForwardHandler.campaign_name_increase(handler, name)
     handler.campaign_name_last = lambda name: FastForwardHandler.campaign_name_last(handler, name)
+    handler.call_then_task = lambda: FastForwardHandler.call_then_task(handler)
     FastForwardHandler.handle_map_stop(handler)
     return config
 
@@ -76,3 +77,21 @@ def test_a_stage_out_of_the_chains_still_stops():
     config = stopped_on('EX', one_time=False)
 
     assert config.Scheduler_Enable is False
+
+
+def test_a_pass_that_stops_enables_the_task_it_held():
+    # The 3-star pass over the campaign holds the event, which runs again once the pass stops
+    from unittest.mock import Mock
+    config = SimpleNamespace(
+        STAGE_INCREASE_AB=False, STAGE_INCREASE_CUSTOM=None, Campaign_Event='event_20261022_cn', Campaign_Name='EX',
+        StopCondition_StageIncrease=True, StopCondition_MapAchievement='map_3_stars', MAP_IS_ONE_TIME_STAGE=False,
+        Scheduler_Enable=True, StopCondition_ThenTask='Event', task=SimpleNamespace(command='Main2'), task_call=Mock())
+    handler = SimpleNamespace(config=config, STAGE_INCREASE=FastForwardHandler.STAGE_INCREASE)
+    handler.campaign_name_increase = lambda name: FastForwardHandler.campaign_name_increase(handler, name)
+    handler.campaign_name_last = lambda name: FastForwardHandler.campaign_name_last(handler, name)
+    handler.call_then_task = lambda: FastForwardHandler.call_then_task(handler)
+
+    FastForwardHandler.handle_map_stop(handler)
+
+    assert config.Scheduler_Enable is False
+    config.task_call.assert_called_once_with('Event', force_call=True)

@@ -986,6 +986,14 @@
       "name": "敗北後の後退",
       "help": "ステージ進行が有効なとき、戦闘に敗北すると前のステージをこの回数周回して艦隊を育て、その後同じステージに再挑戦します。0 ですぐに再挑戦"
     },
+    "EndOnLoss": {
+      "name": "StopCondition.EndOnLoss.name",
+      "help": "StopCondition.EndOnLoss.help"
+    },
+    "ThenTask": {
+      "name": "StopCondition.ThenTask.name",
+      "help": "StopCondition.ThenTask.help"
+    },
     "RetreatFrom": {
       "name": "再挑戦するステージ",
       "help": "後退で設定される、敗北したステージ"

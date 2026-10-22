@@ -986,6 +986,14 @@
       "name": "战败后后退",
       "help": "开启关卡递增时，战斗失败后先回到上一关打这么多次以提升舰队等级，再重新挑战该关。0 为立即重试"
     },
+    "EndOnLoss": {
+      "name": "StopCondition.EndOnLoss.name",
+      "help": "StopCondition.EndOnLoss.help"
+    },
+    "ThenTask": {
+      "name": "StopCondition.ThenTask.name",
+      "help": "StopCondition.ThenTask.help"
+    },
     "RetreatFrom": {
       "name": "要重新挑战的关卡",
       "help": "由后退设置，即失败的关卡"
