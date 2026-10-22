@@ -21,6 +21,9 @@ from module.exception import UserPlaying
     ('/dev/input/event2: EV_ABS       ABS_MT_TRACKING_ID   ffffffff', False),
     # The mouse device BlueStacks adds for a moment as the game starts, 2026-10-22: a release with no press
     ('/dev/input/event3: EV_KEY       BTN_MOUSE            UP', False),
+    # The same device, 1 start in 3: a value that is no press before the release, 22292.586877 then .593302
+    ('[   22292.586877] /dev/input/event3: EV_KEY       BTN_MOUSE            00000020', False),
+    ('/dev/input/event3: EV_KEY       BTN_MOUSE            00000020', False),
     # A key held down
     ('/dev/input/event1: EV_KEY       KEY_A                REPEAT', True),
     # A key of its keyboard

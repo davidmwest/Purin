@@ -6,10 +6,10 @@ emulator's window comes through its virtual touch device, "BlueStacks Virtual To
 through its keyboard. `getevent` reads those devices: on BlueStacks Air, a minute and a half of Purin's taps
 showed nothing there.
 
-A touch, a mouse button or a key pressed counts. A release alone does not: as the game starts, BlueStacks adds a
-mouse device for a moment that sends a BTN_MOUSE UP with no DOWN before it (2026-10-22, the F2P emulator, after every
-app start, 800 times a day: each restart of the game was taken for someone playing, and restarted again 30 s later).
-A finger or the mouse moving does not count, nor a sensor.
+A touch, a mouse button or a key pressed counts, DOWN or held. Nothing else does: as the game starts, BlueStacks adds a
+mouse device for a moment that sends a BTN_MOUSE UP with no DOWN before it, and one start in three a BTN_MOUSE of
+value 00000020 before that UP (2026-10-22, both emulators: each restart of the game was taken for someone playing,
+and restarted again 30 s later, up to 8 times in a row). A finger or the mouse moving does not count, nor a sensor.
 """
 import subprocess
 import threading
@@ -35,11 +35,16 @@ def is_user_event(line):
         bool: If someone touched the screen, clicked or pressed a key
     """
     parts = str(line).split()
-    if len(parts) < 4 or not parts[0].startswith('/dev/input/'):
+    # `getevent -lt` puts a timestamp first, '[   22292.586877]'
+    while parts and not parts[0].startswith('/dev/input/'):
+        if not (parts[0].startswith('[') or parts[0].endswith(']') or parts[0].replace('.', '').isdigit()):
+            return False
+        parts = parts[1:]
+    if len(parts) < 4:
         return False
     kind, code, value = parts[1], parts[2], parts[3]
     if kind == 'EV_KEY':
-        return value != 'UP'
+        return value in ('DOWN', 'REPEAT')
     if code == 'ABS_MT_TRACKING_ID':
         # A contact starts with its id, ends with ffffffff
         return value.lower() != 'ffffffff'
@@ -100,7 +105,8 @@ class UserInputWatcher:
         if not is_user_event(line):
             return
         if self.seconds_since() > LOG_AFTER_SECONDS:
-            logger.info(f'Someone touched {self.serial}')
+            # The event, should an emulator send one more that is nobody's
+            logger.info(f'Someone touched {self.serial}: {" ".join(str(line).split())}')
         self.last = time.time()
 
     def _follow(self):
