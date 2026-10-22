@@ -311,6 +311,12 @@ RetireShips:
     SuccessInterval: 30
     FailureInterval: 120
     ServerUpdate: 00:00
+Handbook:
+  Scheduler:
+    # Missions of the Handbook get done all along, collected a few times a day
+    SuccessInterval: 180
+    FailureInterval: 120
+    ServerUpdate: 00:00
 LimitBreak:
   Scheduler:
     # Copies drop and are built all along, a ship of the fleets reaches levels 10, 30 and 70

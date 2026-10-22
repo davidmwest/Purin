@@ -357,6 +357,10 @@ class AzurLaneAutoScript:
         from module.formation.formation import Formation
         Formation(config=self.config, device=self.device).run()
 
+    def handbook(self):
+        from module.handbook.handbook import Handbook
+        Handbook(config=self.config, device=self.device).run()
+
     def limit_break(self):
         from module.leveling.limit_break import LimitBreak
         LimitBreak(config=self.config, device=self.device).run()

@@ -166,6 +166,10 @@
       "name": "收获",
       "help": ""
     },
+    "Handbook": {
+      "name": "Task.Handbook.name",
+      "help": "Task.Handbook.help"
+    },
     "Awaken": {
       "name": "认知觉醒",
       "help": ""

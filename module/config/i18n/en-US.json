@@ -166,6 +166,10 @@
       "name": "Reward",
       "help": ""
     },
+    "Handbook": {
+      "name": "Handbook",
+      "help": "Collects the rewards of the Handbook, the guide of young accounts on the left of the main page: Rookie Missions, Dev. Missions and Mechanic Tutorials. Follows the red badges of whatever can be collected. Does nothing on an account without a Handbook"
+    },
     "Awaken": {
       "name": "Awaken",
       "help": ""

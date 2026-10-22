@@ -241,6 +241,8 @@ Reward:
     Reward:
       - Scheduler
       - Reward
+    Handbook:
+      - Scheduler
     Awaken:
       - Scheduler
       - Awaken

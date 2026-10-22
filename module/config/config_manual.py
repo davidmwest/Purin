@@ -14,7 +14,7 @@ class ManualConfig:
     > Commission > Tactical > Research
     > Exercise
     > Dorm > DormRest > Meowfficer > Guild > Gacha
-    > Reward
+    > Reward > Handbook
     > ShopFrequent > EventShop > ShopGuild > ShopMonthly > ShopOnce > Shipyard > Freebies
     > PrivateQuarters
     > OpsiExplore

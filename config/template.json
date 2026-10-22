@@ -1640,6 +1640,19 @@
       "Storage": {}
     }
   },
+  "Handbook": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "Handbook",
+      "SuccessInterval": 180,
+      "FailureInterval": 120,
+      "ServerUpdate": "00:00"
+    },
+    "Storage": {
+      "Storage": {}
+    }
+  },
   "Awaken": {
     "Scheduler": {
       "Enable": false,
