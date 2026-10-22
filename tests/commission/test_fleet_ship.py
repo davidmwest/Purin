@@ -26,6 +26,12 @@ def en():
     ('requirement_lv30', 30),
     # "Have at least 1 lv. 25 ship." of Merchant Rescue II
     ('requirement_lv25', 25),
+    # Scrolled the other way in its box
+    ('requirement_lv25_scrolled', 25),
+    # "Have at least 1 lv. 12 ship" of Destroy Enemy Scouts: not a round level
+    ('requirement_lv12', 12),
+    # The commission still unfolding, its requirements not drawn: read as 2 and 4 by the first reader
+    ('requirement_opening', 0),
 ])
 def test_level_a_commission_asks_for(name, level):
     image = cv2.cvtColor(cv2.imread(os.path.join(DATA, f'{name}.png')), cv2.COLOR_BGR2RGB)
@@ -86,12 +92,14 @@ def commission(monkeypatch, pull_on, pulled, starts):
     import module.leveling.fleet as fleet_module
 
     pulls = list(pulled)
+    taken = []
 
     class Fleet:
         def __init__(self, *args, **kwargs):
             pass
 
         def fleet_pull_ship(self, level):
+            taken.append(level)
             return pulls.pop(0) if pulls else None
 
     monkeypatch.setattr(fleet_module, 'LevelingFleet', Fleet)
@@ -105,6 +113,7 @@ def commission(monkeypatch, pull_on, pulled, starts):
     comm.handle_info_bar = Mock()
     results = list(starts)
     comm._commission_find_and_start = Mock(side_effect=lambda c, is_urgent=False: results.pop(0))
+    comm.pulls = taken
     return comm
 
 
@@ -138,3 +147,15 @@ def test_no_ship_of_the_level_in_the_fleets_stops(monkeypatch):
 
     assert comm.commission_start_with_fleet_ships([(Comm('PATROL ESCORT'), True, 90)], free=2) == 0
     comm._commission_find_and_start.assert_not_called()
+
+
+def test_a_ship_taken_out_for_nothing_is_tried_by_the_next_commission(monkeypatch):
+    # Merchant Rescue L asked for types Laffey is not, Daily Resource Extraction V takes her
+    laffey = choose_pull(F2P, 30)
+    comm = commission(monkeypatch, pull_on=True, pulled=[laffey, choose_pull(F2P, 30)], starts=[False, True])
+    rescue, dre = Comm('MERCHANT RESCUE L'), Comm('DAILY RESOURCE EXTRACTION V')
+
+    assert comm.commission_start_with_fleet_ships([(rescue, True, 25), (dre, False, 30)], free=1) == 1
+    assert dre.running and not rescue.running
+    # One ship left the fleet, not two
+    assert comm.pulls == [25]
