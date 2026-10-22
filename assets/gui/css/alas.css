@@ -1082,3 +1082,79 @@ pre.rich-traceback-code {
 summary {
     color: var(--p-text);
 }
+
+/* Bootstrap buttons and code of the other pages, on the same palette */
+
+.btn {
+    border-radius: 10px;
+}
+
+.btn-primary,
+.btn-info {
+    background-color: var(--p-accent);
+    border-color: var(--p-accent);
+    color: var(--p-on-accent);
+    font-weight: 600;
+}
+
+.btn-primary:hover,
+.btn-info:hover,
+.btn-primary:focus,
+.btn-info:focus {
+    background-color: var(--p-accent-hover);
+    border-color: var(--p-accent-hover);
+    color: var(--p-on-accent);
+}
+
+.btn-secondary,
+.btn-light,
+.btn-dark,
+.btn-outline-secondary,
+.btn-outline-primary {
+    background-color: var(--p-surface);
+    border: 1px solid var(--p-border-strong);
+    color: var(--p-text);
+    font-weight: 600;
+}
+
+.btn-secondary:hover,
+.btn-light:hover,
+.btn-dark:hover,
+.btn-outline-secondary:hover,
+.btn-outline-primary:hover {
+    background-color: var(--p-accent-soft);
+    border-color: var(--p-accent);
+    color: var(--p-accent-text);
+}
+
+.btn-success {
+    background-color: var(--p-ok);
+    border-color: var(--p-ok);
+    font-weight: 600;
+}
+
+.btn-warning {
+    background-color: var(--p-warn);
+    border-color: var(--p-warn);
+    font-weight: 600;
+}
+
+code {
+    color: var(--p-accent-text);
+    background-color: var(--p-accent-soft);
+    border-radius: 6px;
+    padding: .1rem .35rem;
+}
+
+a {
+    color: var(--p-accent-text);
+}
+
+.table {
+    color: var(--p-text);
+}
+
+.table td,
+.table th {
+    border-color: var(--p-border);
+}
