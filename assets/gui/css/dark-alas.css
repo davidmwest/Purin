@@ -14,6 +14,7 @@
     --p-accent-text: #a3b6ff;
     --p-on-accent: #0b1222;
     --p-rail: linear-gradient(180deg, #0d1630 0%, #080e1e 100%);
+    --p-rail-top: #0d1630;
     --p-rail-text: #8796b5;
     --p-rail-active: rgba(255, 255, 255, 0.08);
     --p-log-bg: #0e1626;
