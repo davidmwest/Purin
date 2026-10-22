@@ -14,10 +14,13 @@ Pages:
     in: Any page
     out: page_fleet, its 3D view
 """
+import os
+from datetime import datetime
+
 import cv2
 
 from module.base.timer import Timer
-from module.base.utils import crop, load_image
+from module.base.utils import crop, load_image, save_image
 from module.equipment.assets import FLEET_DETAIL_CHECK
 from module.leveling.enhance import FleetEnhance
 from module.leveling.fleet import area_button, card_name_area, name_fits, search_term
@@ -53,6 +56,8 @@ LIMIT_BREAK_MAX = 3
 # Seconds for Quick Select to fill the slot, and for a limit break to come back to the tab
 SELECT_WAIT = 3
 BREAK_TIMEOUT = 30
+# Screens of a limit break that did not go through, for a look at what held it
+STUCK_DIR = './log/limit_break'
 
 
 # The Bulin that stands in for a copy of a ship, by her rarity before a retrofit (wiki: Dockyard)
@@ -116,6 +121,19 @@ class LimitBreak(FleetEnhance):
 
     def is_limit_break_result(self):
         return template_score(self.device.image, self._template(RESULT), RESULT_AREA) > SIMILARITY
+
+    def save_stuck_screen(self, tag):
+        """
+        2026-10-22, the F2P account: Long Island and Laffey each had a Universal Bulin in the slot, Confirm was tapped
+        10 times and nothing came of it, with no screen kept to tell why.
+        """
+        try:
+            os.makedirs(STUCK_DIR, exist_ok=True)
+            file = os.path.join(STUCK_DIR, f'{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}_{tag}.png')
+            save_image(self.device.image, file)
+            logger.info(f'Screen saved: {file}')
+        except Exception as e:
+            logger.warning(f'Screen not saved: {e}')
 
     def limit_break_cards(self, name):
         """
@@ -187,9 +205,11 @@ class LimitBreak(FleetEnhance):
         retry = Timer(3, count=6).start()
         emptied = Timer(RESULT_WAIT, count=10)
         result = False
+        retried = False
         for _ in self.loop():
             if timeout.reached():
                 logger.warning('The limit break did not come back to its tab')
+                self.save_stuck_screen('timeout')
                 return result
             if self.is_limit_break_result():
                 result = True
@@ -216,6 +236,9 @@ class LimitBreak(FleetEnhance):
                     return True
                 if retry.reached():
                     # The tap on Confirm did not get through
+                    if not retried:
+                        self.save_stuck_screen('confirm_again')
+                        retried = True
                     self.device.click(CONFIRM_BUTTON)
                     retry.reset()
                 continue
