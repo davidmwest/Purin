@@ -55,6 +55,31 @@ SELECT_WAIT = 3
 BREAK_TIMEOUT = 30
 
 
+# The Bulin that stands in for a copy of a ship, by her rarity before a retrofit (wiki: Dockyard)
+BULINS = {
+    'Normal': 'Universal Bulin',
+    'Rare': 'Universal Bulin',
+    'Elite': 'Universal Bulin',
+    'Super Rare': 'Prototype Bulin MKII',
+    'Ultra Rare': 'Specialized Bulin Custom MKIII',
+}
+
+
+def bulin_for(data):
+    """
+    Args:
+        data (ShipData): A ship, None if not known
+
+    Returns:
+        str: Name of the Bulin her limit breaks can use, '' for none: a research or META ship, or a Bulin
+    """
+    if data is None or 'Bulin' in data.name:
+        return ''
+    if data.name.endswith(' (Retrofit)'):
+        return ''
+    return BULINS.get(data.rarity, '')
+
+
 def template_score(image, template, area):
     """
     Returns:
@@ -220,9 +245,18 @@ class LimitBreak(FleetEnhance):
         self.ui_ensure(page_dock)
         cards = self.limit_break_cards(name)
         copies = len(cards) - 1
-        if copies < 1:
-            logger.info(f'{name} has no copy in the dock, not tried')
+        bulins = 0
+        bulin = bulin_for(matcher.ships.get(name))
+        if bulin:
+            # The user, 2026-10-21: "Spending bulins is fine". Quick Select takes a copy first, then a Bulin.
+            # A Bulin in a fleet is not offered, like Fleet 2's Universal Bulin of the F2P account.
+            self.ui_ensure(page_main)
+            self.ui_ensure(page_dock)
+            bulins = len([card for card in self.limit_break_cards(bulin) if not card.fleet])
+        if copies + bulins < 1:
+            logger.info(f'{name} has no copy and no {bulin or "Bulin"} free in the dock, not tried')
             return 0
+        copies += bulins
         # The ship of the slot is opened from the fleet: the highest card of her name can be an other copy of her,
         # in an other fleet or in the dock (code review, Codex)
         self.ui_ensure(page_fleet)

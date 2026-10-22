@@ -112,3 +112,61 @@ def test_an_other_ship_on_the_detail_page_is_not_limit_broken():
         # Not read, the ship of the slot is trusted
         ocr.return_value.ocr.return_value = ''
         assert FleetEnhance.detail_name_fits(controller, 'Cooper', matcher) is True
+
+
+def test_the_bulin_of_each_rarity():
+    from module.leveling.limit_break import bulin_for
+    from module.leveling.plan import ShipMatcher, load_ship_data
+    ships = ShipMatcher(load_ship_data()).ships
+
+    # The F2P fleet: Long Island rare, Laffey elite, Nevada common
+    assert bulin_for(ships['Long Island']) == 'Universal Bulin'
+    assert bulin_for(ships['Laffey']) == 'Universal Bulin'
+    assert bulin_for(ships['Nevada']) == 'Universal Bulin'
+    assert bulin_for(ships['Belfast']) == 'Prototype Bulin MKII'
+    # No Bulin for a Bulin, a retrofit form or a ship not known
+    assert bulin_for(ships['Universal Bulin']) == ''
+    assert bulin_for(ships['Laffey (Retrofit)']) == ''
+    assert bulin_for(None) == ''
+
+
+def limit_break_controller(cards, bulins):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from module.leveling.limit_break import LimitBreak
+    from module.leveling.plan import ShipMatcher, Slot, load_ship_data
+    slot = Slot(1, 'main', 0, 'Long Island', 80)
+    searches = {'Long Island': cards, 'Universal Bulin': bulins}
+    controller = SimpleNamespace(
+        config=SimpleNamespace(task_delay=Mock()),
+        device=SimpleNamespace(sleep=Mock(), screenshot=Mock()),
+        ui_ensure=Mock(), formation_goto_fleet=Mock(),
+        limit_break_cards=Mock(side_effect=lambda name: searches[name]),
+        fleet_ship_enter=Mock(), ship_side_navbar_ensure=Mock(), fleet_formation_ensure=Mock(),
+        detail_name_fits=Mock(return_value=True), is_limit_break_tab=Mock(return_value=True),
+        limit_break_once=Mock(return_value=True), handle_popup_cancel_loose=Mock(return_value=False), ui_back=Mock(),
+    )
+    done = LimitBreak.limit_break_ship(controller, slot, 'Long Island', ShipMatcher(load_ship_data()))
+    return controller, done
+
+
+def test_a_ship_with_no_copy_is_limit_broken_with_bulins():
+    # 2026-10-22: Long Island at her Lv 80 cap with no copy, 5 Universal Bulins unused in the dock
+    from types import SimpleNamespace
+    long_island = SimpleNamespace(level=80, fleet=1)
+    bulins = [SimpleNamespace(level=1, fleet=0), SimpleNamespace(level=1, fleet=0), SimpleNamespace(level=1, fleet=2)]
+
+    controller, done = limit_break_controller([long_island], bulins)
+
+    # The 2 free Bulins, not the one of fleet 2
+    assert done == 2
+    assert controller.limit_break_once.call_count == 2
+
+
+def test_no_copy_and_no_free_bulin_is_not_tried():
+    from types import SimpleNamespace
+    controller, done = limit_break_controller([SimpleNamespace(level=80, fleet=1)],
+                                              [SimpleNamespace(level=1, fleet=2)])
+
+    assert done == 0
+    controller.fleet_ship_enter.assert_not_called()
