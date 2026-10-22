@@ -328,3 +328,113 @@ def test_scheduler_waits_until_nobody_plays(monkeypatch):
     AzurLaneAutoScript.wait_while_user_plays(scheduler)
 
     assert sleeps == [1, 1]
+
+
+def test_logins_are_tried_again_later_each_time_up_to_10_minutes():
+    assert [alas.login_retry_delay(failures) for failures in range(1, 8)] == [1, 2, 4, 8, 10, 10, 10]
+
+
+class StopLoop(Exception):
+    pass
+
+
+class Looping(SimpleNamespace):
+    """
+    A scheduler loop whose tasks come one by one from `tasks` and whose runs return `results`, ended when the tasks
+    run out. Its device can't be reached for the first `offline` looks.
+    """
+
+    def __init__(self, tasks, results, offline=0):
+        tasks, results = list(tasks), list(results)
+        self.ran, self.waits, self.offline = [], [], offline
+
+        def get_next_task():
+            if not tasks:
+                raise StopLoop
+            return tasks.pop(0)
+
+        def run(command, skip_first_screenshot=False):
+            if command == 'log_flood_check':
+                return True
+            self.ran.append(command)
+            return results.pop(0)
+
+        config = SimpleNamespace(Emulator_Serial='', task_call=Mock(), task_delay=Mock(), Error_KeepRunning=True,
+                                 Error_HandleError=True, Error_OnePushConfig='provider: null')
+        super().__init__(
+            config_name='f2p', config=config, stop_event=None, wait_while_paused=Mock(),
+            checker=SimpleNamespace(wait_until_available=Mock(), is_recovered=lambda: False, check_now=Mock()),
+            get_next_task=get_next_task, is_first_task=False, run=run,
+            _device=SimpleNamespace(config=None, stuck_record_clear=Mock(), click_record_clear=Mock()),
+            wait_while_user_plays=Mock(), failure_record={}, failure_delay={}, login_failures=0,
+            login_retry_at=None, wait_until=lambda future: self.waits.append(future) or True)
+        self.login_failed = lambda reason: AzurLaneAutoScript.login_failed(self, reason)
+        self.login_succeeded = lambda: AzurLaneAutoScript.login_succeeded(self)
+        self.put_off_failed_task = Mock()
+
+    @property
+    def device(self):
+        if self.offline > 0:
+            self.offline -= 1
+            raise alas.RequestHumanTakeover
+        return self._device
+
+    def loop(self, monkeypatch):
+        monkeypatch.setattr(alas.logger, 'set_file_logger', Mock())
+        monkeypatch.setattr(alas, 'write_scheduler_state', Mock())
+        monkeypatch.setattr(alas.atexit, 'register', Mock())
+        monkeypatch.setattr(alas, 'del_cached_property', Mock())
+        monkeypatch.setattr(alas, 'handle_notify', Mock())
+        with pytest.raises(StopLoop):
+            AzurLaneAutoScript.loop(self)
+
+    def minutes_waited(self, start):
+        return [round((future - start).total_seconds() / 60) for future in self.waits]
+
+
+def test_a_game_that_can_not_log_in_is_tried_again_later_with_no_other_task(monkeypatch):
+    # 2026-10-22, a maintenance: every task failed on the login page and called Restart, every 30 s all night
+    start = datetime.now()
+    scheduler = Looping(tasks=['Restart', 'Commission', 'Main', 'Commission', 'Main'],
+                        results=[False, False, False, True, True])
+
+    scheduler.loop(monkeypatch)
+
+    # Only logins until one works, then the tasks
+    assert scheduler.ran == ['restart', 'restart', 'restart', 'restart', 'main']
+    assert scheduler.minutes_waited(start) == [1, 2, 4]
+    # Never put off for hours nor given up on
+    scheduler.put_off_failed_task.assert_not_called()
+    assert scheduler.login_failures == 0 and scheduler.login_retry_at is None
+
+
+def test_an_emulator_offline_is_connected_again_later(monkeypatch):
+    # 2026-10-22 00:35, the main account stopped for the night on 13 s of "device offline"
+    start = datetime.now()
+    scheduler = Looping(tasks=['Main', 'Main', 'Main', 'Main'], results=[True, True], offline=2)
+
+    scheduler.loop(monkeypatch)
+
+    assert scheduler.ran == ['restart', 'main']
+    assert scheduler.minutes_waited(start) == [1, 2]
+
+
+def test_an_emulator_lost_during_a_task_does_not_end_the_scheduler(monkeypatch):
+    monkeypatch.setattr(alas, 'handle_notify', Mock())
+    runner = Runner(keep_running=True, error=alas.RequestHumanTakeover())
+    runner.drop_device = Mock()
+    runner.login_failed = Mock()
+
+    assert AzurLaneAutoScript.run(runner, 'event2') is False
+
+    runner.drop_device.assert_called_once_with()
+    runner.login_failed.assert_called_once()
+    runner.config.task_call.assert_called_once_with('Restart')
+
+
+def test_an_emulator_lost_ends_the_scheduler_without_keep_running(monkeypatch):
+    monkeypatch.setattr(alas, 'handle_notify', Mock())
+    runner = Runner(keep_running=False, error=alas.RequestHumanTakeover())
+
+    with pytest.raises(SystemExit):
+        AzurLaneAutoScript.run(runner, 'event2')

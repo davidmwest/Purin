@@ -39,6 +39,22 @@ def failed_task_delay(previous=None):
     return min(previous * 2, 240)
 
 
+# A game that can't log in, in a maintenance or with its emulator gone, is tried again after 1, 2, 4, 8 minutes,
+# then every 10 (the user, 2026-10-22: keep checking for the end of maintenance, but every 10 minutes or so)
+LOGIN_RETRY_MAX = 10
+
+
+def login_retry_delay(failures):
+    """
+    Args:
+        failures (int): Logins failed in a row, 1 for the first
+
+    Returns:
+        int: Minutes before the next try to log in
+    """
+    return min(2 ** max(failures - 1, 0), LOGIN_RETRY_MAX)
+
+
 # Optimization_WhenTaskQueueEmpty=close_emulator stops the game and the emulator only for a wait this long or longer,
 # starting them again takes about 2 minutes. A shorter wait is spent at the main page.
 CLOSE_EMULATOR_MIN_WAIT = timedelta(minutes=10)
@@ -59,6 +75,10 @@ class AzurLaneAutoScript:
         self.failure_record = {}
         # Minutes a task was last put off for after failing over and over, {task: minutes}
         self.failure_delay = {}
+        # Logins failed in a row, and when to try again. While it is set, no task runs but Restart: any other would
+        # only fail on the login page and call Restart again, every 30 s all night (2026-10-22, a maintenance).
+        self.login_failures = 0
+        self.login_retry_at = None
 
     @cached_property
     def config(self):
@@ -83,11 +103,51 @@ class AzurLaneAutoScript:
             logger.critical(f'{e}, this scheduler does not tap over it')
             exit(1)
         except RequestHumanTakeover:
+            if self.config.Error_KeepRunning:
+                # The emulator offline for now, the loop tries again later
+                raise
             logger.critical('Request human takeover')
             exit(1)
         except Exception as e:
             logger.exception(e)
             exit(1)
+
+    def login_failed(self, reason):
+        """
+        The game could not log in, or its emulator could not be reached: no task runs until the next try.
+
+        Args:
+            reason (str):
+
+        Returns:
+            int: Minutes before the next try
+        """
+        self.login_failures += 1
+        minutes = login_retry_delay(self.login_failures)
+        self.login_retry_at = datetime.now().replace(microsecond=0) + timedelta(minutes=minutes)
+        # Restart is never put off for hours or given up on, the backoff here is its own
+        deep_set(self.failure_record, keys='Restart', value=0)
+        logger.warning(f'{reason}, {self.login_failures} time(s) in a row. '
+                       f'Try to log in again in {minutes} minutes, at {self.login_retry_at}')
+        return minutes
+
+    def login_succeeded(self):
+        if self.login_failures:
+            logger.info(f'Logged in again after {self.login_failures} failed tries')
+        self.login_failures = 0
+        self.login_retry_at = None
+
+    def drop_device(self):
+        """
+        Forget a device that can't be reached, the next task connects again.
+        The lock of the emulator stays with this process, see module/device/owner.py.
+        """
+        device = self.__dict__.pop('device', None)
+        if device is not None:
+            try:
+                device.user_input_stop()
+            except Exception as e:
+                logger.warning(f'Device not stopped: {e}')
 
     @cached_property
     def checker(self):
@@ -177,6 +237,18 @@ class AzurLaneAutoScript:
             exit(1)
         except RequestHumanTakeover:
             logger.critical('Request human takeover')
+            if self.config.Error_KeepRunning:
+                # Most likely the emulator offline for a while (2026-10-22 00:35, the main account stopped for the
+                # night on 13 s of "device offline"): connect again and log in later
+                handle_notify(
+                    self.config.Error_OnePushConfig,
+                    title=f"Alas <{self.config_name}> lost its emulator",
+                    content=f"<{self.config_name}> RequestHumanTakeover, trying again later",
+                )
+                self.drop_device()
+                self.config.task_call('Restart')
+                self.login_failed('Emulator not reached')
+                return False
             handle_notify(
                 self.config.Error_OnePushConfig,
                 title=f"Alas <{self.config_name}> crashed",
@@ -864,11 +936,27 @@ class AzurLaneAutoScript:
                 self.config.task_call('Restart')
             # Get task
             task = self.get_next_task()
+            # Not logged in: only Restart runs, at its next try
+            if self.login_retry_at is not None:
+                if datetime.now() < self.login_retry_at:
+                    logger.info(f'Game not logged in, no task runs before the next try to log in, '
+                                f'at {self.login_retry_at}')
+                    if not self.wait_until(self.login_retry_at):
+                        del_cached_property(self, 'config')
+                        continue
+                    del_cached_property(self, 'config')
+                task = 'Restart'
+                self.config.task_call('Restart')
             # Init device and change server
-            _ = self.device
+            try:
+                _ = self.device
+            except RequestHumanTakeover:
+                logger.critical('Request human takeover')
+                self.login_failed('Emulator not reached')
+                continue
             self.device.config = self.config
             # Skip first restart
-            if self.is_first_task and task == 'Restart':
+            if self.is_first_task and task == 'Restart' and self.login_retry_at is None:
                 logger.info('Skip task `Restart` at scheduler start')
                 self.config.task_delay(server_update=True)
                 del_cached_property(self, 'config')
@@ -896,6 +984,18 @@ class AzurLaneAutoScript:
             if success is None:
                 # Someone played on the emulator, the task is not counted as failed and runs again
                 self.wait_while_user_plays()
+                del_cached_property(self, 'config')
+                continue
+
+            # A login that failed is tried again later, any task that went well was logged in
+            if success:
+                self.login_succeeded()
+            elif task == 'Restart':
+                self.login_failed('Log in failed')
+                del_cached_property(self, 'config')
+                continue
+            elif self.login_retry_at is not None:
+                # The emulator was lost during the task
                 del_cached_property(self, 'config')
                 continue
 
