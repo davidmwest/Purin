@@ -535,3 +535,517 @@ pre.rich-traceback-code {
     height: 1.5rem;
     border: .2em solid currentColor;
 }
+/* ===== Purin look (2026-10-22): after Maid in Schale, a navy icon rail, soft cards, one accent. Colors are tokens of light-alas.css and dark-alas.css. No single quotes in these files: they are put into the page in a quoted script. ===== */
+
+body,
+.pywebio,
+button,
+input,
+select,
+textarea {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    background-color: var(--p-bg);
+    color: var(--p-text);
+}
+
+p {
+    color: inherit;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--p-scroll);
+    border-radius: 10px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+}
+
+/* Header */
+
+#pywebio-scope-header {
+    background-color: var(--p-surface);
+    border-bottom: 1px solid var(--p-border);
+    box-shadow: none;
+    min-height: 3.5rem;
+    align-items: center;
+}
+
+*[style*="--header-icon--"] {
+    border-radius: 12px;
+    box-shadow: 0 0 0 2px var(--p-surface), 0 0 0 3px var(--p-border);
+}
+
+*[style*="--header-text--"] {
+    font-size: 1.35rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--p-text);
+}
+
+#pywebio-scope-header_status > div {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .2rem .7rem .2rem .45rem;
+    border-radius: 999px;
+    background-color: var(--p-surface-2);
+    border: 1px solid var(--p-border);
+    color: var(--p-muted);
+    font-size: .8rem;
+    font-weight: 600;
+}
+
+#pywebio-scope-header_status > div > div {
+    width: 1rem !important;
+    height: 1rem !important;
+    border-width: .15em !important;
+    color: var(--p-accent);
+}
+
+#pywebio-scope-header_title > p {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--p-muted);
+    letter-spacing: .01em;
+}
+
+/* Icon rail */
+
+#pywebio-scope-aside {
+    background: var(--p-rail);
+    border-right: 0;
+    padding: .9rem .4rem 0 .35rem;
+}
+
+.btn-aside {
+    color: var(--p-rail-text);
+    border: 0 !important;
+    border-radius: 12px;
+    padding: 32px 0 .35rem 7px;
+    margin-bottom: .35rem;
+    font-size: .72rem;
+    font-weight: 600;
+    letter-spacing: .01em;
+    transition: background-color .12s ease, color .12s ease;
+}
+
+.btn-aside:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.05);
+    padding-left: 7px;
+    font-weight: 600;
+}
+
+.btn-aside-active,
+.btn-aside-active:hover {
+    color: #ffffff;
+    background-color: var(--p-rail-active);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    padding-left: 7px;
+    font-weight: 700;
+}
+
+.aside-icon {
+    margin-top: .35rem;
+}
+
+.aside-icon > path {
+    fill: var(--p-rail-text);
+}
+
+/* Menu */
+
+#pywebio-scope-menu {
+    background-color: var(--p-surface);
+    border-right: 1px solid var(--p-border);
+    box-shadow: none;
+    padding: 1rem .6rem;
+    width: 12.5rem;
+}
+
+#pywebio-scope-menu details {
+    margin-bottom: .1rem !important;
+}
+
+#pywebio-scope-menu summary {
+    padding: .4rem .7rem;
+    border-radius: 10px;
+    color: var(--p-muted);
+    font-size: .86rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color .12s ease, color .12s ease;
+}
+
+#pywebio-scope-menu summary:hover {
+    background-color: var(--p-hover) !important;
+    color: var(--p-text);
+}
+
+#pywebio-scope-menu details[open] > summary {
+    color: var(--p-text);
+}
+
+#pywebio-scope-menu details[open] > div {
+    margin-left: .55rem;
+    padding-left: .35rem;
+    border-left: 1px solid var(--p-border);
+}
+
+.btn-menu {
+    width: 100%;
+    color: var(--p-text);
+    border: 0 !important;
+    border-radius: 10px;
+    padding: .36rem .7rem;
+    margin: .05rem 0;
+    font-size: .88rem;
+    font-weight: 500;
+    transition: background-color .12s ease, color .12s ease;
+}
+
+.btn-menu:hover {
+    background-color: var(--p-hover);
+    color: var(--p-text);
+    padding-right: .7rem;
+    font-weight: 500;
+}
+
+.btn-menu-active,
+.btn-menu-active:hover {
+    background-color: var(--p-accent-soft);
+    color: var(--p-accent-text);
+    padding-right: .7rem;
+    font-weight: 700;
+}
+
+/* Content and cards */
+
+#pywebio-scope-content {
+    background-color: var(--p-bg);
+    padding: .9rem;
+}
+
+#pywebio-scope-scheduler-bar,
+#pywebio-scope-log-bar,
+#pywebio-scope-log,
+#pywebio-scope-running,
+#pywebio-scope-pending,
+#pywebio-scope-waiting,
+#pywebio-scope-navigator,
+[id^="pywebio-scope-group_"],
+#pywebio-scope-daemon-overview #pywebio-scope-groups,
+.container-log {
+    background-color: var(--p-surface) !important;
+    border: 1px solid var(--p-border) !important;
+    border-radius: 14px !important;
+    box-shadow: var(--p-shadow);
+    color: var(--p-text);
+}
+
+#pywebio-scope-scheduler-bar,
+#pywebio-scope-log-bar,
+#pywebio-scope-log,
+#pywebio-scope-running,
+#pywebio-scope-pending,
+#pywebio-scope-waiting,
+#pywebio-scope-daemon-overview #pywebio-scope-groups {
+    margin: .35rem;
+    padding: .8rem .9rem;
+    font-weight: 400;
+}
+
+#pywebio-scope-daemon-overview [id^="pywebio-scope-group_"] {
+    box-shadow: none;
+    border: 0 !important;
+}
+
+#pywebio-scope-scheduler-bar > p,
+#pywebio-scope-log-bar > p {
+    font-size: 1.02rem !important;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: auto .25rem !important;
+}
+
+#pywebio-scope-running > p,
+#pywebio-scope-pending > p,
+#pywebio-scope-waiting > p {
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--p-muted);
+    margin: 0 .3rem !important;
+}
+
+#pywebio-scope-running > p::before,
+#pywebio-scope-pending > p::before,
+#pywebio-scope-waiting > p::before {
+    content: "";
+    display: inline-block;
+    width: .45rem;
+    height: .45rem;
+    border-radius: 50%;
+    margin-right: .45rem;
+    vertical-align: .08rem;
+    background-color: var(--p-faint);
+}
+
+#pywebio-scope-running > p::before {
+    background-color: var(--p-ok);
+    box-shadow: 0 0 0 3px rgba(31, 157, 99, 0.15);
+}
+
+#pywebio-scope-pending > p::before {
+    background-color: var(--p-warn);
+}
+
+.hr-group {
+    height: 1px;
+    border: 0;
+    background-color: var(--p-border) !important;
+    margin: .55rem 0 .35rem !important;
+    opacity: 1;
+}
+
+[id^="pywebio-scope-overview-task_"] {
+    align-items: center;
+    margin: .05rem 0;
+    padding: .38rem .4rem .38rem .55rem;
+    border-radius: 10px;
+    transition: background-color .12s ease;
+}
+
+[id^="pywebio-scope-overview-task_"]:hover {
+    background-color: var(--p-hover);
+}
+
+[id^="pywebio-scope-overview-task_"] *[style*="--arg-title--"] {
+    font-size: .9rem;
+    font-weight: 600;
+    margin: 0 !important;
+}
+
+[id^="pywebio-scope-overview-task_"] *[style*="--arg-help--"] {
+    font-size: .74rem;
+    margin: .05rem 0 0 !important;
+    font-variant-numeric: tabular-nums;
+}
+
+[id^="pywebio-scope-overview-task_"] .btn {
+    font-size: .74rem;
+    font-weight: 600;
+    padding: .2rem .65rem;
+    border-radius: 8px;
+    background-color: transparent;
+    border: 1px solid var(--p-border);
+    color: var(--p-muted);
+    box-shadow: none;
+}
+
+[id^="pywebio-scope-overview-task_"] .btn:hover {
+    border-color: var(--p-accent);
+    color: var(--p-accent-text);
+    background-color: var(--p-accent-soft);
+}
+
+*[style*="--overview-notask-text--"] {
+    color: var(--p-faint);
+    font-size: .82rem;
+    padding: .6rem 0;
+}
+
+/* Buttons */
+
+.btn-on,
+.btn-off {
+    border-radius: 10px;
+    font-size: .85rem;
+    font-weight: 600;
+    padding: .34rem .85rem;
+    transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.btn-on {
+    background-color: var(--p-accent);
+    border: 1px solid var(--p-accent);
+    color: var(--p-on-accent);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.btn-on:hover {
+    background-color: var(--p-accent-hover);
+    border-color: var(--p-accent-hover);
+    color: var(--p-on-accent);
+}
+
+.btn-off {
+    background-color: var(--p-surface);
+    border: 1px solid var(--p-border-strong);
+    color: var(--p-text);
+}
+
+.btn-off:hover {
+    border-color: var(--p-accent);
+    color: var(--p-accent-text);
+}
+
+.btn-navigator {
+    background-color: transparent;
+    color: var(--p-text);
+    border-radius: 8px;
+    padding: .3rem .6rem;
+    font-size: .86rem;
+}
+
+.btn-navigator:hover {
+    background-color: var(--p-hover);
+    color: var(--p-accent-text);
+}
+
+#pywebio-scope-navigator {
+    padding: .4rem;
+    margin: .5rem .75rem;
+}
+
+/* Log */
+
+#pywebio-scope-log {
+    background-color: var(--p-log-bg) !important;
+    font-family: "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .76rem;
+    line-height: 1.45;
+    padding: .75rem .9rem;
+}
+
+/* Settings */
+
+[id^="pywebio-scope-group_"] {
+    padding: .9rem 1.1rem;
+    margin-top: .45rem;
+    margin-bottom: .45rem;
+}
+
+[id^="pywebio-scope-group_"] > p {
+    font-size: 1.02rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+[id^="pywebio-scope-group_"] > p + p,
+*[style*="--arg-help--"] {
+    color: var(--p-muted);
+}
+
+*[style*="--arg-title--"] {
+    font-size: .92rem;
+    font-weight: 600;
+}
+
+*[style*="--arg-help--"] {
+    font-size: .78rem;
+    line-height: 1.4;
+}
+
+[id^="pywebio-scope-arg_container-"] {
+    align-items: center;
+    padding: .3rem 0;
+    border-top: 1px solid var(--p-surface-2);
+}
+
+.form-control,
+.bootstrap-select > select {
+    background-color: var(--p-surface) !important;
+    color: var(--p-text);
+    border: 1px solid var(--p-border-strong) !important;
+    border-radius: 8px !important;
+    padding: .28rem .6rem !important;
+    font-size: .88rem;
+    transition: border-color .12s ease, box-shadow .12s ease;
+}
+
+select.form-control,
+.bootstrap-select > select {
+    padding-right: 1.6rem !important;
+    background-position: right .45rem center;
+    background-size: .8rem;
+}
+
+.form-control:focus,
+.bootstrap-select > select:focus {
+    border-color: var(--p-accent) !important;
+    box-shadow: var(--p-focus) !important;
+    outline: 0;
+}
+
+.form-control[readonly] {
+    border-color: transparent !important;
+    background-color: transparent !important;
+}
+
+.state > select {
+    border: 0 !important;
+    background-image: none;
+    background-color: transparent !important;
+    pointer-events: none;
+}
+
+.state-bold > select {
+    font-weight: 700;
+    color: var(--p-accent-text);
+}
+
+.state-light > select {
+    color: var(--p-muted);
+}
+
+[id^="pywebio-scope-arg_stored-stored-value-"] > div > input {
+    border: 0 !important;
+    background-color: transparent !important;
+}
+
+input[type="checkbox"] {
+    accent-color: var(--p-accent);
+}
+
+textarea,
+.CodeMirror-wrap {
+    border: 1px solid var(--p-border-strong) !important;
+    border-radius: 8px;
+    background-color: var(--p-surface);
+    color: var(--p-text);
+}
+
+.hr-task-group-line {
+    border-top: 1px solid var(--p-border);
+}
+
+.hr-task-group-text {
+    color: var(--p-muted);
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+pre.rich-traceback-code {
+    background-color: var(--p-log-bg);
+    color: var(--p-text);
+}
+
+summary {
+    color: var(--p-text);
+}
