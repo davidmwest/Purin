@@ -6,7 +6,10 @@ emulator's window comes through its virtual touch device, "BlueStacks Virtual To
 through its keyboard. `getevent` reads those devices: on BlueStacks Air, a minute and a half of Purin's taps
 showed nothing there.
 
-A touch, a mouse button or a key, pressed or released, counts. A finger or the mouse moving does not, nor a sensor.
+A touch, a mouse button or a key pressed counts. A release alone does not: as the game starts, BlueStacks adds a
+mouse device for a moment that sends a BTN_MOUSE UP with no DOWN before it (2026-10-22, the F2P emulator, after every
+app start, 800 times a day: each restart of the game was taken for someone playing, and restarted again 30 s later).
+A finger or the mouse moving does not count, nor a sensor.
 """
 import subprocess
 import threading
@@ -32,9 +35,15 @@ def is_user_event(line):
         bool: If someone touched the screen, clicked or pressed a key
     """
     parts = str(line).split()
-    if len(parts) < 3 or not parts[0].startswith('/dev/input/'):
+    if len(parts) < 4 or not parts[0].startswith('/dev/input/'):
         return False
-    return parts[1] == 'EV_KEY' or parts[2] == 'ABS_MT_TRACKING_ID'
+    kind, code, value = parts[1], parts[2], parts[3]
+    if kind == 'EV_KEY':
+        return value != 'UP'
+    if code == 'ABS_MT_TRACKING_ID':
+        # A contact starts with its id, ends with ffffffff
+        return value.lower() != 'ffffffff'
+    return False
 
 
 class UserInputWatcher:

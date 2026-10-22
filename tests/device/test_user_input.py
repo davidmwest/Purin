@@ -14,8 +14,15 @@ from module.exception import UserPlaying
 @pytest.mark.parametrize('line, user', [
     # A click on the window of BlueStacks Air
     ('/dev/input/event2: EV_KEY       BTN_TOUCH            DOWN', True),
-    ('/dev/input/event2: EV_KEY       BTN_MOUSE            UP', True),
+    ('/dev/input/event2: EV_KEY       BTN_MOUSE            DOWN', True),
     ('/dev/input/event2: EV_ABS       ABS_MT_TRACKING_ID   00000001', True),
+    # Its end, after the press that counted
+    ('/dev/input/event2: EV_KEY       BTN_TOUCH            UP', False),
+    ('/dev/input/event2: EV_ABS       ABS_MT_TRACKING_ID   ffffffff', False),
+    # The mouse device BlueStacks adds for a moment as the game starts, 2026-10-22: a release with no press
+    ('/dev/input/event3: EV_KEY       BTN_MOUSE            UP', False),
+    # A key held down
+    ('/dev/input/event1: EV_KEY       KEY_A                REPEAT', True),
     # A key of its keyboard
     ('/dev/input/event1: EV_KEY       KEY_A                DOWN', True),
     # The mouse moving, the end of an event
