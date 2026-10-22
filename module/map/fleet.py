@@ -78,20 +78,56 @@ class Fleet(Camera, AmbushHandler):
         else:
             return 1
 
+    # Cells each fleet was found to walk at most, by fleet_current_index, see walk_timeout_out_of_step()
+    fleet_step_found = {}
+
     @property
     def fleet_step(self):
         if not self.config.MAP_HAS_FLEET_STEP:
             return 0
         if self.fleet_current_index == 2:
             if self.fleets_reversed:
-                return self.config.Fleet_Fleet1Step
+                step = self.config.Fleet_Fleet1Step
             else:
-                return self.config.Fleet_Fleet2Step
+                step = self.config.Fleet_Fleet2Step
         else:
             if self.fleets_reversed:
-                return self.config.Fleet_Fleet2Step
+                step = self.config.Fleet_Fleet2Step
             else:
-                return self.config.Fleet_Fleet1Step
+                step = self.config.Fleet_Fleet1Step
+        found = self.fleet_step_found.get(self.fleet_current_index, 0)
+        if found and (not step or found < step):
+            return found
+        return step
+
+    def walk_timeout_out_of_step(self, location):
+        """
+        A fleet that did not move may have been sent further than it walks on a map with fleet step. The game says so
+        with a text that handle_walk_out_of_step() matches, but not always: 2026-10-22, the F2P account at 2560x1440
+        on event T3, its fleet 1 walks 2 cells and Fleet1Step was 3. Purin tapped a siren 3 cells away 12 times, and
+        every run of the task ended there.
+
+        Args:
+            location (tuple): Where the fleet was sent
+
+        Raises:
+            MapWalkError: If the fleet was sent further than a cell. The step of the fleet is lowered by one for the
+                rest of the task, and goto() walks there a cell at a time.
+        """
+        if not self.config.MAP_HAS_FLEET_STEP or not self.fleet_current:
+            return
+        distance = int(np.sum(np.abs(np.subtract(location, self.fleet_current))))
+        if distance <= 1:
+            return
+        step = self.fleet_step
+        lowered = max(min(step, distance) if step else distance, 2) - 1
+        found = dict(self.fleet_step_found)
+        found[self.fleet_current_index] = lowered
+        self.fleet_step_found = found
+        logger.warning(f'Fleet {self.fleet_current_index} did not walk {distance} cells to '
+                       f'{location2node(location)}, it walks {lowered} at most from now on. '
+                       f'If that is right, set its Fleet Step Number to {lowered}')
+        raise MapWalkError('walk_timeout_out_of_step')
 
     def fleet_ensure(self, index):
         if self.fleet_set(index=index):
@@ -434,6 +470,7 @@ class Fleet(Camera, AmbushHandler):
                     logger.warning('Walk timeout. Retrying.')
                     self.predict()
                     self.ensure_edge_insight(skip_first_update=False)
+                    self.walk_timeout_out_of_step(location)
                     break
 
             # End
