@@ -479,11 +479,31 @@ class FastForwardHandler(AutoSearchHandler):
             if next_stage != prev_stage:
                 logger.info(f'Stage {prev_stage} increases to {next_stage}')
                 self.config.Campaign_Name = next_stage
+            elif self.campaign_name_last(prev_stage) and not self.config.MAP_IS_ONE_TIME_STAGE:
+                # The user's rule (2026-10-22): oil goes into the hardest stage the fleet clears, so the last stage
+                # of an event is farmed on
+                logger.info(f'Stage {prev_stage} is the last stage, farm it on')
+                self.config.StopCondition_MapAchievement = 'non_stop'
             else:
                 logger.info(f'Stage {prev_stage} cannot increase, stop at current stage')
                 self.config.Scheduler_Enable = False
         else:
             self.config.Scheduler_Enable = False
+
+    def campaign_name_last(self, name):
+        """
+        Args:
+            name (str): Such as `6-1`, `t6`, `campaign_6_1`
+
+        Returns:
+            bool: If the stage ends one of the chains of stage increase, the last one that exists of its event
+        """
+        name = to_map_input_name(name)
+        for increase in self.STAGE_INCREASE:
+            increase = [i.strip(' \t\r\n') for i in increase.split('>')]
+            if name in increase:
+                return self.campaign_name_increase(name) == name
+        return False
 
     def _set_2x_book_status(self, status, check_button, box_button, skip_first_screenshot=True):
         """
