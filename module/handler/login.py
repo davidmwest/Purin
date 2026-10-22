@@ -27,6 +27,11 @@ _CAPSULE_HOME = Button(area=(1213, 26, 1245, 55), color=(0, 0, 0),
                        file='./assets/en/ui/CAPSULE_RERUN_HOME.png', name='CAPSULE_RERUN_HOME_CHECK')
 
 
+# A game update downloads before the login, 570 MB on 2026-10-22: the screen holds a progress bar for minutes, and
+# a restart after 3 minutes of nothing known on it starts the download over. Stuck and click checks wait this long.
+GAME_UPDATE_WAIT = 20 * 60
+
+
 class LoginHandler(UI):
     def _handle_app_login(self):
         """
@@ -44,10 +49,15 @@ class LoginHandler(UI):
         confirm_timer = Timer(1.5, count=4).start()
         orientation_timer = Timer(5)
         login_success = False
+        download_timer = Timer(GAME_UPDATE_WAIT)
         self.device.stuck_record_clear()
         self.device.click_record_clear()
 
         while 1:
+            # A game update downloading
+            if download_timer.started() and not download_timer.reached():
+                self.device.stuck_record_clear()
+                self.device.click_record_clear()
             # Watch device rotation
             if not login_success and orientation_timer.reached():
                 # Screen may rotate after starting an app
@@ -88,6 +98,7 @@ class LoginHandler(UI):
             if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=5):
                 continue
             if self.appear_then_click(LOGIN_GAME_UPDATE, offset=(30, 30), interval=5):
+                self.game_update_wait(download_timer)
                 continue
             if server.server == 'cn' and not login_success:
                 if self.handle_cn_user_agreement():
@@ -101,6 +112,9 @@ class LoginHandler(UI):
                 continue
             # Popups
             if self.handle_popup_confirm('LOGIN'):
+                if not login_success:
+                    # The update asks in a popup like this one, which takes it first at 1440p (F2P, 2026-10-22)
+                    self.game_update_wait(download_timer)
                 continue
             if self.handle_urgent_commission():
                 continue
@@ -118,6 +132,16 @@ class LoginHandler(UI):
                 continue
 
         return True
+
+    @staticmethod
+    def game_update_wait(download_timer):
+        """
+        Args:
+            download_timer (Timer): Started at the first confirm of a game update, until GAME_UPDATE_WAIT
+        """
+        if not download_timer.started():
+            logger.info(f'A game update may be downloading, wait for it up to {GAME_UPDATE_WAIT // 60} minutes')
+            download_timer.start()
 
     _user_agreement_timer = Timer(1, count=2)
 
