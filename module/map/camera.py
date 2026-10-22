@@ -279,6 +279,10 @@ class Camera(MapOperation):
 
         def is_still_prev():
             # Still the same as prev view
+            # A first view outside the map swipes before any view was kept: 1-1, one row of grids, on the F2P
+            # account, 2026-10-22, ended its task on a TypeError here
+            if prev_center_offset is None:
+                return False
             return np.linalg.norm(self.view.center_offset - prev_center_offset) < 0.001
 
         while 1:
