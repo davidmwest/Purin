@@ -47,3 +47,17 @@ def test_ships_on_commissions():
 
     assert [card_status(image, column, top) for column, top in found] == \
            ['free'] * 4 + ['commission'] * 9
+
+
+def test_a_fleet_out_on_a_map_is_engaged():
+    # The dock page, F2P account 2026-10-22: fleet 1 out on 1-1 ("Engaged", its FLEET badges hidden), the Bulin of
+    # fleet 2, Hammann and others on commissions
+    image = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'dock_engaged_f2p.png')), cv2.COLOR_BGR2RGB)
+    found = [(card.column, card.top) for row in DockReader().rows(image) for card in row.cards if card.top + 165 <= 720]
+
+    assert [card_status(image, column, top) for column, top in found] == [
+        'battle', 'battle', 'battle', 'battle', 'battle', 'free', 'commission',
+        # Crescent in red and pink is free
+        'commission', 'free', 'commission', 'commission', 'free', 'commission', 'commission',
+        'commission', 'commission', 'commission', 'free', 'free', 'free', 'free',
+    ]

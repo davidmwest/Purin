@@ -9,6 +9,8 @@ On the F2P account (2560x1440 brought to 1280x720, 2026-10-22):
 - the rarity stripe on top of a card is 5 px high and moves by up to 4 px from a row to the next: it is searched for.
 - the template of "In action" scores too low, every ship on a commission read as free. The green banner itself covers
   a third of its band on a card on commission and none on the others.
+- a fleet out on a map shows a red "Engaged" banner over its cards, which hides their FLEET badge: 27 to 34% of its band
+  is red, 16% at most on a portrait in red or pink (Crescent).
 """
 import numpy as np
 
@@ -35,6 +37,7 @@ BANNER_SEARCH = (120, 165)
 BANNER_HEIGHT = 14
 BANNER_X = (4, 100)
 BANNER_COVER = 0.15
+ENGAGED_COVER = 0.22
 
 
 def card_level(image, column, top):
@@ -77,16 +80,21 @@ def card_rarity(image, column, top):
 def card_status(image, column, top):
     """
     Returns:
-        str: 'commission' when her card shows "In action", else 'free'
+        str: 'commission' when her card shows "In action", 'battle' when it shows "Engaged" (her fleet is out on a
+            map), else 'free'
     """
     left = CARD_LEFTS[column]
     x1, x2 = BANNER_X
-    best = 0.
+    green_best = red_best = 0.
     for y in range(top + BANNER_SEARCH[0], top + BANNER_SEARCH[1], 2):
         if y + BANNER_HEIGHT > image.shape[0]:
             break
         band = image[y:y + BANNER_HEIGHT, left + x1:left + x2].astype(np.int16)
         r, g, b = band[:, :, 0], band[:, :, 1], band[:, :, 2]
-        green = (g > 140) & (g > r + 30) & (g > b + 20)
-        best = max(best, float(green.mean()))
-    return 'commission' if best > BANNER_COVER else 'free'
+        green_best = max(green_best, float(((g > 140) & (g > r + 30) & (g > b + 20)).mean()))
+        red_best = max(red_best, float(((r > 180) & (r > g + 70) & (r > b + 70)).mean()))
+    if green_best > BANNER_COVER:
+        return 'commission'
+    if red_best > ENGAGED_COVER:
+        return 'battle'
+    return 'free'

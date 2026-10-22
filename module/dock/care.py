@@ -88,6 +88,7 @@ class DockCare(FleetEnhance):
         self.dock_filter_set(sort='level', index='all', faction='all', rarity='all', extra='no_limit')
         retrofits = {name[:-len(RETROFIT)] for name in matcher.ships if name.endswith(RETROFIT)}
         cards = []
+        phantoms = 0
         for card, fleet in DockWalker(self).cards():
             image = self.device.image
             x1, y1, x2, y2 = CARD_NAME
@@ -96,16 +97,24 @@ class DockCare(FleetEnhance):
             read = str(Ocr(button, lang='cnocr', letter=(255, 255, 255), threshold=128, name='CENSUS_NAME').ocr(image))
             data, score = matcher.match_score(read)
             ship = data.name if data is not None and score >= MATCH_SCORE else ''
+            level = card_level(image, card.column, card.top)
+            if not ship and not level:
+                # 2026-10-22: the walk read a row of 7 that is no cards, "心<NN" and ">^" at level 0, between real
+                # rows: 154 cards for a dock of 147. A card left out gets no verdict and nothing is done to it.
+                phantoms += 1
+                continue
             cards.append(Card(
                 index=len(cards), read=read, ship=ship,
                 rarity=matcher.ships[ship].rarity if ship else '',
                 frame=card_rarity(image, card.column, card.top),
-                level=card_level(image, card.column, card.top),
+                level=level,
                 locked=bool(card.locked), fleet=int(fleet),
                 status=card_status(image, card.column, card.top),
                 bulin='Bulin' in ship,
                 retrofit=ship in retrofits,
             ))
+        if phantoms:
+            logger.info(f'{phantoms} cards read with no name nor level, left out')
         return cards
 
     def fleet_needs(self, cards):
@@ -116,7 +125,8 @@ class DockCare(FleetEnhance):
         fleets = set(self.formation_fleets())
         needs = {}
         for card in cards:
-            if card.ship and card.fleet in fleets and not card.bulin:
+            # A ship "Engaged" is in a fleet out on a map, the fleets that farm: her banner hides her FLEET badge
+            if card.ship and (card.fleet in fleets or card.status == 'battle') and not card.bulin:
                 needs[card.ship] = max(needs.get(card.ship, 0), copies_needed(card.level))
         return needs
 

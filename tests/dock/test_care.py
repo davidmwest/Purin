@@ -39,3 +39,13 @@ def test_needs_of_the_fleets_purin_levels():
     ]
 
     assert care.fleet_needs(cards) == {'Long Island': 3, 'Laffey': 3, 'Hammann': 4}
+
+
+def test_ships_engaged_on_a_map_are_ships_of_the_fleets():
+    # Their "Engaged" banner hides their FLEET badge: the first dry run, 2026-10-22, had no needs at all
+    care = DockCare.__new__(DockCare)
+    care.formation_fleets = lambda: [1]
+    engaged = Card(index=0, read='Long Island', ship='Long Island', rarity='Rare', frame='Rare', level=80, locked=False,
+                   fleet=0, status='battle', bulin=False, retrofit=False)
+
+    assert care.fleet_needs([engaged]) == {'Long Island': 3}
