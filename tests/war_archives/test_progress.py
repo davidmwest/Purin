@@ -109,6 +109,36 @@ def test_category_selection_reserves_before_each_of_at_most_two_inputs(owner):
     assert owner.device.click.call_count == 2
 
 
+@pytest.mark.parametrize('recognized', ['ex', 'sp'])
+def test_slow_category_recognition_cannot_click_or_succeed_after_wall_deadline(owner, monkeypatch, recognized):
+    clock = [0.0]
+    monkeypatch.setattr(p, 'monotonic', lambda: clock[0])
+    owner._list_page = Mock(return_value=True)
+    def slow_category():
+        clock[0] += 11
+        return recognized
+    owner._category = Mock(side_effect=slow_category)
+    persist = Mock()
+    assert not owner._select_category('sp', record(), persist)
+    owner._category.assert_called_once()
+    persist.assert_not_called()
+    owner.device.click.assert_not_called()
+
+
+def test_category_wall_deadline_stops_unknown_pages_before_minimum_loop_frames(owner, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(p, 'monotonic', lambda: clock[0])
+    def slow_unknown_page():
+        clock[0] += 11
+        return False
+    owner._list_page = Mock(side_effect=slow_unknown_page)
+    owner._category = Mock()
+    assert not owner._select_category('sp', record(), Mock())
+    owner._list_page.assert_called_once()
+    owner._category.assert_not_called()
+    owner.device.click.assert_not_called()
+
+
 def test_scroll_is_one_bounded_observed_thumb_drag_with_preinput_journal(owner):
     info = dict(top=100, bottom=200, position=.2)
     owner._list_page = Mock(return_value=True)

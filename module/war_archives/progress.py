@@ -190,10 +190,17 @@ class ArchiveProgress(CampaignUI):
     def _select_category(self, category, record, persist):
         settled = Timer(2, count=2).start()
         clicks = 0
+        deadline = monotonic() + 10
         for _ in self.loop(skip_first=False, timeout=10):
+            if monotonic() >= deadline:
+                break
             if not self._list_page():
                 continue
             current = self._category()
+            # The loop's Timer also requires a minimum frame count. Slow
+            # recognition must not keep that count alive past the wall limit.
+            if monotonic() >= deadline:
+                break
             if current == category:
                 return True
             if current is None or not settled.reached() or clicks >= 2:
