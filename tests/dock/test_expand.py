@@ -157,7 +157,7 @@ def test_a_purchase_cancels_the_popup_after_it_and_never_confirms(monkeypatch):
 
     expand.loop = loop
 
-    assert expand.expansion_buy() is True
+    assert expand.expansion_buy(price=200, gems=200) is True
 
     assert clicks.count('DOCK_EXPANSION') == 1
     assert clicks.count(PURCHASE_BUTTON.name) == 1
@@ -197,3 +197,103 @@ def test_popup_capture_keeps_the_frame_before_the_cancel_handler(monkeypatch):
     assert expand._cancel_purchase_popup() is True
 
     assert (save.call_args[0][0] == before).all()
+
+
+def test_the_captured_second_confirmation_matches_the_checked_offer():
+    assert make_expand('dock_expansion_confirm_f2p').expansion_confirmation(price=200, gems=250)
+
+
+def test_a_different_price_in_the_actual_confirmation_is_rejected():
+    expand = make_expand('dock_expansion_confirm_f2p')
+    # Copy the captured "2" over the next digit: the screen now offers 220 gems. The full sentence still
+    # matches its template, so rejection must come from reading the amount independently.
+    expand.device.image[331:361, 483:499] = expand.device.image[331:361, 468:484].copy()
+    from module.dock.expand import CONFIRM_SENTENCE, CONFIRM_SENTENCE_AREA
+    assert expand._appear(CONFIRM_SENTENCE, CONFIRM_SENTENCE_AREA)
+
+    assert not expand.expansion_confirmation(price=200, gems=250)
+
+
+@pytest.mark.parametrize('image', ['shop_items_f2p', 'dock_expansion_popup_f2p', 'main_f2p'])
+def test_no_second_confirmation_on_other_screens(image):
+    assert not make_expand(image).expansion_confirmation(price=200, gems=250)
+
+
+@pytest.mark.parametrize('price, gems', [(0, 250), (199, 250), (250, 300), (200, 199)])
+def test_an_unverified_offer_or_insufficient_gems_never_start_a_purchase(price, gems):
+    expand = make_expand('dock_expansion_confirm_f2p')
+
+    assert not expand.expansion_confirmation(price=price, gems=gems)
+    assert expand.expansion_buy(price=price, gems=gems) is False
+
+    expand.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('amount', [0, 20, 199, 250, 300])
+def test_the_confirmation_price_must_be_read_and_match_the_shop(monkeypatch, amount):
+    # The sentence still matches if one digit changes. Its price must independently agree with the checked offer.
+    monkeypatch.setattr('module.dock.expand.Digit.ocr', lambda self, image: amount)
+
+    assert not make_expand('dock_expansion_confirm_f2p').expansion_confirmation(price=200, gems=250)
+
+
+@pytest.mark.parametrize('after_confirm', ['shop', 'unrelated'])
+def test_only_the_reviewed_dock_confirmation_is_confirmed_once(monkeypatch, after_confirm):
+    from module.ui_white.assets import POPUP_CANCEL_WHITE
+    from module.dock.expand import CONFIRM_BUTTON, PURCHASE_BUTTON
+    shop = load_image(f'{DATA}/shop_items_f2p.png')
+    frames = {
+        'shop': shop,
+        'popup': load_image(f'{DATA}/dock_expansion_popup_f2p.png'),
+        'confirm': load_image(f'{DATA}/dock_expansion_confirm_f2p.png'),
+        'unrelated': white_popup_on(shop),
+    }
+    state = {'now': 'shop', 'linger': 0}
+    clicks = []
+
+    def click(button):
+        clicks.append(button.name)
+        if state['now'] == 'shop' and button.name == 'DOCK_EXPANSION':
+            state['now'] = 'popup'
+        elif state['now'] == 'popup' and button is PURCHASE_BUTTON:
+            state['now'] = 'confirm'
+        elif state['now'] == 'confirm' and button is CONFIRM_BUTTON:
+            state['now'] = 'confirmed'
+        elif state['now'] == 'unrelated' and button is POPUP_CANCEL_WHITE:
+            state['now'] = 'shop'
+
+    expand = make_expand('shop_items_f2p')
+    expand.device = SimpleNamespace(image=shop, click=click, stuck_record_add=Mock(), display_scale=2.0,
+                                    screenshot=Mock(), sleep=Mock())
+    expand.interval_timer = {}
+    save = Mock()
+    monkeypatch.setattr('module.dock.expand.save_image', save)
+    monkeypatch.setattr('module.dock.expand.os.makedirs', Mock())
+
+    def loop():
+        while 1:
+            frame = state['now']
+            if frame == 'confirmed':
+                # A successful tap need not clear the dialog before the next screenshot.
+                state['linger'] += 1
+                if state['linger'] < 4:
+                    frame = 'confirm'
+                else:
+                    state['now'] = frame = after_confirm
+            expand.device.image = frames[frame]
+            yield expand.device.image
+
+    expand.loop = loop
+
+    assert expand.expansion_buy(price=200, gems=250) is True
+
+    assert clicks.count('DOCK_EXPANSION') == 1
+    assert clicks.count(PURCHASE_BUTTON.name) == 1
+    assert clicks.count(CONFIRM_BUTTON.name) == 1
+    assert state['now'] == 'shop'
+    if after_confirm == 'unrelated':
+        assert sum(name.startswith(POPUP_CANCEL_WHITE.name) for name in clicks) == 1
+        save.assert_called_once()
+        assert (save.call_args[0][0] == frames['unrelated']).all()
+    else:
+        save.assert_not_called()

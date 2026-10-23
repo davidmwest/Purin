@@ -21,12 +21,16 @@ END_DRAGS = 3
 
 
 class DockWalker:
-    def __init__(self, main):
+    def __init__(self, main, list_bottom=LIST_BOTTOM, card_read_bottom=CARD_READ_BOTTOM):
         """
         Args:
             main (ModuleBase): With its device on page_dock
+            list_bottom (int): Bottom of the visible card list, above a picker's Confirm bar
+            card_read_bottom (int): Height of a card that must be visible before yielding it
         """
         self.main = main
+        self.list_bottom = list_bottom
+        self.card_read_bottom = card_read_bottom
         self.reader = DockReader()
         self.fleet_scanner = FleetScanner()
 
@@ -53,8 +57,8 @@ class DockWalker:
         """
         Drag the list up by a distance, slow enough not to fling it.
         """
-        distance = int(min(max(distance, 20), LIST_BOTTOM - LIST_TOP - 120))
-        start_y = LIST_BOTTOM - 60
+        distance = int(min(max(distance, 20), self.list_bottom - LIST_TOP - 120))
+        start_y = self.list_bottom - 60
         duration = max(distance / DRAG_SPEED, 0.5)
         self.device.click_record_clear()
         self.device.swipe((DRAG_X, start_y), (DRAG_X, start_y - distance), duration=(duration, duration + 0.05),
@@ -89,7 +93,8 @@ class DockWalker:
         while 1:
             self.device.screenshot()
             image = self.device.image
-            rows = [row for row in self.reader.rows(image) if row.top + CARD_READ_BOTTOM <= LIST_BOTTOM]
+            rows = [row for row in self.reader.rows(image)
+                    if row.top + self.card_read_bottom <= self.list_bottom]
             if last is not None:
                 last_top = find_row(image, last)
                 if last_top is None:

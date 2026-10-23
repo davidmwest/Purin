@@ -20,10 +20,10 @@ class FakeDock:
     a drag on the list moves it by its length, a drag on the scroll bar takes it to its top.
     """
 
-    def __init__(self, cards, seed=0):
+    def __init__(self, cards, seed=0, list_bottom=LIST_BOTTOM):
         rng = np.random.default_rng(seed)
         rows = (cards + 6) // 7
-        height = max(FIRST_ROW + rows * ROW_DELTA + 60, LIST_BOTTOM - LIST_TOP)
+        height = max(FIRST_ROW + rows * ROW_DELTA + 60, list_bottom - LIST_TOP)
         self.content = np.full((height, 1280, 3), 20, dtype=np.uint8)
         for index in range(cards):
             row, column = divmod(index, 7)
@@ -31,7 +31,8 @@ class FakeDock:
             self.content[top:top + CARD_HEIGHT, left:left + CARD_WIDTH] = \
                 rng.integers(40, 230, size=(CARD_HEIGHT, CARD_WIDTH, 3), dtype=np.uint8)
             self.content[top + 90:top + 130, left + 50:left + 90] = 10 + index * 8
-        self.view = LIST_BOTTOM - LIST_TOP
+        self.list_bottom = list_bottom
+        self.view = list_bottom - LIST_TOP
         self.max_offset = max(height - self.view, 0)
         self.offset = 0
         self.image = None
@@ -39,7 +40,7 @@ class FakeDock:
 
     def screenshot(self):
         image = np.full((720, 1280, 3), 90, dtype=np.uint8)
-        image[LIST_TOP:LIST_BOTTOM] = self.content[self.offset:self.offset + self.view]
+        image[LIST_TOP:self.list_bottom] = self.content[self.offset:self.offset + self.view]
         self.image = image
         return image
 
@@ -86,3 +87,34 @@ def test_the_walk_starts_from_the_top():
     walker = DockWalker(SimpleNamespace(device=device))
     first, _ = next(walker.cards())
     assert (first.column, int(device.image[first.top + 106, CARD_LEFTS[0] + 70, 0])) == (0, 10)
+
+
+def test_picker_walk_reads_every_card_once_above_confirm_bar():
+    device = FakeDock(28, list_bottom=630)
+    walker = DockWalker(SimpleNamespace(device=device), list_bottom=630, card_read_bottom=CARD_HEIGHT)
+    seen = []
+    for card, fleet in walker.cards():
+        assert card.top + CARD_HEIGHT <= 630
+        value = int(device.image[card.top + 106, CARD_LEFTS[card.column] + 70, 0])
+        seen.append((value - 10) // 8)
+
+    assert seen == list(range(28))
+    assert device.swipes < 15
+
+
+def test_picker_walk_stops_when_drag_repeats_the_same_page():
+    device = FakeDock(28, list_bottom=630)
+    device.swipe = lambda *args, **kwargs: None
+    walker = DockWalker(SimpleNamespace(device=device), list_bottom=630, card_read_bottom=CARD_HEIGHT)
+    drags = []
+    original_drag = walker.drag
+
+    def drag(distance):
+        drags.append(distance)
+        assert len(drags) <= 5, 'A repeated end page must terminate the walk'
+        original_drag(distance)
+
+    walker.drag = drag
+
+    assert len(list(walker.cards())) == 14
+    assert len(drags) == 4

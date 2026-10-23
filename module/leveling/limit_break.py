@@ -49,6 +49,11 @@ SAFE_TAP = area_button((990, 292, 1010, 308), 'LIMIT_BREAK_SAFE')
 # The slot of the tab empties the moment Confirm is taken, before this shows.
 RESULT = './assets/leveling/limit_break_result.png'
 RESULT_AREA = (660, 110, 1095, 265)
+# On the final break Quick Select disappears. The tab instead shows "Max Level" and a blue Confirm.
+# Long Island reached this screen on F2P, but the missing Quick Select was mistaken for an animation.
+COMPLETE = './assets/leveling/limit_break_complete.png'
+COMPLETE_AREA = (975, 625, 1272, 698)
+COMPLETE_READS = 2
 # Seconds on the tab with the slot emptied and no result shown, before the limit break is taken as done
 RESULT_WAIT = 5
 # A ship is limit broken 3 times at most
@@ -56,6 +61,8 @@ LIMIT_BREAK_MAX = 3
 # Seconds for Quick Select to fill the slot, and for a limit break to come back to the tab
 SELECT_WAIT = 3
 BREAK_TIMEOUT = 30
+CONFIRM_RETRIES = 2
+RESULT_TAPS = 3
 # Screens of a limit break that did not go through, for a look at what held it
 STUCK_DIR = './log/limit_break'
 STUCK_KEEP = 20
@@ -123,6 +130,9 @@ class LimitBreak(FleetEnhance):
     def is_limit_break_result(self):
         return template_score(self.device.image, self._template(RESULT), RESULT_AREA) > SIMILARITY
 
+    def is_limit_break_complete(self):
+        return template_score(self.device.image, self._template(COMPLETE), COMPLETE_AREA) > SIMILARITY
+
     def save_stuck_screen(self, tag):
         """
         2026-10-22, the F2P account: Long Island and Laffey each had a Universal Bulin in the slot, Confirm was tapped
@@ -179,7 +189,7 @@ class LimitBreak(FleetEnhance):
 
         Pages:
             in: limit break tab
-            out: limit break tab
+            out: limit break tab (Quick Select or Max Level), or the last screen on failure
         """
         # Quick Select puts a copy or a Bulin in the slot. An Elite one asks to continue first, and its popup
         # covers the slot and Confirm: Laffey's copy was taken as no material, Confirm as not lit.
@@ -192,6 +202,9 @@ class LimitBreak(FleetEnhance):
             if self.handle_popup_confirm_loose('LIMIT_BREAK_MATERIAL'):
                 timeout.reset()
                 continue
+            if self.is_limit_break_complete():
+                logger.info('The ship is already fully limit broken')
+                return False
             if not self.is_limit_break_tab():
                 continue
             if not self.is_slot_empty():
@@ -203,13 +216,15 @@ class LimitBreak(FleetEnhance):
             logger.info('Confirm is not lit, the level or the coins are short')
             return False
         self.device.click(CONFIRM_BUTTON)
-        # A popup to confirm maybe, the result, a tap closes it, then the tab with its slot empty
+        # A popup to confirm maybe, the result, then either an empty material slot or Max Level.
         timeout = Timer(BREAK_TIMEOUT, count=60).start()
         tap = Timer(2)
         retry = Timer(3, count=6).start()
         emptied = Timer(RESULT_WAIT, count=10)
         result = False
-        retried = False
+        retries = 0
+        result_taps = 0
+        complete_reads = 0
         for _ in self.loop():
             if timeout.reached():
                 logger.warning('The limit break did not come back to its tab')
@@ -217,12 +232,24 @@ class LimitBreak(FleetEnhance):
                 return result
             if self.is_limit_break_result():
                 result = True
-                if tap.reached():
+                complete_reads = 0
+                emptied.clear()
+                if result_taps < RESULT_TAPS and tap.reached():
                     self.device.click(SAFE_TAP)
+                    result_taps += 1
                     tap.reset()
                 continue
             if self.handle_popup_confirm_loose('LIMIT_BREAK'):
+                complete_reads = 0
+                emptied.clear()
                 continue
+            if self.is_limit_break_complete():
+                complete_reads += 1
+                if complete_reads >= COMPLETE_READS:
+                    logger.info('The final limit break completed: Max Level')
+                    return True
+                continue
+            complete_reads = 0
             if self.is_limit_break_tab():
                 if self.is_slot_empty():
                     if result:
@@ -240,16 +267,18 @@ class LimitBreak(FleetEnhance):
                     return True
                 if retry.reached():
                     # The tap on Confirm did not get through
-                    if not retried:
+                    if retries >= CONFIRM_RETRIES or not confirm_orange(self.device.image):
+                        logger.warning('Confirm did not consume the material; no more retries')
+                        self.save_stuck_screen('confirm_stalled')
+                        return False
+                    if retries == 0:
                         self.save_stuck_screen('confirm_again')
-                        retried = True
                     self.device.click(CONFIRM_BUTTON)
+                    retries += 1
                     retry.reset()
                 continue
-            # Another screen of the limit break
-            if tap.reached():
-                self.device.click(SAFE_TAP)
-                tap.reset()
+            # Wait for a recognized screen. Tapping unknown pages caused the old Max Level click loop.
+            emptied.clear()
 
     def limit_break_ship(self, slot, name, matcher):
         """
@@ -298,6 +327,13 @@ class LimitBreak(FleetEnhance):
             pass
         elif self.is_limit_break_tab():
             for _ in range(min(copies, LIMIT_BREAK_MAX)):
+                if self.is_limit_break_complete():
+                    logger.info(f'{name} is fully limit broken')
+                    break
+                if not self.is_limit_break_tab():
+                    logger.warning(f'{name}: no actionable limit break tab after the previous break')
+                    self.save_stuck_screen('unexpected_page')
+                    break
                 if not self.limit_break_once():
                     break
                 done += 1

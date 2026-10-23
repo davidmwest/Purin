@@ -4,20 +4,28 @@ Fill the empty slots of the fleets that the campaign uses with the best free shi
 A new account starts with a few ships in its first fleet, and the game does not add the ships that drop or
 are built, so the fleet stays short of ships while the dock fills up.
 """
+import os
+from datetime import datetime
+
 import cv2
 import numpy as np
 
 from module.base.button import Button
 from module.base.decorator import cached_property
 from module.base.timer import Timer
-from module.base.utils import load_image
+from module.base.utils import crop, load_image, save_image
+from module.dock.census import GRID_SHIFT, card_level, card_rarity, card_status
 from module.equipment.assets import FLEET_NEXT, FLEET_PREV, OCR_FLEET_INDEX
+from module.exception import ScriptError
+from module.inventory.inventory import CARD_HEIGHT, CARD_LEFTS, CARD_WIDTH
 from module.logger import logger
 from module.map_detection.utils import Points
 from module.ocr.ocr import Digit
-from module.retire.assets import DOCK_CHECK
-from module.retire.dock import Dock
-from module.retire.scanner import ShipScanner
+from module.retire.assets import DOCK_CHECK, SHIP_CONFIRM
+from module.retire.dock import Dock, OCR_DOCK_SELECTED
+from module.retire.dock_walk import DockWalker
+from module.retire.scanner import Ship, ShipScanner, StatusScanner
+from module.ui.assets import BACK_ARROW
 from module.ui.page import page_fleet
 
 FLEET_INDEX = Digit(OCR_FLEET_INDEX, letter=(90, 154, 255), threshold=128, alphabet='123456')
@@ -32,6 +40,11 @@ ROW_BOUNDARY = 455
 ADD_WAIT = 2
 # A ship of a higher rarity grows stronger, she is worth a few levels more
 RARITY_BONUS = {'common': 0, 'rare': 5, 'elite': 10, 'super_rare': 20, 'ultra': 25}
+# The picker covers the bottom of the dock with Selected, Cancel and Confirm. Never read a hidden busy banner.
+PICKER_LIST_BOTTOM = 630
+CENSUS_RARITIES = {'Normal': 'common', 'Rare': 'rare', 'Elite': 'elite', 'Super Rare': 'super_rare'}
+PICKER_WAIT = 12
+PICKER_MAX_CLICKS = 3
 
 
 def letters(image):
@@ -150,7 +163,96 @@ class Formation(Dock):
         self.dock_filter_set(sort='level', index=row)
         scanner = ShipScanner(fleet=0, status='free')
         scanner.disable('emotion')
-        return scanner.scan(self.device.image, output=False)
+        candidates = scanner.scan(self.device.image, output=False)
+        free = []
+        for ship in candidates:
+            if ship.button.area[3] > PICKER_LIST_BOTTOM:
+                continue
+            # On scaled 1440p screenshots the status template misses "In action". Keep the scanner's fleet and
+            # hard/event exclusions, and also reject the green commission and red battle banners by colour.
+            column = CARD_LEFTS.index(ship.button.area[0])
+            status = card_status(self.device.image, column, ship.button.area[1])
+            if status == 'free':
+                free.append(ship)
+            else:
+                logger.info(f'Skip {ship.button}: {status}')
+        if free:
+            return free
+        return self.formation_more_candidates()
+
+    def formation_more_candidates(self):
+        """Find a free ship below the first page, in descending level order, with her whole card visible."""
+        logger.info('No free ship on the first page, look further down the dock')
+        walker = DockWalker(self, list_bottom=PICKER_LIST_BOTTOM, card_read_bottom=CARD_HEIGHT)
+        status_scanner = StatusScanner()
+        for card, fleet in walker.cards():
+            image = self.device.image
+            if fleet or card_status(image, card.column, card.top) != 'free':
+                continue
+            left, top = CARD_LEFTS[card.column], card.top + GRID_SHIFT
+            # Keep the hard-mode and event-lineup exclusions used by the first-page scanner.
+            area = (left, top, left + CARD_WIDTH, top + CARD_HEIGHT)
+            if status_scanner._match(crop(image, area)) != 'free':
+                continue
+            level = card_level(image, card.column, card.top)
+            if not level:
+                continue
+            rarity = CENSUS_RARITIES.get(card_rarity(image, card.column, card.top), 'unknown')
+            # Stop the walk before it scrolls: this card's button is valid only on the current screen.
+            return [Ship(rarity=rarity, level=level, fleet=0, status='free', button=card.button)]
+        return []
+
+    def formation_save_failure(self, tag):
+        logger.warning(f'Formation picker failed: {tag}')
+        try:
+            directory = './log/formation'
+            os.makedirs(directory, exist_ok=True)
+            path = os.path.join(directory, f'{datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")}_{tag}.png')
+            save_image(self.device.image, path)
+            logger.info(f'Screen saved: {path}')
+            for old in sorted(name for name in os.listdir(directory) if name.endswith('.png'))[:-20]:
+                os.remove(os.path.join(directory, old))
+        except Exception as e:
+            logger.warning(f'Formation screen not saved: {e}')
+
+    def formation_picker_click(self, button, selecting):
+        """Bound selection and confirmation; never approve an unexpected fleet-transfer popup."""
+        click = Timer(3)
+        clicks = 0
+        for _ in self.loop(timeout=PICKER_WAIT):
+            if not selecting and self.ui_process_check_button(page_fleet.check_button):
+                return True
+            if self.handle_popup_cancel('FORMATION_PICKER'):
+                self.formation_save_failure('unexpected_popup')
+                return False
+            current, _, total = OCR_DOCK_SELECTED.ocr(self.device.image)
+            if selecting and current == total == 1:
+                return True
+            # Unreadable counters cannot authorize either another card tap or confirmation.
+            ready = (current == 0 and total == 1) if selecting else (current == total == 1)
+            check = DOCK_CHECK if selecting else SHIP_CONFIRM
+            offset = (20, 20) if selecting else (200, 50)
+            if ready and clicks < PICKER_MAX_CLICKS and self.appear(check, offset=offset) and click.reached():
+                self.device.click(button)
+                clicks += 1
+                click.reset()
+        self.formation_save_failure('selection_timeout' if selecting else 'confirmation_timeout')
+        return False
+
+    def formation_cancel_picker(self):
+        click = Timer(3)
+        clicks = 0
+        for _ in self.loop(timeout=PICKER_WAIT):
+            if self.ui_process_check_button(page_fleet.check_button):
+                return
+            if self.handle_popup_cancel('FORMATION_CANCEL'):
+                continue
+            if clicks < PICKER_MAX_CLICKS and self.appear(DOCK_CHECK, offset=(20, 20)) and click.reached():
+                self.device.click(BACK_ARROW)
+                clicks += 1
+                click.reset()
+        self.formation_save_failure('cancel_timeout')
+        raise ScriptError('Formation could not leave the ship picker safely')
 
     def formation_add(self, point):
         """
@@ -176,15 +278,19 @@ class Formation(Dock):
         if not candidates:
             logger.info(f'No free ship for the {row}')
             self.dock_reset()
-            self.ui_back(check_button=page_fleet.check_button)
+            self.formation_cancel_picker()
             return False
 
         ship = max(candidates, key=ship_score)
         logger.info(f'Add a {ship.rarity} ship at level {ship.level} to the {row}')
-        self.dock_select_one(ship.button)
+        if not self.formation_picker_click(ship.button, selecting=True):
+            self.formation_cancel_picker()
+            return False
         self.dock_reset()
-        self.dock_select_confirm(check_button=page_fleet.check_button)
-        return True
+        if self.formation_picker_click(SHIP_CONFIRM, selecting=False):
+            return True
+        self.formation_cancel_picker()
+        return False
 
     def formation_adds(self, full):
         """

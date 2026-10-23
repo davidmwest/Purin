@@ -5,10 +5,201 @@ import cv2
 import numpy as np
 import pytest
 
-from module.formation.formation import ADD_TEMPLATE, Formation, find_adds, row_of, ship_score
-from module.retire.scanner import Ship
+import module.config.server as server
+import module.formation.formation as formation_module
+from module.formation.formation import (ADD_TEMPLATE, PICKER_LIST_BOTTOM, Formation, find_adds, row_of,
+                                       ship_score)
+from module.exception import ScriptError
+from module.inventory.inventory import CARD_HEIGHT
+from module.retire.dock_walk import DockWalker
+from module.retire.scanner import Ship, ShipScanner
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
+
+
+@pytest.fixture(autouse=True)
+def en():
+    previous = server.server
+    server.set_server('en')
+    yield
+    server.set_server(previous)
+
+
+def dock_image(name, dock=False):
+    path = os.path.join(DATA if not dock else os.path.join(DATA, '..', '..', 'dock', 'data'), name)
+    return cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
+
+
+def candidate_formation(image):
+    form = object.__new__(Formation)
+    form.device = SimpleNamespace(image=image)
+    form.dock_favourite_set = lambda *args, **kwargs: None
+    form.dock_sort_method_dsc_set = lambda *args, **kwargs: None
+    form.dock_filter_set = lambda *args, **kwargs: None
+    return form
+
+
+def test_commissioned_laffey_is_rejected_even_when_status_template_reads_free():
+    # The exact F2P failure screenshot from 2026-10-22 19:19: template-only scanning picks commissioned Laffey.
+    image = dock_image('commission_dock_f2p.png')
+    scanner = ShipScanner(fleet=0, status='free')
+    scanner.disable('emotion')
+    assert max(scanner.scan(image, output=False), key=ship_score).button.name == 'CARD_2_0'
+    form = candidate_formation(image)
+    below_first_page = [Ship(level=11)]
+    form.formation_more_candidates = lambda: below_first_page
+
+    # Every first-page ship is commissioned or already in a fleet, so look further down rather than tap Laffey.
+    assert form.formation_candidates('vanguard') is below_first_page
+
+
+def test_failure_screen_selected_counter_is_readable_before_selection():
+    image = dock_image('commission_dock_f2p.png')
+
+    assert formation_module.OCR_DOCK_SELECTED.ocr(image) == (0, 1, 1)
+
+
+def picker_formation(monkeypatch, states):
+    """Each state is (selected, total, on_fleet); advance on the next screenshot."""
+    form = object.__new__(Formation)
+    clicks, failures = [], []
+    form.device = SimpleNamespace(image=None, click=clicks.append)
+
+    def screenshots(**kwargs):
+        assert kwargs == {'timeout': formation_module.PICKER_WAIT}
+        for state in states:
+            form.device.image = state
+            yield
+
+    form.loop = screenshots
+    form.appear = lambda *args, **kwargs: True
+    form.ui_process_check_button = lambda *args: form.device.image[2]
+    form.handle_popup_cancel = lambda *args: False
+    form.formation_save_failure = failures.append
+    monkeypatch.setattr(formation_module.OCR_DOCK_SELECTED, 'ocr', lambda image: (image[0], 0, image[1]))
+    monkeypatch.setattr(formation_module, 'Timer', lambda *args: SimpleNamespace(reached=lambda: True,
+                                                                              reset=lambda: None))
+    return form, clicks, failures
+
+
+def test_picker_rejected_selection_stops_tapping_and_saves_failure(monkeypatch):
+    form, clicks, failures = picker_formation(monkeypatch, [(0, 1, False)] * 10)
+
+    assert not form.formation_picker_click('candidate', selecting=True)
+
+    assert clicks == ['candidate'] * formation_module.PICKER_MAX_CLICKS
+    assert failures == ['selection_timeout']
+
+
+def test_picker_unreadable_counter_never_taps_a_ship(monkeypatch):
+    form, clicks, failures = picker_formation(monkeypatch, [(0, 0, False)] * 10)
+
+    assert not form.formation_picker_click('candidate', selecting=True)
+
+    assert clicks == []
+    assert failures == ['selection_timeout']
+
+
+def test_picker_accepts_selection_then_confirms_only_after_fleet_returns(monkeypatch):
+    form, clicks, failures = picker_formation(monkeypatch, [(0, 1, False), (1, 1, False)])
+
+    assert form.formation_picker_click('candidate', selecting=True)
+    assert clicks == ['candidate']
+
+    form, clicks, failures = picker_formation(monkeypatch, [(1, 1, False), (0, 0, True)])
+
+    assert form.formation_picker_click('confirm', selecting=False)
+    assert clicks == ['confirm']
+    assert failures == []
+
+
+def test_picker_confirmation_timeout_is_bounded(monkeypatch):
+    form, clicks, failures = picker_formation(monkeypatch, [(1, 1, False)] * 10)
+
+    assert not form.formation_picker_click('confirm', selecting=False)
+
+    assert clicks == ['confirm'] * formation_module.PICKER_MAX_CLICKS
+    assert failures == ['confirmation_timeout']
+
+
+@pytest.mark.parametrize('outcomes, added, expected', [
+    ([False], False, ['select', 'cancel']),
+    ([True, False], False, ['select', 'reset', 'confirm', 'cancel']),
+    ([True, True], True, ['select', 'reset', 'confirm']),
+])
+def test_add_reports_success_only_after_selection_and_confirmation(outcomes, added, expected):
+    form = object.__new__(Formation)
+    calls = []
+    outcomes = iter(outcomes)
+    form.ship_info_enter = lambda **kwargs: None
+    form.formation_candidates = lambda row: [Ship(rarity='rare', level=10, button='candidate')]
+    form.dock_reset = lambda: calls.append('reset')
+    form.formation_cancel_picker = lambda: calls.append('cancel')
+
+    def select(button, selecting):
+        calls.append('select' if selecting else 'confirm')
+        return next(outcomes)
+
+    form.formation_picker_click = select
+
+    assert form.formation_add((970, 341)) is added
+    assert calls == expected
+
+
+def test_picker_cancel_failure_raises_for_scheduler_recovery(monkeypatch):
+    form, clicks, failures = picker_formation(monkeypatch, [(0, 1, False)] * 10)
+
+    with pytest.raises(ScriptError, match='could not leave the ship picker safely'):
+        form.formation_cancel_picker()
+
+    assert clicks == [formation_module.BACK_ARROW] * formation_module.PICKER_MAX_CLICKS
+    assert failures == ['cancel_timeout']
+
+
+def test_walk_finds_free_ship_after_busy_first_page_and_stops_before_next_drag(monkeypatch):
+    form = candidate_formation(dock_image('commission_dock_f2p.png'))
+    walker = DockWalker(form, list_bottom=PICKER_LIST_BOTTOM, card_read_bottom=CARD_HEIGHT)
+    pages = [form.device.image, dock_image('dock_engaged_f2p.png', dock=True)]
+
+    def cards():
+        for image in pages:
+            form.device.image = image
+            for row in walker.reader.rows(image):
+                if row.top + CARD_HEIGHT <= PICKER_LIST_BOTTOM:
+                    for card in row.cards:
+                        yield card, walker.fleet_of(image, card)
+        raise AssertionError('The free card must be selected before the walk moves again')
+
+    walker.cards = cards
+
+    def make_walker(main, **kwargs):
+        assert main is form
+        assert kwargs == {'list_bottom': 630, 'card_read_bottom': 204}
+        return walker
+
+    monkeypatch.setattr(formation_module, 'DockWalker', make_walker)
+
+    candidates = form.formation_more_candidates()
+
+    # Crescent has no busy banner. The red/pink portrait must not be mistaken for "Engaged".
+    assert len(candidates) == 1
+    assert candidates[0].level == 15
+    assert candidates[0].rarity == 'common'
+    assert candidates[0].button.name == 'INVENTORY_CARD_1'
+
+
+@pytest.mark.parametrize('status', ['in_hard_mode', 'in_event_fleet'])
+def test_walk_keeps_special_lineup_exclusions(monkeypatch, status):
+    form = candidate_formation(dock_image('dock_engaged_f2p.png', dock=True))
+    walker = DockWalker(form, list_bottom=PICKER_LIST_BOTTOM, card_read_bottom=CARD_HEIGHT)
+    cards = [(card, walker.fleet_of(form.device.image, card))
+             for row in walker.reader.rows(form.device.image)
+             if row.top + CARD_HEIGHT <= PICKER_LIST_BOTTOM for card in row.cards]
+    walker.cards = lambda: iter(cards)
+    monkeypatch.setattr(formation_module, 'DockWalker', lambda *args, **kwargs: walker)
+    monkeypatch.setattr(formation_module.StatusScanner, '_match', lambda *args: status)
+
+    assert form.formation_more_candidates() == []
 
 
 def template():

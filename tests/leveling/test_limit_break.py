@@ -4,7 +4,8 @@ import numpy as np
 
 from module.base.utils import load_image
 from module.leveling.limit_break import (
-    QUICK_SELECT, QUICK_SELECT_AREA, SIMILARITY, SLOT_AREA, SLOT_EMPTY, confirm_orange, template_score)
+    COMPLETE, COMPLETE_AREA, QUICK_SELECT, QUICK_SELECT_AREA, SIMILARITY, SLOT_AREA, SLOT_EMPTY,
+    confirm_orange, template_score)
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 
@@ -50,6 +51,17 @@ def test_confirm_not_lit_on_an_empty_screen():
     assert not confirm_orange(np.zeros((720, 1280, 3), dtype=np.uint8))
 
 
+def test_f2p_final_limit_break_has_max_level_instead_of_quick_select():
+    # Exact normalized crop from the 2026-10-22 19:34:31 F2P error. Long Island is at 5 stars;
+    # the old code clicked SAFE_TAP repeatedly because Quick Select is no longer present.
+    image = screen('limit_break_complete.png')
+    assert not is_tab(image)
+    assert not confirm_orange(image)
+    assert template_score(image, load_image(COMPLETE), COMPLETE_AREA) > SIMILARITY
+    for file in ('limit_break_tab.png', 'limit_break_selected.png', 'limit_break_enhance_tab.png'):
+        assert template_score(screen(file), load_image(COMPLETE), COMPLETE_AREA) < SIMILARITY
+
+
 def result_screen():
     """
     Long Island limit broken, 2 stars to 3: the "LIMIT BREAK" result, black but for its title
@@ -85,6 +97,7 @@ def test_the_ship_of_the_fleet_is_limit_broken_not_a_higher_copy():
         fleet_formation_ensure=Mock(), limit_break_cards=Mock(return_value=[other_ship, fleet_ship]),
         fleet_ship_enter=Mock(), ship_info_enter=Mock(), ship_side_navbar_ensure=Mock(),
         detail_name_fits=Mock(return_value=True), is_limit_break_tab=Mock(return_value=True),
+        is_limit_break_complete=Mock(return_value=False),
         limit_break_once=Mock(side_effect=[True, False]), handle_popup_cancel_loose=Mock(return_value=False), ui_back=Mock(),
         enhance_fleet=Mock(return_value=0),
     )
@@ -130,7 +143,7 @@ def test_the_bulin_of_each_rarity():
     assert bulin_for(None) == ''
 
 
-def limit_break_controller(cards, bulins):
+def limit_break_controller(cards, bulins, completed=None):
     from types import SimpleNamespace
     from unittest.mock import Mock
     from module.leveling.limit_break import LimitBreak
@@ -144,6 +157,7 @@ def limit_break_controller(cards, bulins):
         limit_break_cards=Mock(side_effect=lambda name: searches[name]),
         fleet_ship_enter=Mock(), ship_side_navbar_ensure=Mock(), fleet_formation_ensure=Mock(),
         detail_name_fits=Mock(return_value=True), is_limit_break_tab=Mock(return_value=True),
+        is_limit_break_complete=Mock(side_effect=completed) if completed else Mock(return_value=False),
         limit_break_once=Mock(return_value=True), handle_popup_cancel_loose=Mock(return_value=False), ui_back=Mock(),
     )
     done = LimitBreak.limit_break_ship(controller, slot, 'Long Island', ShipMatcher(load_ship_data()))
@@ -170,3 +184,104 @@ def test_no_copy_and_no_free_bulin_is_not_tried():
 
     assert done == 0
     controller.fleet_ship_enter.assert_not_called()
+
+
+def test_no_more_material_is_selected_after_the_final_limit_break():
+    from types import SimpleNamespace
+    controller, done = limit_break_controller(
+        [SimpleNamespace(level=80, fleet=1)], [SimpleNamespace(level=1, fleet=0)] * 5,
+        completed=[False, True])
+
+    assert done == 1
+    controller.limit_break_once.assert_called_once()
+
+
+def run_break_screens(selection, after_confirm):
+    """Run the real recognizers and state machine against a replay with a virtual clock, no device."""
+    from types import MethodType, SimpleNamespace
+    from unittest.mock import Mock, patch
+    from module.leveling.limit_break import LimitBreak
+
+    clock = [100.0]
+    controller = SimpleNamespace(
+        _templates={}, device=SimpleNamespace(image=selection[0], click=Mock()),
+        handle_popup_confirm_loose=Mock(return_value=False), save_stuck_screen=Mock())
+    for name in ('_template', 'is_limit_break_tab', 'is_slot_empty', 'is_limit_break_result',
+                 'is_limit_break_complete'):
+        setattr(controller, name, MethodType(getattr(LimitBreak, name), controller))
+
+    def frames(images):
+        for index in range(200):
+            clock[0] += 1.0
+            controller.device.image = images[min(index, len(images) - 1)]
+            yield controller.device.image
+        raise AssertionError('Limit break replay did not terminate')
+
+    controller.loop = Mock(side_effect=[frames(selection), frames(after_confirm)])
+    with patch('module.base.timer.time', side_effect=lambda: clock[0]):
+        done = LimitBreak.limit_break_once(controller)
+    return controller, done
+
+
+def clicked_names(controller):
+    return [call.args[0].name for call in controller.device.click.call_args_list]
+
+
+def test_final_break_waits_for_two_completed_screens_and_does_not_tap_them():
+    empty = screen('limit_break_tab.png')
+    selected = screen('limit_break_selected.png')
+    complete = screen('limit_break_complete.png')
+    unknown = np.zeros((720, 1280, 3), dtype=np.uint8)
+    controller, done = run_break_screens([empty, selected],
+                                        [selected, complete, unknown, complete, complete])
+
+    assert done is True
+    assert clicked_names(controller) == ['LIMIT_BREAK_QUICK_SELECT', 'LIMIT_BREAK_CONFIRM']
+    controller.save_stuck_screen.assert_not_called()
+    assert controller.is_limit_break_complete()
+
+
+def test_result_then_empty_slot_finishes_one_break():
+    controller, done = run_break_screens(
+        [screen('limit_break_tab.png'), screen('limit_break_selected.png')],
+        [result_screen(), screen('limit_break_tab.png')])
+
+    assert done is True
+    assert clicked_names(controller).count('LIMIT_BREAK_SAFE') == 1
+    controller.save_stuck_screen.assert_not_called()
+
+
+def test_unknown_page_is_not_tapped_and_is_saved_on_timeout():
+    controller, done = run_break_screens(
+        [screen('limit_break_selected.png')], [np.zeros((720, 1280, 3), dtype=np.uint8)])
+
+    assert done is False
+    assert clicked_names(controller) == ['LIMIT_BREAK_CONFIRM']
+    controller.save_stuck_screen.assert_called_once_with('timeout')
+
+
+def test_stuck_result_has_a_bounded_number_of_dismiss_taps():
+    from module.leveling.limit_break import RESULT_TAPS
+    controller, done = run_break_screens([screen('limit_break_selected.png')], [result_screen()])
+
+    assert done is True  # The result proves that material was consumed, even if dismissal failed.
+    assert clicked_names(controller).count('LIMIT_BREAK_SAFE') == RESULT_TAPS
+    controller.save_stuck_screen.assert_called_once_with('timeout')
+
+
+def test_confirm_with_material_still_selected_has_bounded_retries():
+    from module.leveling.limit_break import CONFIRM_RETRIES
+    selected = screen('limit_break_selected.png')
+    controller, done = run_break_screens([selected], [selected])
+
+    assert done is False
+    assert clicked_names(controller).count('LIMIT_BREAK_CONFIRM') == 1 + CONFIRM_RETRIES
+    assert [call.args[0] for call in controller.save_stuck_screen.call_args_list] == [
+        'confirm_again', 'confirm_stalled']
+
+
+def test_material_selection_on_an_already_completed_ship_does_not_click():
+    controller, done = run_break_screens([screen('limit_break_complete.png')], [])
+
+    assert done is False
+    assert clicked_names(controller) == []

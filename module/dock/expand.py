@@ -45,6 +45,14 @@ PURCHASE = './assets/dock/expansion_purchase.png'
 PURCHASE_AREA = (690, 470, 890, 552)
 PURCHASE_BUTTON = area_button((715, 492, 865, 530), 'DOCK_EXPANSION_PURCHASE')
 CANCEL_BUTTON = area_button((415, 492, 565, 530), 'DOCK_EXPANSION_CANCEL')
+# The second confirmation, captured from the scheduled F2P task on 2026-10-22. Only this 200-gem offer is verified.
+CONFIRM_SENTENCE = './assets/dock/expansion_confirm_sentence.png'
+CONFIRM_SENTENCE_AREA = (378, 328, 904, 365)
+CONFIRM_PRICE_AREA = (467, 331, 516, 361)
+CONFIRM = './assets/dock/expansion_confirm.png'
+CONFIRM_AREA = (698, 478, 882, 546)
+CONFIRM_BUTTON = area_button((720, 492, 858, 532), 'DOCK_EXPANSION_CONFIRM')
+CONFIRMED_PRICE = 200
 SIMILARITY = 0.85
 EXPANSION_SLOTS = 10
 # Seconds for the shop to open, and for a purchase to go through
@@ -169,11 +177,28 @@ class DockExpand(UI):
                 self.device.click(DOCK_PLUS_BUTTON)
                 click.reset()
 
-    def expansion_buy(self):
+    def expansion_confirmation(self, price, gems):
+        """Recognize only the reviewed 200-gem Dock Expansion confirmation.
+
+        Matching the sentence alone is insufficient: changing one digit could still give a high template score.
+        Read its green price separately and require the offer already checked on the shop, with enough gems.
         """
-        Purchase is tapped once only, a second tap could buy a second expansion. A popup after it is cancelled, never
-        confirmed: one that asks for gems the account does not have would open the paid gems. It ends on the shop
-        with no popup for 2 s, or at the timeout with any popup cancelled.
+        if price != CONFIRMED_PRICE or gems < price:
+            return False
+        if not self._appear(CONFIRM_SENTENCE, CONFIRM_SENTENCE_AREA):
+            return False
+        if not self._appear(CONFIRM, CONFIRM_AREA):
+            return False
+        amount = Digit(area_button(CONFIRM_PRICE_AREA, 'DOCK_EXPANSION_CONFIRM_PRICE'),
+                       letter=(173, 255, 74), threshold=96, name='DOCK_EXPANSION_CONFIRM_PRICE').ocr(self.device.image)
+        return int(amount or 0) == price
+
+    def expansion_buy(self, price, gems):
+        """
+        Purchase is tapped once only, a second tap could buy a second expansion. Only the reviewed second
+        confirmation for the already checked 200-gem offer is confirmed, once. Other popups are cancelled and
+        captured: an insufficient-gems popup could open the paid gems. It ends on the shop with no popup for 2 s,
+        or at the timeout with any popup cancelled.
 
         Returns:
             bool: If Purchase was tapped
@@ -182,10 +207,14 @@ class DockExpand(UI):
             in: the Items of the shop
             out: the Items of the shop
         """
+        if price != CONFIRMED_PRICE or gems < price:
+            logger.warning(f'Dock Expansion purchase not verified: price {price}, gems {gems}')
+            return False
         timeout = Timer(PURCHASE_WAIT, count=30).start()
         click = Timer(3)
         settled = Timer(2, count=4)
         purchased = False
+        confirmed = False
         for _ in self.loop():
             if timeout.reached():
                 if self._appear(POPUP_TITLE, POPUP_TITLE_AREA):
@@ -204,6 +233,15 @@ class DockExpand(UI):
                     timeout.reset()
                 continue
             if purchased:
+                if self.expansion_confirmation(price, gems):
+                    settled.clear()
+                    if not confirmed:
+                        # This captured button differs from the generic white popup template. Its own template
+                        # and the exact sentence/price above must all match before this fixed button is tapped.
+                        self.device.click(CONFIRM_BUTTON)
+                        confirmed = True
+                    # The dialog can linger after the tap. Do not confirm it again or cancel during its transition.
+                    continue
                 if self._cancel_purchase_popup():
                     logger.warning('A popup came after Purchase, cancelled')
                     settled.clear()
@@ -225,8 +263,8 @@ class DockExpand(UI):
     def _cancel_purchase_popup(self):
         """Cancel an unverified popup and retain its pre-click frame for review.
 
-        A second confirmation might be the dock purchase, or an offer to buy gems. Until its contents are verified,
-        neither is confirmed. Keep the frame before the cancel handler taps, since a later screenshot is the shop.
+        A popup might be an offer to buy gems or another purchase. Keep the frame before the cancel handler taps,
+        since a later screenshot is the shop. Only expansion_confirmation permits a second confirmation.
         """
         image = self.device.image.copy()
         if not self.handle_popup_cancel('DOCK_EXPANSION'):
@@ -282,7 +320,11 @@ class DockExpand(UI):
 
         logger.hr('Dock expansion', level=2)
         logger.info(f'Buying a Dock Expansion for {price} gems of {gems}, dock {current}/{total}')
-        self.expansion_buy()
+        self.expansion_buy(price=price, gems=gems)
+        if self.expansion_offer() is not None:
+            gems_after = int(OCR_SHOP_GEMS.ocr(self.device.image) or 0)
+            logger.attr('Gems_after_dock_expansion', gems_after)
+            logger.info(f'Dock Expansion gems: {gems} -> {gems_after}')
         self.ui_ensure(page_main)
         self.ui_ensure(page_dock)
         after, total_after = self.dock_amount()
