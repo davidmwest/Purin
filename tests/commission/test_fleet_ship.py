@@ -218,7 +218,8 @@ def test_the_card_of_the_fleet_ship_is_found_in_the_team_picker():
     from module.leveling.plan import Slot
     comm = make_picker({'search': load('pick_search_laffey')}, {'now': 'search'})
 
-    card = RewardCommission.commission_pick_card(comm, Slot(fleet=1, row='vanguard', index=1, name='Laffey', level=75))
+    card = RewardCommission.commission_pick_card(
+        comm, Slot(fleet=1, row='vanguard', index=1, name='L affey', level=75), 'Laffey')
 
     x1, y1, x2, y2 = card.area
     # The card on the top left, (90, 75) to (235, 280)
@@ -267,7 +268,8 @@ def test_a_fleet_ship_is_picked_for_the_team(monkeypatch):
     monkeypatch.setattr(fleet_module, 'LevelingFleet', Fleet)
     assert comm.appear(COMMISSION_ADVICE, offset=(5, 20))
 
-    assert RewardCommission.commission_pick(comm, Slot(fleet=1, row='vanguard', index=1, name='Laffey', level=75))
+    # Her name as the fleet page read it, 2026-10-22
+    assert RewardCommission.commission_pick(comm, Slot(fleet=1, row='vanguard', index=1, name='L affey', level=75))
 
     assert state['now'] == 'team'
     assert clicks.count('COMMISSION_TEAM_SLOT') == 1

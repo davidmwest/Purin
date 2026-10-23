@@ -705,10 +705,11 @@ class RewardCommission(UI, InfoHandler):
             return None
         return Button(area=slots[0], color=(), button=slots[0], name='COMMISSION_TEAM_SLOT')
 
-    def commission_pick_card(self, ship):
+    def commission_pick_card(self, ship, name):
         """
         Args:
-            ship (Slot): Her name, level and fleet
+            ship (Slot): Her level and fleet
+            name (str): Her name on the wiki
 
         Returns:
             Button | None: Her card among the ships the search found, her level first, then the highest
@@ -734,9 +735,9 @@ class RewardCommission(UI, InfoHandler):
             self.device.image)
         if isinstance(names, str):
             names = [names]
-        fits = [card for card, read in zip(cards, names) if name_fits(read, ship.name)]
+        fits = [card for card, read in zip(cards, names) if name_fits(read, name)]
         if not fits:
-            logger.warning(f'{ship.name} not found in the team picker, read {names}')
+            logger.warning(f'{name} not found in the team picker, read {names}')
             return None
         fits = sorted(fits, key=lambda card: (card.level != ship.level, -card.level))
         return fits[0].button
@@ -758,8 +759,12 @@ class RewardCommission(UI, InfoHandler):
             out: commission details unfold
         """
         from module.leveling.fleet import LevelingFleet
+        from module.leveling.plan import ShipMatcher, load_ship_data
         from module.retire.assets import SHIP_CONFIRM
-        logger.hr(f'Commission pick {ship.name}', level=3)
+        # Her name as read on her fleet slot, "L affey" on 2026-10-22: the search of the dock wants her name
+        data = ShipMatcher(load_ship_data()).match(ship.name)
+        name = data.name if data is not None else ship.name
+        logger.hr(f'Commission pick {name}', level=3)
         slot = self.commission_team_empty_slot()
         if slot is None:
             logger.warning('No empty slot in the team of the commission')
@@ -772,11 +777,11 @@ class RewardCommission(UI, InfoHandler):
         else:
             logger.warning('The team picker did not open')
             return False
-        if not LevelingFleet(config=self.config, device=self.device).dock_search(ship.name):
+        if not LevelingFleet(config=self.config, device=self.device).dock_search(name):
             self.commission_pick_leave()
             return False
         self.device.screenshot()
-        card = self.commission_pick_card(ship)
+        card = self.commission_pick_card(ship, name)
         if card is None:
             self.commission_pick_leave()
             return False
