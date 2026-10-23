@@ -412,7 +412,74 @@ def test_closed_game_does_not_reserve_order_observation(tmp_path):
     assert load_mission_state('f2p', tmp_path) == {}
 
 
-def test_fresh_unknown_rateinfo_exit_stops_before_order_navigation(monkeypatch):
+def test_actual_ur_cap_warning_requires_exact_text_and_both_controls():
+    helper = order_controller()
+    original = np.asarray(Image.open('tests/gacha/data/ur_cap_warning.png').convert('RGB')).copy()
+    helper.device.image = original.copy()
+    helper.match_template_color = lambda asset, **kw: asset.match_template_color(helper.device.image, **kw)
+    assert helper._ur_cap_warning()
+    for asset in (mission.UR_CAP_TEXT, mission.UR_CAP_CANCEL, mission.UR_CAP_CONFIRM):
+        helper.device.image = original.copy()
+        x1, y1, x2, y2 = asset.area
+        helper.device.image[y1 - 4:y2 + 4, x1 - 4:x2 + 4] = 0
+        assert not helper._ur_cap_warning()
+    helper.device.click.assert_not_called()
+
+
+def test_ur_cap_warning_acknowledges_once_after_durable_budget_then_only_captures_count(monkeypatch):
+    helper = order_controller()
+    fake_banner(monkeypatch)
+    monkeypatch.setattr(mission, 'Timer', ImmediateTimer)
+    frame = {'kind': None}
+
+    def frames(**kwargs):
+        for kind in ('ur_cap', 'ur_cap', 'count', 'count'):
+            frame['kind'] = kind
+            yield
+
+    helper.loop = frames
+    helper.match_template_color = lambda asset, **kw: (
+        frame['kind'] == ('count' if asset in (mission.BUILD_PLUS, mission.BUILD_MINUS) else 'ur_cap'))
+    record = dict(period='2026-10-23T00:00:00', orders_submitted=0, warning_ack_clicks=0)
+    snapshots = []
+    helper._open_order_dialog(record, lambda: snapshots.append(dict(record)))
+    assert record['reason'] == 'order_count_dialog_requires_review'
+    assert record['warning_ack_clicks'] == 1 and record['orders_submitted'] == 0
+    assert snapshots[-1]['warning_ack_clicks'] == 1
+    helper.device.click.assert_has_calls([call(mission.EVENT_BUILD_ORDERS), call(mission.UR_CAP_CONFIRM)])
+    assert helper.device.click.call_count == 2
+    helper._capture_mission.assert_called_once_with(record, 'order_count_dialog')
+
+
+def test_ur_cap_rejected_ack_is_never_clicked_again(monkeypatch):
+    helper = order_controller()
+    fake_banner(monkeypatch)
+    monkeypatch.setattr(mission, 'Timer', ImmediateTimer)
+    helper.loop = Mock(return_value=iter(range(4)))
+    helper.match_template_color = lambda asset, **kw: asset not in (mission.BUILD_PLUS, mission.BUILD_MINUS)
+    record = dict(period='2026-10-23T00:00:00', warning_ack_clicks=0)
+    helper._open_order_dialog(record, Mock())
+    assert record['reason'] == 'ur_cap_warning_not_dismissed'
+    assert helper.device.click.call_args_list == [call(mission.EVENT_BUILD_ORDERS), call(mission.UR_CAP_CONFIRM)]
+
+
+@pytest.mark.parametrize('reset_during_persist', [False, True])
+def test_reset_before_or_during_warning_reservation_vetoes_ack(monkeypatch, reset_during_persist):
+    helper = order_controller()
+    fake_banner(monkeypatch)
+    monkeypatch.setattr(mission, 'Timer', ImmediateTimer)
+    helper.loop = Mock(return_value=iter(range(2)))
+    helper.match_template_color = lambda asset, **kw: asset not in (mission.BUILD_PLUS, mission.BUILD_MINUS)
+    same = '2026-10-23T00:00:00'
+    helper._period.side_effect = [same, same, 'new day'] if reset_during_persist else [same, 'new day']
+    record = dict(period=same, warning_ack_clicks=0)
+    helper._open_order_dialog(record, Mock())
+    assert record['reason'] == 'mission_period_changed_before_warning'
+    helper.device.click.assert_called_once_with(mission.EVENT_BUILD_ORDERS)
+
+
+@pytest.mark.parametrize('reused', [False, True])
+def test_unknown_rateinfo_exit_stops_before_order_navigation(monkeypatch, reused):
     helper = RewardGacha.__new__(RewardGacha)
     helper.config = SimpleNamespace(task_delay=Mock())
     helper.device = object()
@@ -421,7 +488,7 @@ def test_fresh_unknown_rateinfo_exit_stops_before_order_navigation(monkeypatch):
     monkeypatch.setattr(mission, 'GachaMissionOrderObserver', order)
     monkeypatch.setitem(sys.modules, 'module.gacha.banner', SimpleNamespace(
         EventBannerObserver=Mock(return_value=SimpleNamespace(
-            run=Mock(return_value={'returned_main': False})))))
+            run=Mock(return_value={'returned_main': False, 'reused': reused})))))
     with pytest.raises(GamePageUnknownError, match='RateInfo'):
         helper.run()
     order.assert_not_called()

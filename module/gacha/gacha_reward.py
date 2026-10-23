@@ -389,7 +389,7 @@ class RewardGacha(GachaUI, Retirement):
             from module.gacha.mission import GachaMissionObserver, GachaMissionOrderObserver
             GachaMissionObserver(config=self.config, device=self.device).run()
             banner = EventBannerObserver(config=self.config, device=self.device).run()
-            if not banner.get('returned_main') and not banner.get('reused'):
+            if not banner.get('returned_main'):
                 raise GamePageUnknownError('Gacha RateInfo captured; unknown exit requires game restart')
             order = GachaMissionOrderObserver(config=self.config, device=self.device).run()
             if order.get('build_open_clicked') and not order.get('reused'):

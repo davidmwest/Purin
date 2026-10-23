@@ -16,6 +16,7 @@ from module.gacha.assets import BUILD_MINUS, BUILD_PLUS, BUILD_SUBMIT_ORDERS
 from module.gacha.banner_assets import EVENT_BUILD_ORDERS
 from module.gacha.mission_assets import (BUILD_THREE_TEXT, BUILD_THREE_TEXT_F2P,
                                         DAILY_MISSION_MARKER, EVENT_MISSION_MARKER)
+from module.gacha.mission_order_assets import UR_CAP_CANCEL, UR_CAP_CONFIRM, UR_CAP_TEXT
 from module.gacha.ui import GachaUI
 from module.logger import logger
 from module.ocr.ocr import Ocr
@@ -24,7 +25,7 @@ from module.ui.page import page_build, page_main, page_mission
 
 OBSERVATION_VERSION = 'missions-v1'
 STATE_FOLDER = './config/gacha'
-ORDER_OBSERVATION_VERSION = 'order-dialog-v1'
+ORDER_OBSERVATION_VERSION = 'order-dialog-v2'
 CURRENT_EVENT = 'event_20261022_cn'
 
 
@@ -264,6 +265,10 @@ class GachaMissionOrderObserver(GachaMissionObserver):
     def _period(self):
         return get_server_last_update(self.config.Scheduler_ServerUpdate).isoformat()
 
+    def _ur_cap_warning(self):
+        return all(self.match_template_color(asset, offset=(3, 3), similarity=.85)
+                   for asset in (UR_CAP_TEXT, UR_CAP_CANCEL, UR_CAP_CONFIRM))
+
     def _read_mission_tab(self, record, name, upper):
         if not self._observe_mission_tab(record, name, upper):
             return None
@@ -303,15 +308,16 @@ class GachaMissionOrderObserver(GachaMissionObserver):
         record.update(status='opening', build_open_clicked=True)
         reserve()
         self.device.click(EVENT_BUILD_ORDERS)
-        # No generic popup handler is called: even an apparent Confirm could be
-        # a cost authorization or a different dialog. Capture unknown warnings.
+        # Only the observed, zero-cost UR-cap warning may be acknowledged.
+        # Generic confirmation and the final count/cost confirmation stay off.
         settled = Timer(1, count=2).start()
         previous = None
         frames = 0
         for _ in self.loop(skip_first=False, timeout=8):
             count_dialog = (self.match_template_color(BUILD_PLUS, offset=(60, 20), similarity=.85)
                             and self.match_template_color(BUILD_MINUS, offset=(60, 20), similarity=.85))
-            kind = 'count' if count_dialog else ('warning' if not banner.on_event_pool() else None)
+            kind = ('count' if count_dialog else ('ur_cap' if self._ur_cap_warning()
+                    else ('warning' if not banner.on_event_pool() else None)))
             if kind is None or kind != previous:
                 previous = kind
                 frames = 1 if kind else 0
@@ -324,6 +330,25 @@ class GachaMissionOrderObserver(GachaMissionObserver):
                 self._capture_mission(record, 'order_count_dialog')
                 record.update(status='observed', reason='order_count_dialog_requires_review')
                 return
+            if kind == 'ur_cap':
+                if record.get('warning_ack_clicks', 0):
+                    self._capture_mission(record, 'ur_cap_warning_not_dismissed')
+                    record.update(status='blocked', reason='ur_cap_warning_not_dismissed')
+                    return
+                if self._period() != record['period']:
+                    record.update(status='blocked', reason='mission_period_changed_before_warning')
+                    return
+                record.update(warning_ack_clicks=1, status='acknowledging_ur_cap')
+                reserve()
+                # Recheck after persistence so a reset during disk I/O cannot
+                # make this old-day authorization act on a new-day mission.
+                if self._period() != record['period']:
+                    record.update(status='blocked', reason='mission_period_changed_before_warning')
+                    return
+                self.device.click(UR_CAP_CONFIRM)
+                previous, frames = None, 0
+                settled.reset()
+                continue
             if kind == 'warning':
                 self._capture_mission(record, 'order_warning_dialog')
                 record.update(status='observed', reason='order_warning_requires_review')
@@ -343,6 +368,7 @@ class GachaMissionOrderObserver(GachaMissionObserver):
                       event=CURRENT_EVENT, diagnostics=[], mission_tabs=[],
                       mission_credit=None, remaining=None, orders_submitted=0,
                       mission_reward_claimed=False, build_open_clicked=False,
+                      warning_ack_clicks=0,
                       returned_main=False)
         state[key] = record
         def reserve():
