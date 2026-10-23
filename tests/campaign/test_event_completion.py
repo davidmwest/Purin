@@ -164,6 +164,66 @@ def test_supplies_are_never_clicked_from_an_unknown_page(monkeypatch):
     assert record['status'] == 'blocked'
 
 
+def test_unchanged_supplies_screen_has_only_three_verified_spaced_retries(monkeypatch):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(20)))
+    helper.ui_page_appear = Mock(return_value=True)
+    helper.match_template_color = Mock(return_value=True)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    timer = Mock()
+    timer.start.return_value = timer
+    timer.reached.return_value = True
+    factory = Mock(return_value=timer)
+    monkeypatch.setattr(completion, 'Timer', factory)
+    record = {}
+
+    helper._inspect_event_supplies(record)
+
+    assert record['status'] == 'blocked'
+    assert record['reason'] == 'supplies_did_not_open'
+    assert record['supplies_clicks'] == helper.device.click.call_count == 3
+    assert [call.args[0] for call in helper.device.click.call_args_list] == [TEMPESTA_SUPPLIES] * 3
+    assert [call.args for call in factory.call_args_list] == [(1,), (3,), (3,), (3,)]
+    assert factory.call_args_list[1].kwargs == {'count': 4}
+    helper.loop.assert_called_once_with(skip_first=False, timeout=20)
+    x1, y1, x2, y2 = TEMPESTA_SUPPLIES._button
+    assert 1110 <= x1 < x2 <= 1157 and 648 <= y1 < y2 <= 698
+
+
+def test_old_failed_label_tap_gets_only_one_new_persisted_emblem_budget(monkeypatch, tmp_path):
+    save_reward_observations('f2p', {'event_20261022_cn:supplies': {
+        'status': 'blocked', 'reason': 'supplies_did_not_open', 'supplies_clicked': True}}, folder=tmp_path)
+    helper = controller()
+
+    def inspect(record):
+        state = load_reward_observations('f2p', folder=tmp_path)
+        assert state['event_20261022_cn:supplies:emblem_retry']['status'] == 'observing'
+        record.update(status='blocked', reason='supplies_did_not_open', supplies_clicks=3)
+
+    helper._inspect_event_supplies = Mock(side_effect=inspect)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock(return_value='/tmp/supplies.png'))
+
+    first = helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+    second = helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+
+    assert first['entry'] == 'emblem'
+    assert second['reused'] is True
+    helper._inspect_event_supplies.assert_called_once()
+    assert len(load_reward_observations('f2p', folder=tmp_path)) == 2
+
+
+def test_failed_new_emblem_budget_is_not_given_a_second_attempt(monkeypatch, tmp_path):
+    save_reward_observations('f2p', {'event_20261022_cn:supplies': {
+        'status': 'blocked', 'reason': 'supplies_did_not_open', 'entry': 'emblem'}}, folder=tmp_path)
+    helper = controller()
+    helper._inspect_event_supplies = Mock()
+    result = helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+    assert result['reused'] is True
+    helper._inspect_event_supplies.assert_not_called()
+    assert len(load_reward_observations('f2p', folder=tmp_path)) == 1
+
+
 def test_observed_tempesta_labels_and_lock_match_but_missing_controls_do_not():
     from pathlib import Path
     import numpy as np

@@ -13,7 +13,9 @@ TEMPESTA_CAMPAIGN = Button(
     file=_TEMPESTA, name='TEMPESTA_CAMPAIGN')
 TEMPESTA_SUPPLIES = Button(
     area=(1163, 657, 1255, 685), color=(97, 113, 161),
-    button=(1166, 657, 1255, 685), file=_TEMPESTA, name='TEMPESTA_SUPPLIES')
+    # The emblem is the observed entry control; the text can sit outside its
+    # interaction region. Keep recognition on the stable Supplies label.
+    button=(1125, 660, 1150, 684), file=_TEMPESTA, name='TEMPESTA_SUPPLIES')
 TEMPESTA_EX_LOCKED = Button(
     area=(84, 447, 101, 467), color=(112, 123, 135), button=(84, 447, 101, 467),
     file=_TEMPESTA, name='TEMPESTA_EX_LOCKED')

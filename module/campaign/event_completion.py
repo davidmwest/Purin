@@ -25,6 +25,7 @@ MISSION_CLAIMS_MAX = 24
 MISSION_TIMEOUT = 120
 REWARD_OBSERVATION_EVENTS = frozenset(('event_20261022_cn',))
 REWARD_OBSERVATION_DIR = './config/stars'
+SUPPLIES_CLICKS_MAX = 3
 
 
 def reward_observation_path(account, folder=REWARD_OBSERVATION_DIR):
@@ -66,36 +67,37 @@ class EventCompletion(Reward):
         if not ensure_event_page(self, page_sp):
             record.update(status='blocked', reason='campaign_page_unrecognized')
             return
-        # The name and Supplies label must both match the observed event page.
-        # One persisted observation authorizes at most one Supplies click.
-        for _ in self.loop(timeout=8):
-            if not self.ui_page_appear(page_sp):
-                continue
-            if not self.match_template_color(TEMPESTA_CAMPAIGN, offset=(3, 3),
-                                             similarity=self.text_similarity):
-                continue
-            if not self.match_template_color(TEMPESTA_SUPPLIES, offset=(3, 3),
-                                             similarity=self.text_similarity):
-                continue
-            self.device.click(TEMPESTA_SUPPLIES)
-            record['supplies_clicked'] = True
-            break
-        else:
-            record.update(status='blocked', reason='supplies_label_unrecognized')
-            return
-
-        # The destination is being inspected, not acted upon. Give its opening
-        # animation a bounded interval, then save evidence for a supported parser.
+        # Fresh frames and a short stable-page interval avoid acting on the
+        # cached pre-navigation frame. Every retry rechecks both known labels.
         settled = Timer(1, count=2).start()
-        for _ in self.loop(timeout=8):
-            if settled.reached():
-                if self.ui_page_appear(page_sp) and self.match_template_color(
-                        TEMPESTA_SUPPLIES, offset=(3, 3), similarity=self.text_similarity):
-                    record.update(status='blocked', reason='supplies_did_not_open')
-                else:
+        clicked = 0
+        for _ in self.loop(skip_first=False, timeout=20):
+            known = (self.ui_page_appear(page_sp)
+                     and self.match_template_color(TEMPESTA_CAMPAIGN, offset=(3, 3),
+                                                   similarity=self.text_similarity)
+                     and self.match_template_color(TEMPESTA_SUPPLIES, offset=(3, 3),
+                                                   similarity=self.text_similarity))
+            if not known and not clicked:
+                settled.reset()
+                continue
+            if not settled.reached():
+                continue
+            if not known:
+                if clicked:
                     record.update(status='observed', reason='supplies_panel_assets_required')
+                    return
+                continue
+            if clicked >= SUPPLIES_CLICKS_MAX:
+                record.update(status='blocked', reason='supplies_did_not_open')
                 return
-        record.update(status='blocked', reason='supplies_panel_timeout')
+            self.device.click(TEMPESTA_SUPPLIES)
+            clicked += 1
+            record.update(supplies_clicked=True, supplies_clicks=clicked)
+            # Wait for a slow panel transition before deciding another known
+            # entry click is necessary. Never click an unknown destination.
+            settled = Timer(3, count=4).start()
+        reason = 'supplies_panel_timeout' if clicked else 'supplies_label_unrecognized'
+        record.update(status='blocked', reason=reason)
 
     def observe_event_supplies(self, event, folder=REWARD_OBSERVATION_DIR):
         """Open only the observed event Supplies control, once per account/event."""
@@ -107,6 +109,13 @@ class EventCompletion(Reward):
         # Separate from the earlier activity-list observation: that list did not
         # contain the current event hub, and spending it must not block Supplies.
         key = event + ':supplies'
+        previous = state.get(key, {})
+        # The first observed text-label tap left the known campaign unchanged.
+        # Permit one new bounded emblem attempt after that specific failure.
+        # Successful, interrupted, or otherwise blocked observations cannot retry.
+        if (previous.get('status') == 'blocked' and previous.get('reason') == 'supplies_did_not_open'
+                and previous.get('entry') != 'emblem'):
+            key += ':emblem_retry'
         if key in state:
             record = dict(state[key])
             if record.get('status') == 'observing':
@@ -114,7 +123,7 @@ class EventCompletion(Reward):
             record['reused'] = True
             logger.attr('EventSuppliesObservation', record)
             return record
-        record = dict(status='observing', diagnostics=[], supplies_clicked=False,
+        record = dict(status='observing', diagnostics=[], supplies_clicked=False, entry='emblem',
                       returned_main=False, started=datetime.now().isoformat(timespec='seconds'))
         state[key] = record
         save_reward_observations(account, state, folder=folder)
