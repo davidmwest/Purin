@@ -279,8 +279,13 @@ class CampaignStars(CampaignRun):
                 # The scheduler owns the next action. Progress is already durable;
                 # do not start reward navigation or alter scheduling after a switch.
                 return
-        self.collect()
+        completion = self.collect()
         if all(progress.record(goal).get('status') == 'complete' for goal in plan):
+            if completion and completion.get('rewards') == 'failed':
+                logger.warning('Star pass stages complete; retry pending mission reward collection')
+                self.config.task_delay(success=False)
+                self.call_then_task()
+                return
             logger.info('Star pass completed all implemented stages')
             self.extra_objectives()
             self.config.Scheduler_Enable = False

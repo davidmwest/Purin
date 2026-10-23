@@ -306,6 +306,36 @@ def test_completed_or_held_job_dispatches_farming_task(monkeypatch, tmp_path, re
         job.config.task_delay.assert_called_once()
 
 
+def test_final_reward_failure_retries_without_replaying_completed_stages(monkeypatch, tmp_path):
+    goal = StageGoal('campaign_main', '1-1')
+    job, progress, runner, factory = make_job(monkeypatch, tmp_path, [goal])
+    job.collect.side_effect = [dict(story='disabled', rewards='complete'),
+                               dict(story='disabled', rewards='failed'),
+                               dict(story='disabled', rewards='complete'),
+                               dict(story='disabled', rewards='complete')]
+
+    job.run()
+
+    assert progress.record(goal) == dict(attempts=0, status='complete')
+    assert job.config.Scheduler_Enable
+    job.config.task_delay.assert_called_once_with(success=False)
+    job.config.task_call.assert_called_once_with('Event', force_call=True)
+    job.extra_objectives.assert_not_called()
+    assert factory.call_count == 1
+    job.config.task_delay.reset_mock()
+    job.config.task_call.reset_mock()
+
+    job.run()
+
+    assert progress.record(goal) == dict(attempts=0, status='complete')
+    assert factory.call_count == 1
+    runner.run_goal.assert_called_once_with(goal, inspect_only=False)
+    assert not job.config.Scheduler_Enable
+    job.extra_objectives.assert_called_once_with()
+    job.config.task_delay.assert_not_called()
+    job.config.task_call.assert_called_once_with('Event', force_call=True)
+
+
 def test_task_switch_resumes_after_completed_stage_without_repeating_it(monkeypatch, tmp_path):
     goals = [StageGoal('campaign_main', stage) for stage in ('1-1', '1-2')]
     job, progress, runner, factory = make_job(monkeypatch, tmp_path, goals)
