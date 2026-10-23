@@ -9,7 +9,8 @@ from PIL import Image
 from module.campaign import event_extra
 from module.campaign.event_extra import (EventExtraRunner, EventExtraScout, load_extra_state,
                                          save_extra_state, valid_extra_fleet_options)
-from module.campaign.event_extra_assets import EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE
+from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
+                                               EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT)
 from module.config import server
 from module.exception import GameNotRunningError, ScriptError
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION
@@ -518,16 +519,220 @@ def test_changed_or_unreadable_post_recommendation_state_cannot_authorize_start(
     helper.device.click.assert_not_called()
 
 
-def test_map_based_ex_is_captured_and_blocked_immediately_without_map_or_battle_actions():
+def test_unverified_map_launch_is_captured_and_blocked_without_grid_or_battle_actions():
     helper = runner_controller()
     helper.appear = Mock(side_effect=lambda button, **kwargs: button in (FLEET_PREPARATION, event_extra.IN_MAP))
     helper.ui_page_appear = Mock(return_value=False)
     helper.combat_auto_reset = Mock()
     helper.handle_combat_automation_set = Mock()
+    helper._launch_extra_map = Mock(return_value=False)
     helper.loop = Mock(return_value=iter(range(3)))
     reserve = Mock()
-    assert helper._direct_extra_battle({}, reserve) == ('blocked', 'map_based_ex_unsupported')
+    record = {}
+    assert helper._direct_extra_battle(record, reserve) == ('blocked', 'map_launch_not_verified')
     reserve.assert_called_once_with()
     helper.device.click.assert_called_once_with(FLEET_PREPARATION)
-    helper._extra_capture.assert_called_once_with({}, 'unsupported_map')
+    helper._launch_extra_map.assert_called_once_with(record, reserve)
     helper.handle_combat_automation_set.assert_not_called()
+
+
+def immediate_timers(monkeypatch):
+    timer = SimpleNamespace(reached=Mock(return_value=True), reset=Mock())
+    timer.start = lambda: timer
+    monkeypatch.setattr(event_extra, 'Timer', lambda *args, **kwargs: timer)
+    return timer
+
+
+def map_fixture_controller():
+    helper = runner_controller()
+    helper.device.image = np.asarray(Image.open('tests/campaign/data/ex_tactical_map_settled.png').convert('RGB')).copy()
+    helper.appear = lambda button, offset=0, **kwargs: button.match(helper.device.image, offset=offset)
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(helper.device.image, **kwargs)
+    def frames(**kwargs):
+        assert kwargs['skip_first'] is False
+        for _ in range(8):
+            helper.device.screenshot()
+            yield helper.device.image
+    helper.loop = frames
+    return helper
+
+
+def test_actual_ex_board_and_attack_wait_for_four_fresh_stable_frames_before_one_click(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    immediate_timers(monkeypatch)
+    record = {}
+    reserve = Mock(side_effect=lambda: record['map_attack_clicked'] is True)
+    assert helper._extra_map_appear()
+    assert helper._launch_extra_map(record, reserve) is True
+    assert helper.device.screenshot.call_count == 4
+    reserve.assert_called_once_with()
+    helper.device.click.assert_called_once_with(EX_MAP_ATTACK)
+    helper._extra_capture.assert_called_once_with(record, 'settled_map_attack')
+
+
+@pytest.mark.parametrize('missing', [EX_MAP_TIME_LIMIT, EX_MAP_COLUMNS, EX_MAP_ATTACK, event_extra.IN_MAP])
+def test_missing_ex_map_witness_never_authorizes_attack(monkeypatch, english_assets, missing):
+    helper = map_fixture_controller()
+    immediate_timers(monkeypatch)
+    x1, y1, x2, y2 = missing.area
+    helper.device.image[y1:y2, x1:x2] = 0
+    reserve = Mock()
+    assert helper._launch_extra_map({}, reserve) is False
+    reserve.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_animating_ex_board_does_not_start_until_stable(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    immediate_timers(monkeypatch)
+    original = helper.device.image.copy()
+    def frames(**kwargs):
+        for index in range(12):
+            helper.device.image = original.copy()
+            helper.device.image[625:646, 450:1120] = 0 if index % 2 else 255
+            yield helper.device.image
+    helper.loop = frames
+    assert helper._launch_extra_map({}, Mock()) is False
+    helper.device.click.assert_not_called()
+
+
+def test_initial_empty_board_is_not_launched_before_the_actual_settled_map(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    immediate_timers(monkeypatch)
+    empty = np.asarray(Image.open('tests/campaign/data/ex_tactical_map.png').convert('RGB'))
+    settled = helper.device.image.copy()
+    helper.device.image = empty
+    assert helper._extra_map_appear() is False
+    frames_seen = []
+    def frames(**kwargs):
+        for image in (empty, empty, settled, settled, settled, settled):
+            helper.device.image = image
+            frames_seen.append(image)
+            yield image
+    helper.loop = frames
+    def clicked(button):
+        assert len(frames_seen) == 6
+        assert np.array_equal(helper.device.image, settled)
+    helper.device.click.side_effect = clicked
+    assert helper._launch_extra_map({}, Mock()) is True
+    helper.device.click.assert_called_once_with(EX_MAP_ATTACK)
+
+
+def test_animated_ships_do_not_prevent_a_settled_map_frame_launch(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    immediate_timers(monkeypatch)
+    original = helper.device.image.copy()
+    def frames(**kwargs):
+        for index in range(8):
+            helper.device.image = original.copy()
+            helper.device.image[200:560, 500:1050] = 0 if index % 2 else 255
+            yield helper.device.image
+    helper.loop = frames
+    assert helper._launch_extra_map({}, Mock()) is True
+    helper.device.click.assert_called_once_with(EX_MAP_ATTACK)
+
+
+@pytest.mark.parametrize('outcome', ['won', 'lost', 'unknown'])
+def test_map_launch_uses_one_auto_battle_and_never_restarts_on_map_return(outcome):
+    helper = runner_controller()
+    current = ['fleet']
+    def frames(**kwargs):
+        for screen in ('map', 'prep', 'loading', 'combat', outcome, 'map', 'prep'):
+            current[0] = screen
+            yield screen
+    helper.loop = frames
+    helper.appear = Mock(side_effect=lambda button, **kwargs:
+                         (button is FLEET_PREPARATION and current[0] == 'fleet') or
+                         (button is event_extra.IN_MAP and current[0] == 'map') or
+                         (button is event_extra.BATTLE_PREPARATION and current[0] == 'prep') or
+                         (button is event_extra.AUTOMATION_ON and current[0] == 'prep'))
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.combat_auto_reset = Mock()
+    helper.handle_combat_automation_set = Mock(return_value=False)
+    helper.handle_combat_automation_confirm = Mock(return_value=False)
+    helper.is_combat_executing = Mock(side_effect=lambda: current[0] == 'combat')
+    helper.is_combat_loading = Mock(side_effect=lambda: current[0] == 'loading')
+    helper.handle_combat_auto = Mock()
+    def result():
+        if current[0] == outcome and outcome != 'unknown':
+            helper.combat_won = outcome == 'won'
+            helper.combat_lost = outcome == 'lost'
+            return True
+        return False
+    helper.handle_battle_status = Mock(side_effect=result)
+    helper.handle_get_items = helper.handle_exp_info = Mock(return_value=False)
+    helper.appear_then_click = Mock(return_value=False)
+    def launch(record, reserve):
+        record['map_attack_clicked'] = True
+        reserve()
+        helper.device.click(EX_MAP_ATTACK)
+        return True
+    helper._launch_extra_map = Mock(side_effect=launch)
+    reserved = []
+    record = {}
+    def reserve():
+        reserved.append(dict(record))
+    def clicked(button):
+        key = {FLEET_PREPARATION: 'fleet_start_clicked', EX_MAP_ATTACK: 'map_attack_clicked',
+               event_extra.BATTLE_PREPARATION: 'battle_start_clicked'}[button]
+        assert reserved[-1][key] is True
+    helper.device.click.side_effect = clicked
+    status, reason = helper._direct_extra_battle(record, reserve)
+    assert status == {'won': 'complete', 'lost': 'lost', 'unknown': 'blocked'}[outcome]
+    assert record['combat_seen'] is True
+    assert [call.args[0] for call in helper.device.click.call_args_list] == [
+        FLEET_PREPARATION, EX_MAP_ATTACK, event_extra.BATTLE_PREPARATION]
+    helper._launch_extra_map.assert_called_once()
+
+
+def test_map_launch_that_stays_on_map_does_not_click_attack_again(monkeypatch):
+    helper = runner_controller()
+    helper.appear = Mock(side_effect=lambda button, **kwargs: button in (FLEET_PREPARATION, event_extra.IN_MAP))
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.combat_auto_reset = Mock()
+    helper.loop = Mock(return_value=iter(range(8)))
+    helper._launch_extra_map = Mock(return_value=True)
+    assert helper._direct_extra_battle({}, Mock()) == ('blocked', 'battle_end_not_verified')
+    helper._launch_extra_map.assert_called_once()
+    helper.device.click.assert_called_once_with(FLEET_PREPARATION)
+
+
+def test_actual_ex_map_withdrawal_is_bounded_and_returns_verified_event(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    immediate_timers(monkeypatch)
+    current = ['map']
+    def frames(**kwargs):
+        for screen in ('map', 'confirm', 'map', 'event'):
+            current[0] = screen
+            yield screen
+    helper.loop = frames
+    helper.ui_page_appear = Mock(side_effect=lambda page: current[0] == 'event')
+    helper.handle_popup_confirm = Mock(side_effect=lambda name: current[0] == 'confirm')
+    assert helper._return_extra_event({}) is True
+    helper.device.click.assert_called_once_with(event_extra.WITHDRAW)
+    assert helper.handle_popup_confirm.call_count == 1
+
+
+def test_unknown_map_is_not_withdrawn_and_does_not_fall_into_generic_navigation(monkeypatch):
+    helper = runner_controller()
+    helper.appear = Mock(return_value=True)
+    helper._extra_map_appear = Mock(return_value=False)
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.handle_popup_confirm = Mock()
+    helper.loop = Mock(return_value=iter(range(8)))
+    navigation = Mock()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', navigation)
+    assert helper._return_extra_event({}) is False
+    helper.device.click.assert_not_called()
+    helper.handle_popup_confirm.assert_not_called()
+    navigation.assert_not_called()
+
+
+def test_withdraw_confirmation_requires_prior_exact_map_retreat(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    immediate_timers(monkeypatch)
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.handle_popup_confirm = Mock(return_value=False)
+    assert helper._return_extra_event({}) is False
+    helper.device.click.assert_called_once_with(event_extra.WITHDRAW)
+    assert helper.handle_popup_confirm.call_count == 7

@@ -13,3 +13,17 @@ EX_DISABLED_FLEET_2 = Button(
 EX_DISABLED_SUBMARINE = Button(
     area=(435, 438, 738, 499), color=(44, 60, 78), button=(435, 438, 738, 499),
     file=_EX_PREPARATION, name='EX_DISABLED_SUBMARINE')
+
+# Actual settled tactical EX board captured at 23:56:28. Its A/B/C column
+# positions differ from the initial empty loading board. Exclude the changing
+# time value, fleet portraits and resources from recognition.
+_EX_MAP = './assets/en/event_completion/TEMPESTA_EX_MAP_20261022.png'
+EX_MAP_TIME_LIMIT = Button(
+    area=(114, 12, 259, 46), color=(75, 85, 120), button=(114, 12, 259, 46),
+    file=_EX_MAP, name='EX_MAP_TIME_LIMIT')
+EX_MAP_COLUMNS = Button(
+    area=(517, 132, 768, 153), color=(75, 95, 106), button=(517, 132, 768, 153),
+    file=_EX_MAP, name='EX_MAP_COLUMNS')
+EX_MAP_ATTACK = Button(
+    area=(1147, 652, 1263, 701), color=(232, 182, 108), button=(1147, 652, 1263, 701),
+    file=_EX_MAP, name='EX_MAP_ATTACK')

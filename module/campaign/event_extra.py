@@ -1,4 +1,4 @@
-"""Bounded EX observation and one direct auto battle, with separate durable budgets."""
+"""Bounded EX observation and one verified auto battle, with separate durable budgets."""
 import json
 import os
 import re
@@ -6,10 +6,14 @@ import tempfile
 from datetime import datetime
 from time import monotonic
 
+import numpy as np
+
+from module.base.timer import Timer
 from module.campaign.campaign_ui import ASIDE_SWITCH_20241219, MODE_SWITCH_20241219, CampaignUI
 from module.campaign.event_completion import EventCompletion
 from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED
-from module.campaign.event_extra_assets import EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE
+from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
+                                               EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT)
 from module.combat.assets import AUTOMATION_ON, BATTLE_PREPARATION, DEFEAT_TIPS
 from module.combat.combat import Combat
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
@@ -22,7 +26,7 @@ from module.map.assets import (FLEET_1_ADVICE, FLEET_1_BAR, FLEET_1_CHOOSE, FLEE
                                FLEET_2_HARD_SATIESFIED, FLEET_2_IN_USE, FLEET_PREPARATION,
                                MAP_PREPARATION, MAP_PREPARATION_HARD, SUBMARINE_ADVICE,
                                SUBMARINE_BAR, SUBMARINE_CHOOSE, SUBMARINE_CLEAR,
-                               SUBMARINE_HARD_SATIESFIED, SUBMARINE_IN_USE)
+                               SUBMARINE_HARD_SATIESFIED, SUBMARINE_IN_USE, WITHDRAW)
 from module.map.map_fleet_preparation import FleetOperator
 from module.ui.page import page_sp
 
@@ -181,7 +185,7 @@ class EventExtraRunner(EventExtraScout, Combat):
     """One direct EX sortie, using a verified common or stage-owned lineup.
 
     The observed hard selector permits only its own recommended Fleet 1.
-    Map-based EX remains unsupported; no map moves or second battle are attempted.
+    The observed EX board permits one settled Attack click, with no grid moves.
     """
 
     def _fleet_operators(self):
@@ -288,6 +292,71 @@ class EventExtraRunner(EventExtraScout, Combat):
             return False, 'fleet_dropdown_not_closed'
         return True, 'fleet_6_verified'
 
+    def _extra_map_appear(self):
+        return (self.appear(IN_MAP, offset=(5, 5))
+                and all(self.match_template_color(button, offset=(3, 3), similarity=.85)
+                        for button in (EX_MAP_TIME_LIMIT, EX_MAP_COLUMNS)))
+
+    def _launch_extra_map(self, record, reserve):
+        # The first map screenshot can precede drawing the fleets/enemies. Wait
+        # for fresh, stable board images; never select a guessed grid coordinate.
+        settled = Timer(2, count=3).start()
+        previous = None
+        stable_frames = 0
+        for _ in self.loop(skip_first=False, timeout=12):
+            if not (self._extra_map_appear()
+                    and self.match_template_color(EX_MAP_ATTACK, offset=(3, 3), similarity=.85)):
+                previous = None
+                stable_frames = 0
+                settled.reset()
+                continue
+            # The bottom frame settles with the camera, while ships and water
+            # can keep animating indefinitely inside the board.
+            board = self.device.image[625:646:2, 450:1120:2].astype(np.int16)
+            if previous is None or np.mean(np.abs(board - previous)) > 2:
+                stable_frames = 0
+                settled.reset()
+            else:
+                stable_frames += 1
+            previous = board.copy()
+            if stable_frames >= 3 and settled.reached():
+                self._extra_capture(record, 'settled_map_attack')
+                record['map_observed'] = True
+                record['map_attack_clicked'] = True
+                reserve()  # Durable evidence precedes the only map launch click.
+                self.device.click(EX_MAP_ATTACK)
+                return True
+        self._extra_capture(record, 'map_launch_unverified')
+        return False
+
+    def _return_extra_event(self, record):
+        if not self.appear(IN_MAP, offset=(5, 5)):
+            return ensure_event_page(self, page_sp)
+        # A blocked or finished EX board is outside the page graph. Withdraw
+        # only from this exact map, and confirm only our own recognized retreat.
+        retreat_clicked = confirmed = False
+        settled = Timer(2, count=3).start()
+        for _ in self.loop(skip_first=False, timeout=15):
+            if self.ui_page_appear(page_sp):
+                return True
+            if retreat_clicked and not confirmed and self.handle_popup_confirm('EX_WITHDRAW'):
+                confirmed = True
+                settled.reset()
+                continue
+            if self._extra_map_appear():
+                if (not retreat_clicked and settled.reached()
+                        and self.match_template_color(WITHDRAW, offset=(3, 3), similarity=.85)):
+                    self._extra_capture(record, 'map_withdraw')
+                    self.device.click(WITHDRAW)
+                    retreat_clicked = True
+                continue
+            if (confirmed and settled.reached()
+                    and any(self.appear(button, offset=(20, 50)) for button in (
+                        MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION, BATTLE_PREPARATION))):
+                return ensure_event_page(self, page_sp)
+        self._extra_capture(record, 'map_return_unverified')
+        return False
+
     def _direct_extra_battle(self, record, reserve):
         if not self.appear(FLEET_PREPARATION, offset=(20, 50)):
             return 'blocked', 'verified_fleet_preparation_disappeared'
@@ -296,11 +365,13 @@ class EventExtraRunner(EventExtraScout, Combat):
         self.combat_auto_reset()
         # On a direct EX, this may be the final start. Persist before either
         # possible start button, including crashes between the click and loading.
+        record['fleet_start_clicked'] = True
         reserve()
         self.device.click(FLEET_PREPARATION)
         battle_start_clicked = False
         result_seen = False
         combat_seen = False
+        map_attack_clicked = False
         start_deadline = monotonic() + 30
         for _ in self.loop(skip_first=False, timeout=360):
             if self.ui_page_appear(page_sp):
@@ -310,8 +381,16 @@ class EventExtraRunner(EventExtraScout, Combat):
                     return 'complete', 'battle_won'
                 return 'blocked', 'returned_without_verified_result'
             if self.appear(IN_MAP, offset=(5, 5)):
-                self._extra_capture(record, 'unsupported_map')
-                return 'blocked', 'map_based_ex_unsupported'
+                if combat_seen or result_seen:
+                    break  # One battle only, including unreadable results.
+                if not map_attack_clicked:
+                    if not self._launch_extra_map(record, reserve):
+                        return 'blocked', 'map_launch_not_verified'
+                    map_attack_clicked = True
+                    start_deadline = monotonic() + 30
+                elif monotonic() >= start_deadline:
+                    break
+                continue
             if self.appear(BATTLE_PREPARATION, offset=(30, 20)):
                 if combat_seen or result_seen:
                     # Loading already proves a possible sortie. A fast defeat
@@ -326,14 +405,22 @@ class EventExtraRunner(EventExtraScout, Combat):
                 if not self.appear(AUTOMATION_ON):
                     continue
                 self._extra_capture(record, 'auto_battle_start')
+                record['battle_start_clicked'] = True
+                reserve()
                 self.device.click(BATTLE_PREPARATION)
                 battle_start_clicked = True
                 continue
             if self.is_combat_executing():
+                if not combat_seen:
+                    record['combat_seen'] = True
+                    reserve()
                 combat_seen = True
                 self.handle_combat_auto('combat_auto')
                 continue
             if self.is_combat_loading():
+                if not combat_seen:
+                    record['combat_seen'] = True
+                    reserve()
                 combat_seen = True
                 continue
             if self.handle_combat_automation_confirm():
@@ -394,7 +481,7 @@ class EventExtraRunner(EventExtraScout, Combat):
                 status, reason = 'blocked', 'fleet_6_not_verified_before_battle_preparation'
             record.update(status=status, reason=reason)
             self._extra_capture(record, status)
-            record['returned_event'] = ensure_event_page(self, page_sp)
+            record['returned_event'] = self._return_extra_event(record)
             if not record['returned_event'] and status == 'complete':
                 record.update(status='blocked', reason='battle_won_but_event_return_unverified')
         except Exception:
