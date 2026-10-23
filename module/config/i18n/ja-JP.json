@@ -126,6 +126,14 @@
       "name": "作戦履歴",
       "help": ""
     },
+    "WarArchivesComplete": {
+      "name": "Task.WarArchivesComplete.name",
+      "help": "Task.WarArchivesComplete.help"
+    },
+    "WarArchivesPrize": {
+      "name": "Task.WarArchivesPrize.name",
+      "help": "Task.WarArchivesPrize.help"
+    },
     "EventA": {
       "name": "毎日イベント海域A",
       "help": ""
@@ -1647,6 +1655,53 @@
     "CustomFilter": {
       "name": "EventShop.CustomFilter.name",
       "help": "EventShop.CustomFilter.help"
+    }
+  },
+  "Archive": {
+    "_info": {
+      "name": "Archive._info.name",
+      "help": "Archive._info.help"
+    },
+    "Goal": {
+      "name": "Archive.Goal.name",
+      "help": "Archive.Goal.help",
+      "stories": "stories",
+      "items_and_stories": "items_and_stories"
+    },
+    "Difficulty": {
+      "name": "Archive.Difficulty.name",
+      "help": "Archive.Difficulty.help",
+      "easy": "easy",
+      "hard": "hard"
+    },
+    "Target": {
+      "name": "Archive.Target.name",
+      "help": "Archive.Target.help"
+    },
+    "Prize": {
+      "name": "Archive.Prize.name",
+      "help": "Archive.Prize.help"
+    },
+    "DailyTickets": {
+      "name": "Archive.DailyTickets.name",
+      "help": "Archive.DailyTickets.help",
+      "0": "0",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4"
+    },
+    "ExtraOilReserve": {
+      "name": "Archive.ExtraOilReserve.name",
+      "help": "Archive.ExtraOilReserve.help"
+    },
+    "StagesPerRun": {
+      "name": "Archive.StagesPerRun.name",
+      "help": "Archive.StagesPerRun.help"
+    },
+    "ObserveOnly": {
+      "name": "Archive.ObserveOnly.name",
+      "help": "Archive.ObserveOnly.help"
     }
   },
   "Commission": {

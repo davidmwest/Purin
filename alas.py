@@ -473,6 +473,14 @@ class AzurLaneAutoScript:
         CampaignWarArchives(config=self.config, device=self.device).run(
             name=self.config.Campaign_Name, folder=self.config.Campaign_Event, mode=self.config.Campaign_Mode)
 
+    def war_archives_complete(self):
+        from module.war_archives.completion import WarArchivesComplete
+        WarArchivesComplete(config=self.config, device=self.device).run()
+
+    def war_archives_prize(self):
+        from module.war_archives.completion import WarArchivesComplete
+        WarArchivesComplete(config=self.config, device=self.device).run(prize_only=True)
+
     def raid_daily(self):
         from module.raid.daily import RaidDaily
         RaidDaily(config=self.config, device=self.device).run()

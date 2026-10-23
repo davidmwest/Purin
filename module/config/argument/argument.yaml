@@ -380,6 +380,26 @@ EventShop:
     > CatT2 > CatT1 > PlateGeneralT3 > PlateT3 > BoxT4
     > ShipSSR
 
+Archive:
+  Goal:
+    value: stories
+    option: [ stories, items_and_stories ]
+  Difficulty:
+    value: hard
+    option: [ easy, hard ]
+  Target:
+    value: all
+    valuetype: str
+  Prize:
+    value: auto
+    valuetype: str
+  DailyTickets:
+    value: 4
+    option: [ 0, 1, 2, 3, 4 ]
+  ExtraOilReserve: 5000
+  StagesPerRun: 4
+  ObserveOnly: false
+
 
 # ==================== Reward ====================
 

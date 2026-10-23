@@ -36,7 +36,9 @@
       "Hospital",
       "Coalition",
       "EventShop",
-      "WarArchives"
+      "WarArchives",
+      "WarArchivesComplete",
+      "WarArchivesPrize"
     ]
   },
   "EventDaily": {

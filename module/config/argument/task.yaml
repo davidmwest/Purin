@@ -169,6 +169,28 @@ Event:
       - Emotion
       - HpControl
       - EnemyPriority
+    WarArchivesComplete:
+      - Scheduler
+      - Archive
+      - Campaign
+      - StopCondition
+      - Fleet
+      - ShipRotation
+      - Submarine
+      - Emotion
+      - HpControl
+      - EnemyPriority
+    WarArchivesPrize:
+      - Scheduler
+      - Archive
+      - Campaign
+      - StopCondition
+      - Fleet
+      - ShipRotation
+      - Submarine
+      - Emotion
+      - HpControl
+      - EnemyPriority
 
 
 # ==================== EventDaily ====================

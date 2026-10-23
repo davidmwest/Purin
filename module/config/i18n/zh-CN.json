@@ -126,6 +126,14 @@
       "name": "作战档案",
       "help": "由于作战档案缺少维护，开荒功能不一定能正常使用，如果发现Alas运行异常，请手动完成开荒后使用自律寻敌功能"
     },
+    "WarArchivesComplete": {
+      "name": "Task.WarArchivesComplete.name",
+      "help": "Task.WarArchivesComplete.help"
+    },
+    "WarArchivesPrize": {
+      "name": "Task.WarArchivesPrize.name",
+      "help": "Task.WarArchivesPrize.help"
+    },
     "EventA": {
       "name": "活动每日A图",
       "help": ""
@@ -1647,6 +1655,53 @@
     "CustomFilter": {
       "name": "自定义过滤器",
       "help": "使用自定义过滤器需将“活动商店过滤器”设置为“自定义”，并阅读 https://github.com/LmeSzinc/AzurLaneAutoScript/wiki/filter_string_cn"
+    }
+  },
+  "Archive": {
+    "_info": {
+      "name": "Archive._info.name",
+      "help": "Archive._info.help"
+    },
+    "Goal": {
+      "name": "Archive.Goal.name",
+      "help": "Archive.Goal.help",
+      "stories": "stories",
+      "items_and_stories": "items_and_stories"
+    },
+    "Difficulty": {
+      "name": "Archive.Difficulty.name",
+      "help": "Archive.Difficulty.help",
+      "easy": "easy",
+      "hard": "hard"
+    },
+    "Target": {
+      "name": "Archive.Target.name",
+      "help": "Archive.Target.help"
+    },
+    "Prize": {
+      "name": "Archive.Prize.name",
+      "help": "Archive.Prize.help"
+    },
+    "DailyTickets": {
+      "name": "Archive.DailyTickets.name",
+      "help": "Archive.DailyTickets.help",
+      "0": "0",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4"
+    },
+    "ExtraOilReserve": {
+      "name": "Archive.ExtraOilReserve.name",
+      "help": "Archive.ExtraOilReserve.help"
+    },
+    "StagesPerRun": {
+      "name": "Archive.StagesPerRun.name",
+      "help": "Archive.StagesPerRun.help"
+    },
+    "ObserveOnly": {
+      "name": "Archive.ObserveOnly.name",
+      "help": "Archive.ObserveOnly.help"
     }
   },
   "Commission": {

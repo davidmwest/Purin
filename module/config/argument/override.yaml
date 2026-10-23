@@ -459,6 +459,20 @@ WarArchives:
   Campaign:
     Mode: normal
     AmbushEvade: true
+WarArchivesComplete:
+  Scheduler:
+    SuccessInterval: 30
+    FailureInterval: 30
+    ServerUpdate: 00:00
+  Campaign:
+    AmbushEvade: true
+WarArchivesPrize:
+  Scheduler:
+    SuccessInterval: 30
+    FailureInterval: 30
+    ServerUpdate: 00:00
+  Campaign:
+    AmbushEvade: true
 
 # ==================== Opsi ====================
 

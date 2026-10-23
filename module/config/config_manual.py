@@ -28,7 +28,7 @@ class ManualConfig:
     > IslandProduction
     > Daily > Hard > OpsiAshBeacon > OpsiAshAssist > OpsiMonthBoss
     > Sos > EventSp > EventA > EventB > EventC > EventD
-    > RaidDaily > CoalitionSp > WarArchives > MaritimeEscort
+    > RaidDaily > CoalitionSp > WarArchivesComplete > WarArchivesPrize > WarArchives > MaritimeEscort
     > EventExtra > CampaignStars > EventStars > Event > Event2 > Raid > Hospital > Coalition > Main > Main2 > Main3
     > OpsiMeowfficerFarming
     > GemsFarming

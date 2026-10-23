@@ -226,6 +226,16 @@ class GeneratedConfig:
     EventShop_PresetFilter = 'all'  # all, custom
     EventShop_CustomFilter = 'EquipUR > EquipSSR > Cube > GachaTicket\n> Array > Chip > CatT3 \n> Meta > SkinBox\n> Oil > Coin > Medal > ExpBookT1 > FoodT1\n> DR > PR\n> AugmentCore > AugmentEnhanceT2 > AugmentChangeT2 > AugmentChangeT1\n> CatT2 > CatT1 > PlateGeneralT3 > PlateT3 > BoxT4\n> ShipSSR'
 
+    # Group `Archive`
+    Archive_Goal = 'stories'  # stories, items_and_stories
+    Archive_Difficulty = 'hard'  # easy, hard
+    Archive_Target = 'all'
+    Archive_Prize = 'auto'
+    Archive_DailyTickets = 4  # 0, 1, 2, 3, 4
+    Archive_ExtraOilReserve = 5000
+    Archive_StagesPerRun = 4
+    Archive_ObserveOnly = False
+
     # Group `Commission`
     Commission_PresetFilter = 'cube'  # cube, cube_24h, chip, chip_24h, oil, custom
     Commission_CustomFilter = 'DailyEvent > Gem-4 > Gem-2 > Gem-8 > ExtraCube-0:30\n> UrgentCube-1:30 > UrgentCube-1:45 > UrgentCube-3\n> ExtraDrill-5:20 > ExtraDrill-2 > ExtraDrill-3:20\n> UrgentCube-2:15 > UrgentCube-4\n> ExtraDrill-1 > UrgentCube-6 > ExtraCube-1:30\n> ExtraDrill-2:40 > ExtraDrill-0:20\n> Major > DailyChip > DailyResource\n> ExtraPart-0:30 > ExtraOil-1 > UrgentBox-6\n> ExtraCube-3 > ExtraPart-1 > UrgentBox-3\n> ExtraCube-4 > ExtraPart-1:30 > ExtraOil-4\n> UrgentBox-1 > ExtraCube-5 > UrgentBox-1\n> ExtraCube-8 > ExtraOil-8\n> UrgentDrill-4 > UrgentDrill-2:40 > UrgentDrill-2\n> UrgentDrill-1 > UrgentDrill-1:30 > UrgentDrill-1:10\n> Extra-0:20 > Extra-0:30 > Extra-1:00 > Extra-1:30 > Extra-2:00\n> shortest'

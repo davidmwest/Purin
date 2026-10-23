@@ -126,6 +126,14 @@
       "name": "War Archives",
       "help": "Due to the lack of maintenance of war archives, continuous clear may not work normally, if Alas runs abnormally, Please manually finish clearing and use auto search"
     },
+    "WarArchivesComplete": {
+      "name": "War Archives: completion",
+      "help": "Finish the supported archives in order, either stories only or stories plus guaranteed clear-count prizes. Shared daily budget: four entries, then stored keys only above the extra oil reserve. Unknown screens defer safely."
+    },
+    "WarArchivesPrize": {
+      "name": "War Archives: get a prize",
+      "help": "Select an archive and guaranteed prize. Runs its required stage only until the prize is verified and claimed. Shares the completion job’s daily entry budget."
+    },
     "EventA": {
       "name": "Event Daily A",
       "help": ""
@@ -1647,6 +1655,53 @@
     "CustomFilter": {
       "name": "Custom Filter",
       "help": "To use your own filter, set \"Event Shop Filter\" to \"Custom\". All options have been defined at <https://github.com/LmeSzinc/AzurLaneAutoScript/wiki/filter_string_en>"
+    }
+  },
+  "Archive": {
+    "_info": {
+      "name": "Archive goals",
+      "help": "Completion and guaranteed clear-count rewards. Easy is the game’s Normal mode. All jobs share one account budget."
+    },
+    "Goal": {
+      "name": "Completion goal",
+      "help": "Stories: finish either Normal or Hard campaign. Items and stories: also collect each supported guaranteed stage-clear prize.",
+      "stories": "All stories",
+      "items_and_stories": "All items and stories"
+    },
+    "Difficulty": {
+      "name": "Campaign difficulty",
+      "help": "Easy runs Normal stages. Hard runs Hard stages. Prizes requiring Hard wait when Easy is selected.",
+      "easy": "Easy (Normal)",
+      "hard": "Hard"
+    },
+    "Target": {
+      "name": "Archive",
+      "help": "all, an archive ID, its campaign folder, or exact English title. The targeted prize job requires a specific archive."
+    },
+    "Prize": {
+      "name": "Prize",
+      "help": "auto selects the archive’s next unclaimed guaranteed reward; otherwise use the prize ID or exact name from the catalog."
+    },
+    "DailyTickets": {
+      "name": "Daily entries",
+      "help": "Up to four entries per server day across both archive jobs. Stored keys may fund extra entries when oil is above the reserve.",
+      "0": "0",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4"
+    },
+    "ExtraOilReserve": {
+      "name": "Extra-entry oil reserve",
+      "help": "Stop using stored tickets below this oil level after the daily entries. Every run also respects the 500-oil safety floor."
+    },
+    "StagesPerRun": {
+      "name": "Entries per scheduler run",
+      "help": "Yield to other work after this many attempted archive stages."
+    },
+    "ObserveOnly": {
+      "name": "Inspect archive screens only",
+      "help": "Save fresh archive list diagnostics without entering combat or claiming rewards."
     }
   },
   "Commission": {
