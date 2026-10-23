@@ -102,6 +102,7 @@ class EventCompletion(Reward):
     def _return_event_hub_main(self):
         """Exit only through the existing home template, never unknown hub controls."""
         from module.campaign.event_rewards_assets import FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE
+        from module.campaign.event_strict_maid_rewards_assets import STRICT_MAID_HOME, STRICT_MAID_PAGE
 
         settled = Timer(2, count=2)
         clicks = 0
@@ -126,6 +127,11 @@ class EventCompletion(Reward):
             elif (self.match_template_color(FOGGY_SUPPLY_PAGE, offset=(3, 3), similarity=self.text_similarity)
                   and self.match_template_color(FOGGY_SUPPLY_HOME, offset=(3, 3), similarity=self.text_similarity)):
                 self.device.click(FOGGY_SUPPLY_HOME)
+                clicks += 1
+                settled.reset()
+            elif (self.match_template_color(STRICT_MAID_PAGE, offset=(3, 3), similarity=self.text_similarity)
+                  and self.match_template_color(STRICT_MAID_HOME, offset=(3, 3), similarity=self.text_similarity)):
+                self.device.click(STRICT_MAID_HOME)
                 clicks += 1
                 settled.reset()
             elif (self.match_template_color(TEMPESTA_SIDE_CHOICE_PAGE, offset=(3, 3), similarity=self.text_similarity)

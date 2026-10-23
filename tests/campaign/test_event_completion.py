@@ -541,6 +541,28 @@ def test_choice_story_returns_only_with_the_exact_title_and_back(missing):
         helper.device.click.assert_not_called()
 
 
+@pytest.mark.parametrize('missing', [None, 'page', 'home'])
+def test_strict_maid_observed_home_requires_exact_page_and_home(missing):
+    import numpy as np
+    from PIL import Image
+    from module.campaign.event_strict_maid_rewards_assets import STRICT_MAID_HOME, STRICT_MAID_PAGE
+
+    image = np.asarray(Image.open('tests/campaign/data/strict_maid_rewards.png').convert('RGB')).copy()
+    if missing:
+        button = STRICT_MAID_PAGE if missing == 'page' else STRICT_MAID_HOME
+        x1, y1, x2, y2 = button.area
+        image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(2)))
+    helper.ui_page_appear = Mock(side_effect=[False, True] if missing is None else [False, False])
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert helper._return_event_hub_main() is (missing is None)
+    if missing is None:
+        helper.device.click.assert_called_once_with(STRICT_MAID_HOME)
+    else:
+        helper.device.click.assert_not_called()
+
+
 def test_rewards_panel_budget_is_saved_before_entry_and_capture_is_not_repeated(monkeypatch, tmp_path):
     helper = controller()
 
