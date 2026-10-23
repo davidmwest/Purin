@@ -47,6 +47,29 @@ STAGE_TITLE = Ocr((210, 70, 1100, 100), lang='cnocr', letter=(255, 255, 255),
                   threshold=96, name='ARCHIVE_STAGE_TITLE')
 
 
+def stage_title_area(image):
+    """Find the title rectangle's edge, without interpreting or trimming text.
+
+    The current EN title bar has dark text-free bands above and below its
+    lettering. Its width varies with the full title; the bright map beyond it
+    can otherwise become extra OCR letters. Both bands must prove the same
+    edge, followed by the bright background, before narrowing the OCR crop.
+    """
+    ends = []
+    for top, bottom in ((70, 76), (100, 104)):
+        band = image[top:bottom, 210:1100]
+        bright = (band.max(axis=(0, 2)) > 145).nonzero()[0]
+        if not len(bright) or not 80 <= int(bright[0]) < 887:
+            return None
+        edge = int(bright[0])
+        if band[:, edge + 1:edge + 4].min() < 145:
+            return None
+        ends.append(edge)
+    if abs(ends[0] - ends[1]) > 2:
+        return None
+    return 210, 70, 210 + min(ends), 100
+
+
 def parse_completion(text):
     match = re.fullmatch(r'(0|[1-9]\d?|100)%', str(text).strip())
     return None if match is None else int(match[1])
@@ -512,7 +535,10 @@ class ArchiveProgress(CampaignUI):
             actual = crop(self.device.image, VISITORS_TITLE.area)
             return bool(abs(actual.mean(axis=(0, 1)) - VISITORS_TITLE.image.mean(axis=(0, 1))).max() <= 15)
         normalize = lambda value: re.sub(r'[^a-z0-9]', '', str(value).lower())
-        actual = normalize(STAGE_TITLE.ocr(self.device.image))
+        area = stage_title_area(self.device.image)
+        if area is None:
+            return False
+        actual = normalize(STAGE_TITLE.ocr([crop(self.device.image, area)], direct_ocr=True))
         expected = {normalize(name) + suffix for name in (definition.name, *definition.aliases)
                     for suffix in ('', 'prequel', 'sequel')}
         return actual in expected

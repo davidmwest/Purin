@@ -930,6 +930,50 @@ def test_actual_stage_pages_read_unlocked_entrances_and_clear_separately(owner, 
     owner.device.click.assert_not_called()
 
 
+def test_actual_enigma_title_bar_excludes_clouds_and_reads_the_complete_title(owner):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/alas_enigma_stages.png')
+    use_actual_en_page_detectors(owner)
+    assert p.stage_title_area(owner.device.image) == (210, 70, 494, 100)
+    result = owner._read_stage_screen('war_archives_20200806_cn')
+    assert result['event'] == 'war_archives_20200806_cn'
+    assert result['mode'] == 'normal' and result['page'] == 1
+    assert set(result['stages']) == {'sp1'}
+    assert result['stages']['sp1']['complete'] is False
+    assert result['raw_keys'] == 300 and result['key_capacity'] == 300
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('negative', ['wrong_archive', 'dimmed', 'occluded_title',
+                                      'missing_edge', 'different_band_edges'])
+def test_actual_enigma_title_requires_full_title_and_undimmed_bar(owner, negative):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/alas_enigma_stages.png')
+    use_actual_en_page_detectors(owner)
+    archive = 'war_archives_20200806_cn'
+    if negative == 'wrong_archive':
+        archive = 'war_archives_20190314_en'
+    elif negative == 'dimmed':
+        owner.device.image = (owner.device.image * .5).astype(np.uint8)
+    elif negative == 'occluded_title':
+        owner.device.image[77:97, 375:485] = 0
+    elif negative == 'missing_edge':
+        owner.device.image[70:104, 494:1100] = 80
+    elif negative == 'different_band_edges':
+        owner.device.image[98:104, 494:550] = 80
+    assert not owner._archive_identity(archive)
+    owner.device.click.assert_not_called()
+
+
+def test_title_crop_does_not_discard_extra_ocr_letters(owner, monkeypatch):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/alas_enigma_stages.png')
+    use_actual_en_page_detectors(owner)
+    monkeypatch.setattr(p.STAGE_TITLE, 'ocr', Mock(return_value='The Enigma and the Shark extra'))
+    assert not owner._archive_identity('war_archives_20200806_cn')
+    owner.device.click.assert_not_called()
+
+
 @pytest.mark.parametrize('negative', ['title', 'overlay', 'no_stages', 'dimmed'])
 def test_actual_stage_page_missing_identity_or_overlay_cannot_authorize(owner, negative):
     from module.base.utils import load_image
