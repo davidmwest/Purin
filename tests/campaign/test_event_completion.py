@@ -5,16 +5,17 @@ import pytest
 
 from module.campaign import event_completion as completion
 from module.campaign.event_completion import EventCompletion, load_reward_observations, save_reward_observations
+from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED, TEMPESTA_SUPPLIES
 from module.exception import GameNotRunningError, ScriptError
 from module.reward.assets import MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
-from module.ui.page import page_event_list, page_main, page_mission
+from module.ui.page import page_event_list, page_main, page_mission, page_sp
 
 
 def controller():
     helper = EventCompletion.__new__(EventCompletion)
     helper.config = SimpleNamespace(config_name='f2p')
     helper.device = SimpleNamespace(stuck_record_clear=Mock(), click_record_clear=Mock(), click=Mock(),
-                                    app_is_running=Mock(return_value=True))
+                                    app_is_running=Mock(return_value=True), display_scale=1)
     helper.interval_clear = Mock()
     return helper
 
@@ -55,10 +56,126 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     helper = controller()
     helper.collect_event_missions = Mock(return_value=True)
     helper.observe_event_rewards = Mock(return_value={'status': 'observed'})
+    helper.observe_event_supplies = Mock(return_value={'status': 'observed'})
     result = helper.run('event_20261022_cn')
     assert result == {'story': 'disabled', 'rewards': 'complete', 'event_hub_rewards': 'unsupported',
-                      'event_reward_observation': {'status': 'observed'}}
+                      'event_reward_observation': {'status': 'observed'},
+                      'event_supplies_observation': {'status': 'observed'}}
     helper.observe_event_rewards.assert_called_once_with('event_20261022_cn')
+    helper.observe_event_supplies.assert_called_once_with('event_20261022_cn')
+
+
+def test_supplies_budget_is_independent_and_saved_before_any_inspection(monkeypatch, tmp_path):
+    helper = controller()
+    save_reward_observations('f2p', {'event_20261022_cn': {'status': 'observed'}}, folder=tmp_path)
+
+    def inspect(record):
+        state = load_reward_observations('f2p', folder=tmp_path)
+        assert state['event_20261022_cn']['status'] == 'observed'
+        assert state['event_20261022_cn:supplies']['status'] == 'observing'
+        record.update(status='observed', reason='supplies_panel_assets_required', supplies_clicked=True)
+
+    helper._inspect_event_supplies = Mock(side_effect=inspect)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=False))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock(return_value='/tmp/supplies.png'))
+    first = helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+    second = helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+
+    assert first['status'] == 'observed'
+    assert first['diagnostics'] == ['/tmp/supplies.png']
+    assert first['returned_main'] is False
+    assert first['return_reason'] == 'main_return_unrecognized'
+    assert second['reused'] is True
+    helper._inspect_event_supplies.assert_called_once()
+    completion.ensure_event_page.assert_called_once_with(helper, page_main, timeout=8, max_clicks=3)
+
+
+def test_interrupted_supplies_observation_does_not_retry_click(monkeypatch, tmp_path):
+    save_reward_observations('f2p', {'event_20261022_cn:supplies': {'status': 'observing'}}, folder=tmp_path)
+    helper = controller()
+    helper._inspect_event_supplies = Mock()
+    result = helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+    assert result['reason'] == 'previous_supplies_observation_interrupted'
+    assert result['status'] == 'blocked'
+    helper._inspect_event_supplies.assert_not_called()
+
+
+def test_supplies_observation_exception_spends_budget_and_attempts_known_return(monkeypatch, tmp_path):
+    helper = controller()
+    helper._inspect_event_supplies = Mock(side_effect=RuntimeError('interrupted'))
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    with pytest.raises(RuntimeError, match='interrupted'):
+        helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+    state = load_reward_observations('f2p', folder=tmp_path)['event_20261022_cn:supplies']
+    assert state['status'] == 'blocked'
+    assert state['returned_main'] is True
+
+
+def test_closed_game_does_not_spend_supplies_observation_budget(tmp_path):
+    helper = controller()
+    helper.device.app_is_running.return_value = False
+    with pytest.raises(GameNotRunningError):
+        helper.observe_event_supplies('event_20261022_cn', folder=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('event', ['campaign_main', 'event_20251023_cn'])
+def test_unsupported_supplies_event_does_not_inspect_or_create_budget(tmp_path, event):
+    helper = controller()
+    helper._inspect_event_supplies = Mock()
+    assert helper.observe_event_supplies(event, folder=tmp_path)['status'] == 'unsupported'
+    helper._inspect_event_supplies.assert_not_called()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('recognized', [False, True])
+def test_supplies_click_requires_page_and_both_observed_templates(monkeypatch, recognized):
+    helper = controller()
+    helper.loop = Mock(side_effect=lambda **kwargs: iter(range(3)))
+    helper.ui_page_appear = Mock(side_effect=[True, False] if recognized else [True] * 3)
+    helper.match_template_color = Mock(side_effect=lambda button, **kwargs:
+                                      button == TEMPESTA_CAMPAIGN or recognized)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    timer = Mock()
+    timer.start.return_value = timer
+    timer.reached.return_value = True
+    monkeypatch.setattr(completion, 'Timer', Mock(return_value=timer))
+    record = {}
+    helper._inspect_event_supplies(record)
+    if recognized:
+        helper.device.click.assert_called_once_with(TEMPESTA_SUPPLIES)
+        assert record['status'] == 'observed'
+        assert record['supplies_clicked'] is True
+    else:
+        helper.device.click.assert_not_called()
+        assert record['reason'] == 'supplies_label_unrecognized'
+
+
+def test_supplies_are_never_clicked_from_an_unknown_page(monkeypatch):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(3)))
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.match_template_color = Mock(return_value=True)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    record = {}
+    helper._inspect_event_supplies(record)
+    helper.device.click.assert_not_called()
+    helper.match_template_color.assert_not_called()
+    assert record['status'] == 'blocked'
+
+
+def test_observed_tempesta_labels_and_lock_match_but_missing_controls_do_not():
+    from pathlib import Path
+    import numpy as np
+    from PIL import Image
+
+    image = np.asarray(Image.open(Path(__file__).parent / 'data/tempesta_locked.png').convert('RGB'))
+    for button in (TEMPESTA_CAMPAIGN, TEMPESTA_SUPPLIES, TEMPESTA_EX_LOCKED):
+        assert button.match_template_color(image, offset=(3, 3), similarity=.85)
+        removed = image.copy()
+        x1, y1, x2, y2 = button.area
+        removed[y1 - 3:y2 + 3, x1 - 3:x2 + 3] = 0
+        assert not button.match_template_color(removed, offset=(3, 3), similarity=.85)
 
 
 def test_event_list_observation_is_persisted_before_navigation_and_reused(monkeypatch, tmp_path):

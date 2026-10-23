@@ -11,13 +11,14 @@ from datetime import datetime
 from time import monotonic
 
 from module.base.timer import Timer
+from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_SUPPLIES
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
 from module.logger import logger
 from module.reward.assets import MISSION_EMPTY, MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
 from module.reward.reward import Reward
-from module.ui.page import page_event_list, page_main, page_mission
+from module.ui.page import page_event_list, page_main, page_mission, page_sp
 
 SUPPORTED_STORY_EVENTS = frozenset(('event_20251023_cn', 'event_20261022_cn'))
 MISSION_CLAIMS_MAX = 24
@@ -61,6 +62,84 @@ def save_reward_observations(account, state, folder=REWARD_OBSERVATION_DIR):
 
 
 class EventCompletion(Reward):
+    def _inspect_event_supplies(self, record):
+        if not ensure_event_page(self, page_sp):
+            record.update(status='blocked', reason='campaign_page_unrecognized')
+            return
+        # The name and Supplies label must both match the observed event page.
+        # One persisted observation authorizes at most one Supplies click.
+        for _ in self.loop(timeout=8):
+            if not self.ui_page_appear(page_sp):
+                continue
+            if not self.match_template_color(TEMPESTA_CAMPAIGN, offset=(3, 3),
+                                             similarity=self.text_similarity):
+                continue
+            if not self.match_template_color(TEMPESTA_SUPPLIES, offset=(3, 3),
+                                             similarity=self.text_similarity):
+                continue
+            self.device.click(TEMPESTA_SUPPLIES)
+            record['supplies_clicked'] = True
+            break
+        else:
+            record.update(status='blocked', reason='supplies_label_unrecognized')
+            return
+
+        # The destination is being inspected, not acted upon. Give its opening
+        # animation a bounded interval, then save evidence for a supported parser.
+        settled = Timer(1, count=2).start()
+        for _ in self.loop(timeout=8):
+            if settled.reached():
+                if self.ui_page_appear(page_sp) and self.match_template_color(
+                        TEMPESTA_SUPPLIES, offset=(3, 3), similarity=self.text_similarity):
+                    record.update(status='blocked', reason='supplies_did_not_open')
+                else:
+                    record.update(status='observed', reason='supplies_panel_assets_required')
+                return
+        record.update(status='blocked', reason='supplies_panel_timeout')
+
+    def observe_event_supplies(self, event, folder=REWARD_OBSERVATION_DIR):
+        """Open only the observed event Supplies control, once per account/event."""
+        if event not in REWARD_OBSERVATION_EVENTS:
+            return dict(status='unsupported', diagnostics=[])
+        ensure_event_running(self)
+        account = self.config.config_name
+        state = load_reward_observations(account, folder=folder)
+        # Separate from the earlier activity-list observation: that list did not
+        # contain the current event hub, and spending it must not block Supplies.
+        key = event + ':supplies'
+        if key in state:
+            record = dict(state[key])
+            if record.get('status') == 'observing':
+                record.update(status='blocked', reason='previous_supplies_observation_interrupted')
+            record['reused'] = True
+            logger.attr('EventSuppliesObservation', record)
+            return record
+        record = dict(status='observing', diagnostics=[], supplies_clicked=False,
+                      returned_main=False, started=datetime.now().isoformat(timespec='seconds'))
+        state[key] = record
+        save_reward_observations(account, state, folder=folder)
+        try:
+            self._inspect_event_supplies(record)
+            path = save_event_diagnostic(self.device, f'{account}_supplies_{record["status"]}')
+            if path:
+                record['diagnostics'].append(path)
+            else:
+                record.update(status='blocked', reason='diagnostic_not_saved')
+        except Exception:
+            record.update(status='blocked', reason='supplies_observation_exception')
+            raise
+        finally:
+            try:
+                # Unknown panel controls are never guessed. Only known page
+                # graph links can return to main; keep this fallback brief.
+                record['returned_main'] = ensure_event_page(self, page_main, timeout=8, max_clicks=3)
+                if not record['returned_main']:
+                    record['return_reason'] = 'main_return_unrecognized'
+            finally:
+                save_reward_observations(account, state, folder=folder)
+        logger.attr('EventSuppliesObservation', record)
+        return record
+
     def observe_event_rewards(self, event, folder=REWARD_OBSERVATION_DIR):
         """Capture the recognized activity list once; never open an unknown event banner."""
         if event not in REWARD_OBSERVATION_EVENTS:
@@ -204,6 +283,7 @@ class EventCompletion(Reward):
                 result['story'] = 'unsupported'
         if collect_rewards:
             result['event_reward_observation'] = self.observe_event_rewards(event)
+            result['event_supplies_observation'] = self.observe_event_supplies(event)
             result['rewards'] = 'complete' if self.collect_event_missions() else 'failed'
             if event.startswith('event_'):
                 result['event_hub_rewards'] = 'unsupported'
