@@ -31,7 +31,7 @@ def ensure_event_running(main):
 
 def ensure_event_page(main, destination, timeout=30, max_clicks=12):
     """Use the normal page graph with a finite budget and recognized screens only."""
-    from module.campaign.event_completion_assets import TEMPESTA_HUB, TEMPESTA_HUB_HOME
+    from module.campaign.event_completion_assets import TEMPESTA_HUB, TEMPESTA_HUB_HOME, TEMPESTA_HUB_INACTIVE
 
     ensure_event_running(main)
     Page.init_connection(destination)
@@ -60,7 +60,8 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
                 continue
             # The observed featured-event hub is outside the normal page graph.
             # Its exact title and Home glyph must agree before using that exit.
-            if (main.match_template_color(TEMPESTA_HUB, offset=(3, 3), similarity=.85)
+            if ((main.match_template_color(TEMPESTA_HUB, offset=(3, 3), similarity=.85)
+                 or main.match_template_color(TEMPESTA_HUB_INACTIVE, offset=(3, 3), similarity=.85))
                     and main.match_template_color(TEMPESTA_HUB_HOME, offset=(3, 3), similarity=.85)):
                 main.device.click(TEMPESTA_HUB_HOME)
                 clicks += 1

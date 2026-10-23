@@ -6,7 +6,8 @@ import pytest
 from module.campaign import event_completion as completion
 from module.campaign.event_completion import EventCompletion, load_reward_observations, save_reward_observations
 from module.campaign.event_completion_assets import (
-    TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED, TEMPESTA_FEATURED_ENTRY, TEMPESTA_HUB, TEMPESTA_HUB_HOME,
+    TEMPESTA_BECKONING_TAB, TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED, TEMPESTA_FEATURED_ENTRY,
+    TEMPESTA_HUB, TEMPESTA_HUB_HOME, TEMPESTA_HUB_INACTIVE,
     TEMPESTA_HUB_LANDING, TEMPESTA_MAIN_ENTRY, TEMPESTA_REWARDS_TAB, TEMPESTA_SUPPLIES)
 from module.exception import GameNotRunningError, ScriptError
 from module.reward.assets import MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
@@ -62,6 +63,7 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     helper.observe_event_hub = Mock(return_value={'status': 'observed'})
     helper.observe_event_featured = Mock(return_value={'status': 'observed'})
     helper.observe_event_rewards_panel = Mock(return_value={'status': 'observed'})
+    helper.observe_event_beckoning = Mock(return_value={'status': 'observed'})
     helper.observe_event_rewards = Mock(return_value={'status': 'observed'})
     helper.observe_event_supplies = Mock(return_value={'status': 'observed'})
     result = helper.run('event_20261022_cn')
@@ -70,6 +72,7 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
                       'event_hub_observation': {'status': 'observed'},
                       'event_featured_observation': {'status': 'observed'},
                       'event_pt_observation': {'status': 'observed'},
+                      'event_beckoning_observation': {'status': 'observed'},
                       'event_reward_observation': {'status': 'observed'},
                       'event_supplies_observation': {'status': 'observed'}}
     helper.observe_event_rewards.assert_called_once_with('event_20261022_cn')
@@ -134,6 +137,7 @@ def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch
     helper.observe_event_hub = Mock(side_effect=lambda event: order.append('hub'))
     helper.observe_event_featured = Mock(side_effect=lambda event: order.append('featured'))
     helper.observe_event_rewards_panel = Mock(side_effect=lambda event: order.append('pt'))
+    helper.observe_event_beckoning = Mock(side_effect=lambda event: order.append('beckoning'))
     helper.observe_event_rewards = Mock(side_effect=lambda event: order.append('list'))
     helper.observe_event_supplies = Mock(side_effect=lambda event: order.append('supplies'))
     helper.collect_event_missions = Mock(side_effect=lambda: order.append('missions'))
@@ -141,7 +145,7 @@ def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch
     story.return_value.run.side_effect = lambda **kwargs: order.append('story')
     monkeypatch.setattr(completion, 'EventStory', story)
     helper.run('event_20261022_cn', complete_story=True)
-    assert order == ['main', 'hub', 'featured', 'pt', 'story', 'list', 'supplies', 'missions']
+    assert order == ['main', 'hub', 'featured', 'pt', 'beckoning', 'story', 'list', 'supplies', 'missions']
 
 
 def test_hub_budget_precedes_navigation_and_is_reused_after_capture(monkeypatch, tmp_path):
@@ -359,7 +363,32 @@ def test_hub_home_exit_requires_both_observed_templates(missing):
     helper.loop = Mock(return_value=iter(range(4)))
     helper.ui_page_appear = Mock(side_effect=[False, True] if missing is None else [False] * 4)
     helper.match_template_color = Mock(side_effect=lambda button, **kwargs:
-                                      button != GOTO_MAIN and button != missing)
+                                      button not in (GOTO_MAIN, TEMPESTA_HUB_INACTIVE, missing))
+    assert helper._return_event_hub_main() is (missing is None)
+    if missing is None:
+        helper.device.click.assert_called_once_with(TEMPESTA_HUB_HOME)
+    else:
+        helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [None, 'title', 'home'])
+def test_catalog_selected_rewards_has_a_verified_home_exit(missing):
+    from pathlib import Path
+    import numpy as np
+    from PIL import Image
+
+    image = np.asarray(Image.open(Path('tests/campaign/data/tempesta_rewards_catalog.png')).convert('RGB')).copy()
+    assert not TEMPESTA_HUB.match_template_color(image, offset=(3, 3), similarity=.85)
+    assert TEMPESTA_HUB_INACTIVE.match_template_color(image, offset=(3, 3), similarity=.85)
+    assert TEMPESTA_BECKONING_TAB.match_template_color(image, offset=(3, 3), similarity=.85)
+    if missing:
+        button = TEMPESTA_HUB_INACTIVE if missing == 'title' else TEMPESTA_HUB_HOME
+        x1, y1, x2, y2 = button.area
+        image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(2)))
+    helper.ui_page_appear = Mock(side_effect=[False, True] if missing is None else [False, False])
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
     assert helper._return_event_hub_main() is (missing is None)
     if missing is None:
         helper.device.click.assert_called_once_with(TEMPESTA_HUB_HOME)
@@ -400,6 +429,57 @@ def test_closed_game_does_not_spend_rewards_panel_budget(tmp_path):
     helper.device.app_is_running.return_value = False
     with pytest.raises(GameNotRunningError):
         helper.observe_event_rewards_panel('event_20261022_cn', folder=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_beckoning_observation_has_an_independent_durable_budget(monkeypatch, tmp_path):
+    helper = controller()
+    previous = {'event_20261022_cn:featured': {'status': 'observed'},
+                'event_20261022_cn:pt_panel': {'status': 'observed'}}
+    save_reward_observations('f2p', previous, folder=tmp_path)
+
+    def inspect(record, **kwargs):
+        state = load_reward_observations('f2p', folder=tmp_path)
+        assert all(state[key] == value for key, value in previous.items())
+        assert state['event_20261022_cn:beckoning']['status'] == 'observing'
+        assert kwargs == {'tab_button': TEMPESTA_BECKONING_TAB, 'panel': 'beckoning'}
+        record.update(status='observed', beckoning_tab_clicks=1)
+
+    helper._inspect_event_rewards_panel = Mock(side_effect=inspect)
+    helper._return_event_hub_main = Mock(return_value=True)
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock(return_value='/tmp/beckoning.png'))
+    first = helper.observe_event_beckoning('event_20261022_cn', folder=tmp_path)
+    second = helper.observe_event_beckoning('event_20261022_cn', folder=tmp_path)
+    assert first['diagnostics'] == ['/tmp/beckoning.png']
+    assert first['returned_main'] is True
+    assert second['reused'] is True
+    helper._inspect_event_rewards_panel.assert_called_once()
+    helper._return_event_hub_main.assert_called_once()
+    completion.save_event_diagnostic.assert_called_once_with(helper.device, 'f2p_event_beckoning_observed')
+
+
+def test_interrupted_beckoning_observation_never_retries_entry(tmp_path):
+    save_reward_observations('f2p', {'event_20261022_cn:beckoning': {'status': 'observing'}}, folder=tmp_path)
+    helper = controller()
+    helper._inspect_event_rewards_panel = Mock()
+    result = helper.observe_event_beckoning('event_20261022_cn', folder=tmp_path)
+    assert result['reason'] == 'previous_beckoning_observation_interrupted'
+    helper._inspect_event_rewards_panel.assert_not_called()
+
+
+@pytest.mark.parametrize('event', ['campaign_main', 'event_20251023_cn'])
+def test_beckoning_observer_rejects_unsupported_events_before_navigation(event, tmp_path):
+    helper = controller()
+    helper.device.app_is_running = Mock(side_effect=AssertionError('must not navigate'))
+    assert helper.observe_event_beckoning(event, folder=tmp_path)['status'] == 'unsupported'
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_closed_game_does_not_spend_beckoning_budget(tmp_path):
+    helper = controller()
+    helper.device.app_is_running.return_value = False
+    with pytest.raises(GameNotRunningError):
+        helper.observe_event_beckoning('event_20261022_cn', folder=tmp_path)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -452,6 +532,58 @@ def test_rewards_tab_entry_retries_are_bounded_and_template_verified(monkeypatch
     assert record['reason'] == 'rewards_panel_did_not_open'
     assert record['rewards_tab_clicks'] == helper.device.click.call_count == 2
     assert all(call.args[0] is TEMPESTA_REWARDS_TAB for call in helper.device.click.call_args_list)
+    assert factory.call_args_list[1].args == (3,)
+    assert factory.call_args_list[1].kwargs == {'count': 4}
+
+
+@pytest.mark.parametrize('missing', [TEMPESTA_HUB, TEMPESTA_BECKONING_TAB, TEMPESTA_HUB_LANDING])
+def test_beckoning_tab_requires_current_event_title_label_and_landing(monkeypatch, missing):
+    helper = controller()
+    helper._inspect_event_hub = Mock(side_effect=lambda record, **kwargs: record.update(status='observed'))
+    helper.loop = Mock(return_value=iter(range(5)))
+    helper.match_template_color = Mock(side_effect=lambda button, **kwargs: button != missing)
+    interval = Mock()
+    interval.start.return_value = interval
+    interval.reached.return_value = True
+    monkeypatch.setattr(completion, 'Timer', Mock(return_value=interval))
+    record = {}
+    helper._inspect_event_rewards_panel(record, tab_button=TEMPESTA_BECKONING_TAB, panel='beckoning')
+    assert record['reason'] == 'beckoning_tab_unrecognized'
+    helper.device.click.assert_not_called()
+
+
+def test_beckoning_observer_captures_destination_without_unknown_claim_actions(monkeypatch):
+    helper = controller()
+    helper._inspect_event_hub = Mock(side_effect=lambda record, **kwargs: record.update(status='observed'))
+    helper.loop = Mock(return_value=iter(range(5)))
+    landing = iter([True, False])
+    helper.match_template_color = Mock(side_effect=lambda button, **kwargs:
+                                      next(landing) if button == TEMPESTA_HUB_LANDING else True)
+    interval = Mock()
+    interval.start.return_value = interval
+    interval.reached.return_value = True
+    monkeypatch.setattr(completion, 'Timer', Mock(return_value=interval))
+    record = {}
+    helper._inspect_event_rewards_panel(record, tab_button=TEMPESTA_BECKONING_TAB, panel='beckoning')
+    assert record['reason'] == 'beckoning_panel_assets_required'
+    helper.device.click.assert_called_once_with(TEMPESTA_BECKONING_TAB)
+
+
+def test_beckoning_entry_retries_at_most_twice_with_fresh_known_landing(monkeypatch):
+    helper = controller()
+    helper._inspect_event_hub = Mock(side_effect=lambda record, **kwargs: record.update(status='observed'))
+    helper.loop = Mock(return_value=iter(range(10)))
+    helper.match_template_color = Mock(return_value=True)
+    interval = Mock()
+    interval.start.return_value = interval
+    interval.reached.return_value = True
+    factory = Mock(return_value=interval)
+    monkeypatch.setattr(completion, 'Timer', factory)
+    record = {}
+    helper._inspect_event_rewards_panel(record, tab_button=TEMPESTA_BECKONING_TAB, panel='beckoning')
+    assert record['reason'] == 'beckoning_panel_did_not_open'
+    assert record['beckoning_tab_clicks'] == helper.device.click.call_count == 2
+    assert all(call.args[0] is TEMPESTA_BECKONING_TAB for call in helper.device.click.call_args_list)
     assert factory.call_args_list[1].args == (3,)
     assert factory.call_args_list[1].kwargs == {'count': 4}
 

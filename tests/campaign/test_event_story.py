@@ -240,18 +240,21 @@ def test_idle_wakeup_uses_existing_navigation_click_and_settle_budget(monkeypatc
     assert all(page.parent is None for page in Page.iter_pages())
 
 
+@pytest.mark.parametrize('filename,title', [('tempesta_hub.png', 'TEMPESTA_HUB'),
+                                         ('tempesta_rewards_catalog.png', 'TEMPESTA_HUB_INACTIVE')])
 @pytest.mark.parametrize('missing', [None, 'title', 'home'])
-def test_captured_tempesta_hub_exit_requires_title_and_home(missing):
+def test_captured_tempesta_hub_exit_requires_title_and_home(missing, filename, title):
     from pathlib import Path
 
     import numpy as np
     from PIL import Image
 
-    from module.campaign.event_completion_assets import TEMPESTA_HUB, TEMPESTA_HUB_HOME
+    from module.campaign import event_completion_assets as assets
+    from module.campaign.event_completion_assets import TEMPESTA_HUB_HOME
 
-    image = np.asarray(Image.open(Path(__file__).parent / 'data/tempesta_hub.png').convert('RGB')).copy()
+    image = np.asarray(Image.open(Path(__file__).parent / 'data' / filename).convert('RGB')).copy()
     if missing:
-        button = TEMPESTA_HUB if missing == 'title' else TEMPESTA_HUB_HOME
+        button = getattr(assets, title) if missing == 'title' else TEMPESTA_HUB_HOME
         x1, y1, x2, y2 = button.area
         image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
     main = SimpleNamespace(

@@ -32,8 +32,8 @@ TEMPESTA_FEATURED_ENTRY = Button(
     area=(1077, 90, 1143, 157), color=(178, 182, 196), button=(1080, 95, 1140, 150),
     file='./assets/en/event_completion/TEMPESTA_FEATURED_20261022.png', name='TEMPESTA_FEATURED_ENTRY')
 
-# Featured hub observed at 2026-10-22_22-27-55_087155. The selected event
-# title remains in the side navigation while its subpanels are open.
+# Featured hub observed at 2026-10-22_22-27-55_087155. The first-tab
+# decoration is present only while that landing tab is selected.
 _HUB = './assets/en/event_completion/TEMPESTA_HUB_20261022.png'
 TEMPESTA_HUB = Button(
     area=(43, 151, 202, 187), color=(54, 74, 110), button=(43, 151, 202, 187),
@@ -47,3 +47,14 @@ TEMPESTA_REWARDS_TAB = Button(
 TEMPESTA_HUB_LANDING = Button(
     area=(282, 376, 801, 467), color=(70, 88, 127), button=(282, 376, 801, 467),
     file=_HUB, name='TEMPESTA_HUB_LANDING')
+
+# Catalog observed at 2026-10-22_22-42-10_021165. Other tabs retain the
+# current-event title without its selected-tab decoration. The Beckoning
+# label excludes the changing notification badge. No catalog GO is an action.
+_PANELS = './assets/en/event_completion/TEMPESTA_HUB_PANELS_20261022.png'
+TEMPESTA_HUB_INACTIVE = Button(
+    area=(44, 156, 184, 183), color=(49, 56, 72), button=(44, 156, 184, 183),
+    file=_PANELS, name='TEMPESTA_HUB_INACTIVE')
+TEMPESTA_BECKONING_TAB = Button(
+    area=(44, 360, 181, 386), color=(53, 61, 79), button=(45, 359, 192, 388),
+    file=_PANELS, name='TEMPESTA_BECKONING_TAB')
