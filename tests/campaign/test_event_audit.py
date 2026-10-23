@@ -7,6 +7,7 @@ import pytest
 
 from module.campaign import event_completion as completion
 from module.campaign import event_strict_maid, event_strict_maid_milestones
+from module.campaign import event_sp_observation, event_main_notifications
 from module.campaign.event_completion import EventCompletion, load_reward_observations, save_reward_observations
 from module.exception import GameNotRunningError, GamePageUnknownError
 
@@ -32,6 +33,7 @@ def audit(monkeypatch, tmp_path):
     helper.config = AuditConfig(config_name='alas', EventCompletion_Audit=True, saved=False)
     helper.device = SimpleNamespace(app_is_running=Mock(return_value=True))
     helper._resume_event_mission_receipt = Mock(return_value=True)
+    helper._resume_completed_event_panel = Mock(return_value=True)
     for name in METHODS:
         setattr(helper, name, Mock(return_value=dict(status='observed', returned_main=True, diagnostics=[])))
     strict = Mock()
@@ -40,6 +42,14 @@ def audit(monkeypatch, tmp_path):
     milestones.return_value.observe.return_value = dict(status='observed', returned_main=True, diagnostics=[])
     monkeypatch.setattr(event_strict_maid, 'StrictMaidObserver', strict)
     monkeypatch.setattr(event_strict_maid_milestones, 'StrictMaidMilestones', milestones)
+    sp = Mock()
+    sp.return_value.observe.return_value = dict(status='observed', returned_main=True, diagnostics=[])
+    notifications = Mock()
+    for name in ('observe_day7', 'observe_rental_outfits', 'observe_packs'):
+        getattr(notifications.return_value, name).return_value = dict(
+            status='observed', returned_main=True, diagnostics=[])
+    monkeypatch.setattr(event_sp_observation, 'EventSPObservation', sp)
+    monkeypatch.setattr(event_main_notifications, 'EventMainNotifications', notifications)
     monkeypatch.setattr(completion, 'EVENT_AUDIT_DIR', str(tmp_path / 'audits'))
     monkeypatch.setattr(completion, 'save_event_diagnostic', Mock(return_value=None))
     return helper, strict, milestones
@@ -76,7 +86,19 @@ def test_identity_and_flag_are_durable_before_first_control_with_separate_ledger
         getattr(helper, method).assert_called_once_with(EVENT, folder=result['folder'])
     strict.return_value.run.assert_called_once_with(EVENT, folder=result['folder'])
     milestones.return_value.observe.assert_called_once_with(EVENT, folder=result['folder'])
-    assert list(result['observations'])[-1] == 'strict_maid_milestones'
+    assert list(result['observations'])[-4:] == ['sp_availability', 'day7', 'rental_outfits', 'packs']
+
+
+@pytest.mark.parametrize('entry', ['day7', 'rental_outfits', 'packs'])
+def test_new_notification_unknown_destination_stops_subsequent_navigation(audit, entry):
+    helper, _, _ = audit
+    notifications = event_main_notifications.EventMainNotifications.return_value
+    getattr(notifications, 'observe_' + entry).return_value = dict(status='observed', returned_main=False)
+    with pytest.raises(GamePageUnknownError, match=entry):
+        helper.audit_event(EVENT)
+    names = ('day7', 'rental_outfits', 'packs')
+    for name in names[names.index(entry) + 1:]:
+        getattr(notifications, 'observe_' + name).assert_not_called()
 
 
 def test_manual_second_request_has_fresh_identity_without_erasing_first(audit):
@@ -202,6 +224,17 @@ def test_audit_runs_after_ordinary_story_and_collection(audit, monkeypatch):
     result = helper.run(EVENT, collect_rewards=True, complete_story=True)
     assert order == ['story', 'missions', 'pt', 'strict', 'audit']
     assert result['event_audit']['status'] == 'complete'
+
+
+def test_completed_panel_recovery_precedes_ordinary_navigation(audit):
+    helper, _, _ = audit
+    helper._resume_completed_event_panel.return_value = False
+    with pytest.raises(GamePageUnknownError, match='Completed event panel'):
+        helper.run(EVENT, collect_rewards=True)
+    helper._resume_completed_event_panel.assert_called_once_with(EVENT)
+    helper._resume_event_mission_receipt.assert_not_called()
+    for name in METHODS:
+        getattr(helper, name).assert_not_called()
 
 
 def test_observer_exception_is_recorded_without_attempting_later_panels(audit):

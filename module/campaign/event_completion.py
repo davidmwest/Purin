@@ -722,6 +722,8 @@ class EventCompletion(Reward):
         """Consume one explicit request, keeping its fresh observations apart from jobs."""
         from module.campaign.event_strict_maid import StrictMaidObserver
         from module.campaign.event_strict_maid_milestones import StrictMaidMilestones
+        from module.campaign.event_sp_observation import EventSPObservation
+        from module.campaign.event_main_notifications import EventMainNotifications
 
         ensure_event_running(self)
         account = self.config.config_name
@@ -770,8 +772,12 @@ class EventCompletion(Reward):
             ('activity', self.observe_event_rewards),
             ('supplies', self.observe_event_supplies),
             ('strict_maid', StrictMaidObserver(config=self.config, device=self.device).run),
-            # This newly observed destination must be last: unknown exits stop here.
             ('strict_maid_milestones', StrictMaidMilestones(config=self.config, device=self.device).observe),
+            ('sp_availability', EventSPObservation(config=self.config, device=self.device).observe),
+            # Each new destination stops the audit if its exit is unrecognized.
+            ('day7', EventMainNotifications(config=self.config, device=self.device).observe_day7),
+            ('rental_outfits', EventMainNotifications(config=self.config, device=self.device).observe_rental_outfits),
+            ('packs', EventMainNotifications(config=self.config, device=self.device).observe_packs),
         )
         record['status'] = 'observing'
         persist()
@@ -799,9 +805,17 @@ class EventCompletion(Reward):
         logger.attr('EventAudit', record)
         return record
 
+    def _resume_completed_event_panel(self, event):
+        """Resume only an exactly recognized already-collected milestone modal."""
+        from module.campaign.event_strict_maid_milestones import StrictMaidMilestones
+
+        return StrictMaidMilestones(config=self.config, device=self.device).resume(event)
+
     def run(self, event, collect_rewards=True, complete_story=False):
         result = dict(story='disabled', rewards='disabled', event_hub_rewards='disabled')
         if collect_rewards:
+            if not self._resume_completed_event_panel(event):
+                raise GamePageUnknownError('Completed event panel could not return through recognized controls')
             if not self._resume_event_mission_receipt():
                 raise GamePageUnknownError('Event mission receipt could not be safely dismissed')
             result['event_main_observation'] = self.observe_event_main(event)

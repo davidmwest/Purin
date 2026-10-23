@@ -29,6 +29,7 @@ def controller():
     helper.collect_beckoning_tickets = Mock(return_value=dict(status='unsupported', story_complete=False))
     helper.observe_event_strict_maid = Mock(return_value=dict(status='observed'))
     helper._resume_event_mission_receipt = Mock(return_value=True)
+    helper._resume_completed_event_panel = Mock(return_value=True)
     helper._event_mission_receipt = Mock(return_value=None)
     return helper
 
