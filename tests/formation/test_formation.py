@@ -11,6 +11,7 @@ from module.formation.formation import (ADD_TEMPLATE, PICKER_LIST_BOTTOM, Format
                                        ship_score)
 from module.exception import ScriptError
 from module.inventory.inventory import CARD_HEIGHT
+from module.leveling.plan import Slot
 from module.retire.dock_walk import DockWalker
 from module.retire.scanner import Ship, ShipScanner
 
@@ -200,6 +201,136 @@ def test_walk_keeps_special_lineup_exclusions(monkeypatch, status):
     monkeypatch.setattr(formation_module.StatusScanner, '_match', lambda *args: status)
 
     assert form.formation_more_candidates() == []
+
+
+@pytest.mark.parametrize('name, combat', [
+    ('Universal Bulin', False), ('Prototype Bulin MKII', False),
+    ('Specialized Bulin Custom MKIII', False), ('rototype Bulin M', False),
+    ('Prototype Bu..', False), ('', False), ('unreadable unknown', False), ('Crescent', True),
+])
+def test_candidate_identity_rejects_upgrade_material_and_unknown_names(monkeypatch, name, combat):
+    form = candidate_formation(np.zeros((720, 1280, 3), dtype=np.uint8))
+    monkeypatch.setattr(formation_module, 'Ocr', lambda *args, **kwargs: SimpleNamespace(ocr=lambda image: name))
+
+    assert form.formation_combat_card(0, 72) is combat
+
+
+@pytest.mark.parametrize('scrolling', [False, True])
+def test_both_candidate_paths_skip_bulin_and_keep_free_combat_ship(monkeypatch, scrolling):
+    from module.base.button import Button
+    from module.inventory.inventory import CARD_LEFTS
+
+    form = candidate_formation(np.zeros((720, 1280, 3), dtype=np.uint8))
+    buttons = [Button(area=(left, 72, left + 138, 276), color=(), button=(left, 72, left + 138, 276),
+                      name=f'CANDIDATE_{column}') for column, left in enumerate(CARD_LEFTS[:2])]
+    ships = [Ship(level=1, rarity='super_rare', button=buttons[0]),
+             Ship(level=15, rarity='common', button=buttons[1])]
+    monkeypatch.setattr(formation_module, 'ShipScanner', lambda **kwargs: SimpleNamespace(
+        disable=lambda *args: None, scan=lambda *args, **kwargs: ships))
+    monkeypatch.setattr(formation_module, 'card_status', lambda *args: 'free')
+    monkeypatch.setattr(formation_module.StatusScanner, '_match', lambda *args: 'free')
+    monkeypatch.setattr(formation_module, 'card_level', lambda image, column, top: ships[column].level)
+    monkeypatch.setattr(formation_module, 'card_rarity', lambda *args: 'Normal')
+    monkeypatch.setattr(formation_module, 'Ocr', lambda button, **kwargs: SimpleNamespace(
+        ocr=lambda image: 'Prototype Bulin MKII' if button.area[0] == CARD_LEFTS[0] + 4 else 'Crescent'))
+    cards = [(SimpleNamespace(column=i, top=74, button=button), 0) for i, button in enumerate(buttons)]
+    monkeypatch.setattr(formation_module, 'DockWalker', lambda *args, **kwargs: SimpleNamespace(cards=lambda: iter(cards)))
+
+    candidates = form.formation_more_candidates() if scrolling else form.formation_candidates('vanguard')
+
+    assert [ship.button for ship in candidates] == [buttons[1]]
+
+
+def test_picker_prefers_highest_level_combat_ship_before_rarity():
+    form = object.__new__(Formation)
+    selected = []
+    form.formation_candidates = lambda row: [Ship(level=1, rarity='super_rare', button='low'),
+                                           Ship(level=15, rarity='common', button='high')]
+    form.formation_picker_click = lambda button, selecting: selected.append(button) or True
+    form.dock_reset = lambda: None
+
+    assert form.formation_pick('vanguard')
+    assert selected[0] == 'high'
+
+
+def full_fleet(vanguard=('Indianapolis', 'Prototype Bulin MKII', 'Universal Bulin')):
+    return [Slot(1, 'main', i, name, 63) for i, name in enumerate(('Long Island', 'Nevada', 'Oklahoma'))] + [
+        Slot(1, 'vanguard', i, name, 66 if i == 0 else 1) for i, name in enumerate(vanguard)]
+
+
+def repair_formation(reads, pick=True):
+    form = object.__new__(Formation)
+    reads = iter(reads)
+    calls, failures = [], []
+    form.formation_read_slots = lambda fleet: next(reads)
+    form.formation_set_view = lambda info: calls.append(('view', info))
+    form.ship_info_enter = lambda **kwargs: calls.append(('slot', kwargs['click_button'].name))
+    form.formation_pick = lambda row: calls.append(('pick', row)) or pick
+    form.formation_save_failure = failures.append
+    return form, calls, failures
+
+
+def test_repair_two_existing_bulins_in_full_fleet_uses_exact_slots_and_verifies_each():
+    form, calls, failures = repair_formation([
+        full_fleet(), full_fleet(('Indianapolis', 'Crescent', 'Universal Bulin')),
+        full_fleet(('Indianapolis', 'Crescent', 'Craven')),
+    ])
+
+    assert form.formation_repair_bulins(1) == 2
+
+    assert [call for call in calls if call[0] == 'slot'] == [
+        ('slot', 'FORMATION_REPLACE_VANGUARD_2'), ('slot', 'FORMATION_REPLACE_VANGUARD_3')]
+    assert calls[-1] == ('view', False)
+    assert failures == []
+
+
+def test_repair_unknown_occupied_name_stops_before_any_slot_is_opened():
+    slots = full_fleet()
+    slots[4].name = 'unreadable unknown'
+    form, calls, failures = repair_formation([slots])
+
+    with pytest.raises(ScriptError, match='could not identify'):
+        form.formation_repair_bulins(1)
+
+    assert calls == []
+    assert failures == ['unrecognized_fleet_ship']
+
+
+def test_repair_no_free_combat_ship_fails_without_claiming_success():
+    form, calls, failures = repair_formation([full_fleet()], pick=False)
+
+    with pytest.raises(ScriptError, match='could not replace a Bulin'):
+        form.formation_repair_bulins(1)
+
+    assert len([call for call in calls if call[0] == 'slot']) == 1
+    assert failures == ['bulin_replacement_failed']
+
+
+def test_repair_rejected_replacement_stops_after_three_attempts():
+    form, calls, failures = repair_formation([full_fleet()] * 4)
+
+    with pytest.raises(ScriptError, match='after three replacement attempts'):
+        form.formation_repair_bulins(1)
+
+    assert len([call for call in calls if call[0] == 'slot']) == 3
+    assert failures == ['bulin_repair_limit']
+
+
+def test_normal_formation_run_repairs_bulins_even_without_empty_slots():
+    form, calls, _ = repair_formation([
+        full_fleet(), full_fleet(('Indianapolis', 'Crescent', 'Universal Bulin')),
+        full_fleet(('Indianapolis', 'Crescent', 'Craven')),
+    ])
+    form.config = SimpleNamespace(task_delay=lambda **kwargs: calls.append(('delay', kwargs)))
+    form.ui_ensure = lambda page: None
+    form.formation_fleets = lambda: [1]
+    form.formation_goto_fleet = lambda fleet: None
+    form.formation_fill = lambda: 0
+
+    form.run()
+
+    assert len([call for call in calls if call[0] == 'slot']) == 2
+    assert calls[-1] == ('delay', {'success': True})
 
 
 def template():

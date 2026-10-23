@@ -15,17 +15,18 @@ from module.base.decorator import cached_property
 from module.base.timer import Timer
 from module.base.utils import crop, load_image, save_image
 from module.dock.census import GRID_SHIFT, card_level, card_rarity, card_status
-from module.equipment.assets import FLEET_NEXT, FLEET_PREV, OCR_FLEET_INDEX
+from module.equipment.assets import FLEET_DETAIL, FLEET_DETAIL_CHECK, FLEET_NEXT, FLEET_PREV, OCR_FLEET_INDEX
 from module.exception import ScriptError
 from module.inventory.inventory import CARD_HEIGHT, CARD_LEFTS, CARD_WIDTH
+from module.leveling.plan import ShipMatcher, load_ship_data
 from module.logger import logger
 from module.map_detection.utils import Points
-from module.ocr.ocr import Digit
+from module.ocr.ocr import Digit, Ocr
 from module.retire.assets import DOCK_CHECK, SHIP_CONFIRM
 from module.retire.dock import Dock, OCR_DOCK_SELECTED
 from module.retire.dock_walk import DockWalker
 from module.retire.scanner import Ship, ShipScanner, StatusScanner
-from module.ui.assets import BACK_ARROW
+from module.ui.assets import BACK_ARROW, FLEET_CHECK
 from module.ui.page import page_fleet
 
 FLEET_INDEX = Digit(OCR_FLEET_INDEX, letter=(90, 154, 255), threshold=128, alphabet='123456')
@@ -45,6 +46,8 @@ PICKER_LIST_BOTTOM = 630
 CENSUS_RARITIES = {'Normal': 'common', 'Rare': 'rare', 'Elite': 'elite', 'Super Rare': 'super_rare'}
 PICKER_WAIT = 12
 PICKER_MAX_CLICKS = 3
+# Name banner relative to a dock card, as in LevelingFleet. Importing that class here would create a cycle.
+CARD_NAME = (4, 163, 134, 186)
 
 
 def letters(image):
@@ -116,6 +119,26 @@ class Formation(Dock):
             image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         return image
 
+    @cached_property
+    def formation_matcher(self):
+        return ShipMatcher(load_ship_data())
+
+    def formation_combat_card(self, column, top):
+        """Require a known combat ship: Bulins share the DD hull filter with destroyers."""
+        left = CARD_LEFTS[column]
+        x1, y1, x2, y2 = CARD_NAME
+        area = (left + x1, top + y1, left + x2, top + y2)
+        button = Button(area=area, color=(), button=area, name='FORMATION_CARD_NAME')
+        name = str(Ocr(button, lang='cnocr', letter=(255, 255, 255), threshold=128).ocr(self.device.image)).strip()
+        data, score = self.formation_matcher.match_score(name)
+        if data is None or score < 0.8:
+            logger.info(f'Skip unrecognized Formation ship: {name!r}')
+            return False
+        if data.is_bulin:
+            logger.info(f'Skip Formation upgrade material: {data.name}')
+            return False
+        return True
+
     def formation_fleets(self):
         """
         Returns:
@@ -172,9 +195,9 @@ class Formation(Dock):
             # hard/event exclusions, and also reject the green commission and red battle banners by colour.
             column = CARD_LEFTS.index(ship.button.area[0])
             status = card_status(self.device.image, column, ship.button.area[1])
-            if status == 'free':
+            if status == 'free' and self.formation_combat_card(column, ship.button.area[1]):
                 free.append(ship)
-            else:
+            elif status != 'free':
                 logger.info(f'Skip {ship.button}: {status}')
         if free:
             return free
@@ -196,6 +219,8 @@ class Formation(Dock):
                 continue
             level = card_level(image, card.column, card.top)
             if not level:
+                continue
+            if not self.formation_combat_card(card.column, top):
                 continue
             rarity = CENSUS_RARITIES.get(card_rarity(image, card.column, card.top), 'unknown')
             # Stop the walk before it scrolls: this card's button is valid only on the current screen.
@@ -274,6 +299,10 @@ class Formation(Dock):
                         name=f'FORMATION_ADD_{row.upper()}')
         self.ship_info_enter(click_button=button, check_button=DOCK_CHECK, long_click=False,
                              skip_first_screenshot=False)
+        return self.formation_pick(row)
+
+    def formation_pick(self, row):
+        """Choose and confirm a combat ship in an already open empty-slot or replacement picker."""
         candidates = self.formation_candidates(row)
         if not candidates:
             logger.info(f'No free ship for the {row}')
@@ -281,7 +310,7 @@ class Formation(Dock):
             self.formation_cancel_picker()
             return False
 
-        ship = max(candidates, key=ship_score)
+        ship = max(candidates, key=lambda candidate: (candidate.level, ship_score(candidate)))
         logger.info(f'Add a {ship.rarity} ship at level {ship.level} to the {row}')
         if not self.formation_picker_click(ship.button, selecting=True):
             self.formation_cancel_picker()
@@ -291,6 +320,72 @@ class Formation(Dock):
             return True
         self.formation_cancel_picker()
         return False
+
+    def formation_set_view(self, info):
+        """Bound the Info/3D transition used to inspect and replace an existing ship."""
+        from module.leveling.fleet import FLEET_FORMATION
+
+        target, source = (FLEET_DETAIL_CHECK, FLEET_CHECK) if info else (FLEET_CHECK, FLEET_DETAIL_CHECK)
+        button = FLEET_DETAIL if info else FLEET_FORMATION
+        click, clicks = Timer(3), 0
+        for _ in self.loop(timeout=PICKER_WAIT):
+            if self.appear(target, offset=(20, 20)):
+                return
+            if clicks < PICKER_MAX_CLICKS and self.appear(source, offset=(20, 20)) and click.reached():
+                self.device.click(button)
+                clicks += 1
+                click.reset()
+        self.formation_save_failure('fleet_view_timeout')
+        raise ScriptError('Formation could not read the fleet view safely')
+
+    def formation_read_slots(self, fleet):
+        # Reuse the stable multi-read name/level OCR without its unbounded view-entry loop.
+        from module.leveling.fleet import LevelingFleet
+
+        reader = LevelingFleet(config=self.config, device=self.device)
+        reader.fleet_info_ensure = lambda: self.formation_set_view(info=True)
+        return reader.fleet_read_slots(fleet)
+
+    def formation_repair_bulins(self, fleet):
+        """Replace known Bulins directly in their slots, retaining a combat-capable fleet throughout."""
+        from module.leveling.fleet import SLOT_TAPS
+
+        repaired = 0
+        # At most three Bulins can occupy the vanguard. A fourth read verifies the last replacement.
+        for _ in range(4):
+            slots = self.formation_read_slots(fleet)
+            bulins = []
+            for slot in slots:
+                if not slot.name and not slot.level:
+                    continue
+                data, score = self.formation_matcher.match_score(slot.name)
+                if data is None or score < 0.8:
+                    self.formation_save_failure('unrecognized_fleet_ship')
+                    raise ScriptError(f'Formation could not identify fleet {fleet} {slot.row} {slot.index + 1}: '
+                                      f'{slot.name!r}')
+                if data.is_bulin:
+                    bulins.append(slot)
+            if not bulins:
+                self.formation_set_view(info=False)
+                return repaired
+            if repaired == 3:
+                break
+            # This fresh stable read identifies the current occupant before opening her exact slot.
+            slot = bulins[0]
+            self.formation_set_view(info=False)
+            x, y = SLOT_TAPS[(slot.row, slot.index)]
+            area = (x - 10, y - 10, x + 10, y + 10)
+            button = Button(area=area, color=(), button=area,
+                            name=f'FORMATION_REPLACE_{slot.row.upper()}_{slot.index + 1}')
+            logger.info(f'Replace {slot.name} in fleet {fleet} {slot.row} {slot.index + 1}')
+            self.ship_info_enter(click_button=button, check_button=DOCK_CHECK, long_click=False,
+                                 skip_first_screenshot=False)
+            if not self.formation_pick(slot.row):
+                self.formation_save_failure('bulin_replacement_failed')
+                raise ScriptError('Formation could not replace a Bulin with a free combat ship')
+            repaired += 1
+        self.formation_save_failure('bulin_repair_limit')
+        raise ScriptError('Formation still sees a Bulin after three replacement attempts')
 
     def formation_adds(self, full):
         """
@@ -338,9 +433,11 @@ class Formation(Dock):
     def run(self):
         self.ui_ensure(page_fleet)
         added = 0
+        repaired = 0
         for fleet in self.formation_fleets():
             logger.hr(f'Formation fleet {fleet}', level=1)
             self.formation_goto_fleet(fleet)
+            repaired += self.formation_repair_bulins(fleet)
             added += self.formation_fill()
-        logger.info(f'Formation: {added} ships added')
+        logger.info(f'Formation: {added} ships added, {repaired} Bulins replaced')
         self.config.task_delay(success=True)

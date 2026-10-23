@@ -294,6 +294,10 @@ class LimitBreak(FleetEnhance):
             in: Any page
             out: page_fleet, its Info view
         """
+        data = matcher.ships.get(name)
+        if data is not None and data.is_bulin:
+            logger.info(f'{name} is limit break material, not a ship to limit break')
+            return 0
         logger.hr(f'Limit break {name}', level=2)
         # The search bar keeps the name typed before, "Nevada" went after "Long Island" and found nothing:
         # the dock is entered again for each search
@@ -319,7 +323,12 @@ class LimitBreak(FleetEnhance):
         self.formation_goto_fleet(slot.fleet)
         self.fleet_ship_enter(slot)
         # Detail tab 1, gear 2, limit break 3 from the bottom, with or without a retrofit tab on top
-        self.ship_side_navbar_ensure(bottom=3)
+        if not self.ship_side_navbar_ensure(bottom=3):
+            logger.info(f'{name}: limit break tab could not be opened')
+            self.save_stuck_screen('missing_tab')
+            self.ui_back(check_button=FLEET_DETAIL_CHECK)
+            self.fleet_formation_ensure()
+            return 0
         self.device.sleep(1)
         self.device.screenshot()
         done = 0
@@ -361,6 +370,11 @@ class LimitBreak(FleetEnhance):
                 if data is None:
                     if slot.name:
                         logger.warning(f'Fleet {fleet}: {slot.name} is no ship known')
+                    continue
+                # Bulins can occupy a fleet slot, but have neither a limit break nor an enhancement tab.
+                # Exclude them before searching the dock and from the enhancement pass below as well.
+                if data.is_bulin:
+                    logger.info(f'Fleet {fleet}: skip {data.name}, limit break material')
                     continue
                 if not search_term(data.name):
                     continue

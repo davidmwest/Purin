@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pytest
 
 from module.base.utils import load_image
 from module.leveling.limit_break import (
@@ -285,3 +286,72 @@ def test_material_selection_on_an_already_completed_ship_does_not_click():
 
     assert done is False
     assert clicked_names(controller) == []
+
+
+def test_bulins_in_a_fleet_are_neither_limit_broken_nor_enhanced():
+    # The live Formation run on 2026-10-22 added two Bulins. Universal Bulin had copies in the dock,
+    # so the old pass entered her two-tab detail page and repeatedly asked for a third tab.
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from module.leveling.limit_break import LimitBreak
+    from module.leveling.plan import Slot
+    nevada = Slot(1, 'main', 0, 'Nev ada', 63)
+    slots = [nevada, Slot(1, 'vanguard', 0, 'rototype Bulin M', 1),
+             Slot(1, 'vanguard', 1, 'Universal Bulin', 1),
+             Slot(1, 'vanguard', 2, 'Specialized Bulin Custom MKIII', 1)]
+    controller = SimpleNamespace(
+        config=SimpleNamespace(task_delay=Mock()), ui_ensure=Mock(),
+        formation_fleets=Mock(return_value=[1]), formation_goto_fleet=Mock(),
+        fleet_read_slots=Mock(return_value=slots), fleet_formation_ensure=Mock(),
+        limit_break_ship=Mock(return_value=0), enhance_fleet=Mock())
+
+    LimitBreak.run(controller)
+
+    controller.limit_break_ship.assert_called_once()
+    assert controller.limit_break_ship.call_args.args[:2] == (nevada, 'Nevada')
+    assert controller.enhance_fleet.call_args.args[0] == [(nevada, 'Nevada')]
+    controller.config.task_delay.assert_called_once_with(success=True)
+
+
+@pytest.mark.parametrize('name', [
+    'Universal Bulin', 'Prototype Bulin MKII', 'Specialized Bulin Custom MKIII'])
+def test_direct_bulin_call_never_searches_or_opens_the_ship(name):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from module.leveling.limit_break import LimitBreak
+    from module.leveling.plan import ShipMatcher, Slot, load_ship_data
+    controller = SimpleNamespace(ui_ensure=Mock(), limit_break_cards=Mock(), fleet_ship_enter=Mock())
+
+    done = LimitBreak.limit_break_ship(controller, Slot(1, 'vanguard', 0, name, 1), name,
+                                      ShipMatcher(load_ship_data()))
+
+    assert done == 0
+    controller.ui_ensure.assert_not_called()
+    controller.limit_break_cards.assert_not_called()
+    controller.fleet_ship_enter.assert_not_called()
+
+
+def test_a_failed_navbar_transition_does_not_try_material_or_confirm():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from module.equipment.assets import FLEET_DETAIL_CHECK
+    from module.leveling.limit_break import LimitBreak
+    from module.leveling.plan import ShipMatcher, Slot, load_ship_data
+    ship = SimpleNamespace(level=70, fleet=1)
+    controller = SimpleNamespace(
+        device=SimpleNamespace(sleep=Mock(), screenshot=Mock()),
+        ui_ensure=Mock(), limit_break_cards=Mock(return_value=[ship, ship]),
+        formation_goto_fleet=Mock(), fleet_ship_enter=Mock(),
+        ship_side_navbar_ensure=Mock(return_value=False), save_stuck_screen=Mock(),
+        is_limit_break_tab=Mock(), limit_break_once=Mock(), ui_back=Mock(), fleet_formation_ensure=Mock())
+
+    done = LimitBreak.limit_break_ship(controller, Slot(1, 'main', 0, 'Long Island', 70), 'Long Island',
+                                      ShipMatcher(load_ship_data()))
+
+    assert done == 0
+    controller.ship_side_navbar_ensure.assert_called_once_with(bottom=3)
+    controller.is_limit_break_tab.assert_not_called()
+    controller.limit_break_once.assert_not_called()
+    controller.save_stuck_screen.assert_called_once_with('missing_tab')
+    controller.ui_back.assert_called_once_with(check_button=FLEET_DETAIL_CHECK)
+    controller.fleet_formation_ensure.assert_called_once()
