@@ -81,12 +81,21 @@ class FleetOperator:
         # logger.attr('Light_orange_line', lines)
         return lines > 0
 
-    def raise_hard_not_satisfied(self):
-        if self.is_hard_satisfied() is False:
+    def raise_hard_not_satisfied(self, force=False):
+        if force or self.is_hard_satisfied() is False:
+            self.capture_hard_lineup('not satisfied')
             stage = self.main.config.Campaign_Name
             logger.critical(f'Stage "{stage}" is a hard mode, '
                             f'please prepare your fleet "{str(self)}" in game before running Alas')
             raise HardNotSatisfied
+
+    def capture_hard_lineup(self, state):
+        """Keep the actual stage-specific requirements and selected ships for review."""
+        from module.eventstory.eventstory import save_event_diagnostic
+        logger.info(f'Hard lineup {self}: {state}, saving preparation screenshot')
+        config = self.main.config
+        return save_event_diagnostic(
+            self.main.device, f'{config.config_name}_{config.Campaign_Name}_{self}_hard_lineup_{state}')
 
     def clear(self):
         """
@@ -121,21 +130,39 @@ class FleetOperator:
         main = self.main
         click_timer = Timer(3, count=6)
         clicks = 0
-        for _ in main.loop():
+        hard_seen = False
+        for _ in main.loop(timeout=20):
             # End
             satisfied = self.is_hard_satisfied()
-            if satisfied is not False:
-                return satisfied
+            if satisfied is True:
+                if clicks:
+                    self.capture_hard_lineup('recommended')
+                return True
+            if satisfied is None:
+                if not hard_seen:
+                    return None
+                # A recommendation animation may hide the hard marker. Wait
+                # for a verified hard state rather than treating it as normal.
+                continue
+
+            if not hard_seen:
+                self.capture_hard_lineup('before recommendation')
+                hard_seen = True
 
             # Click
             if click_timer.reached():
                 if clicks >= 3:
                     logger.warning(f'Fleet {self} is still not prepared after asking for advice {clicks} times')
+                    self.capture_hard_lineup('recommendation failed')
                     return False
                 logger.info(f'Fleet {self} is not prepared, asking the game for advice')
                 main.device.click(self._advice)
                 clicks += 1
                 click_timer.reset()
+
+        logger.warning(f'Fleet {self} recommendation timed out')
+        self.capture_hard_lineup('recommendation timed out')
+        return False
 
     def update_options(self):
         det = FleetBarDetector(self.main, bar=self._bar, choose=self._choose)
@@ -371,11 +398,11 @@ class FleetPreparation(InfoHandler):
                 if self.config.Submarine_Fleet:
                     h3 = submarine.advise()
             if self.config.Fleet_Fleet1:
-                fleet_1.raise_hard_not_satisfied()
+                fleet_1.raise_hard_not_satisfied(force=h1 is False)
             if self.config.Fleet_Fleet2:
-                fleet_2.raise_hard_not_satisfied()
+                fleet_2.raise_hard_not_satisfied(force=h2 is False)
             if self.config.Submarine_Fleet:
-                submarine.raise_hard_not_satisfied()
+                submarine.raise_hard_not_satisfied(force=h3 is False)
 
         # Skip fleet preparation in hard mode
         self.map_is_hard_mode = h1 or h2 or h3
