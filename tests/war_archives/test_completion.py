@@ -155,6 +155,7 @@ def test_loss_is_spent_and_stops_chunk(setup):
 
 @pytest.mark.parametrize('value', [None, {}, dict(verified=True, returned_stage=True, count=True, total=60, claimed=False),
                                   dict(verified=True, returned_stage=True, count=61, total=60, claimed=False),
+                                  dict(verified=True, returned_stage=True, count=12, total=60, claimed=True),
                                   dict(verified=True, returned_stage=True, count=5, total=60, claimed=None)])
 def test_prize_proof_rejects_unknown(value, setup):
     assert not verified_prize(value, setup[2].prizes[0])

@@ -348,13 +348,23 @@ def test_changed_card_and_unknown_entry_never_receive_repeat_click(owner, monkey
     owner.device.click.assert_called_once()
 
 
-def test_goal_and_prize_unknowns_cannot_authorize_execution(owner):
+def test_goal_unknowns_cannot_authorize_execution(owner):
     from module.campaign.campaign_stars import StageGoal
     with pytest.raises(ScriptError):
         owner.proof_for_goal(StageGoal('war_archives_20190321_en', 'd3', 'normal'))
-    prize = SimpleNamespace(clears=60)
-    assert owner.claim_prize('war_archives_20190321_en', prize) == dict(
-        verified=False, count=None, total=60, claimed=None, reason='prize_claim_unverified')
+    owner.device.click.assert_not_called()
+
+
+def test_prize_claim_uses_identity_bound_adapter(owner, monkeypatch, tmp_path):
+    from module.war_archives.catalog import get_archive
+    from module.war_archives.prize_progress import ArchivePrizeProgress
+    archive = get_archive('war_archives_20190321_en')
+    expected = dict(verified=False, count=None, total=60, claimed=None, returned_stage=False)
+    claim = Mock(return_value=expected)
+    monkeypatch.setattr(ArchivePrizeProgress, 'claim', claim, raising=False)
+    result = owner.claim_prize(archive, archive.prizes[0], folder=tmp_path, request_id='claim')
+    assert result is expected
+    claim.assert_called_once_with(archive.id, archive.prizes[0], folder=tmp_path, request_id='claim')
     owner.device.click.assert_not_called()
 
 

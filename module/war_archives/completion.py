@@ -31,7 +31,8 @@ def verified_prize(value, prize):
     return (isinstance(value, dict) and value.get('verified') is True
             and type(value.get('count')) is int and type(value.get('total')) is int
             and value['total'] == prize.clears and 0 <= value['count'] <= value['total']
-            and type(value.get('claimed')) is bool)
+            and type(value.get('claimed')) is bool
+            and (not value['claimed'] or value['count'] == value['total']))
 
 
 class ArchiveCoordinator:

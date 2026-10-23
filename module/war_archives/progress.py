@@ -518,10 +518,11 @@ class ArchiveProgress(CampaignUI):
         archive_id = archive.id if isinstance(archive, Archive) else archive
         return ArchivePrizeProgress(self).observe(archive_id, prize, folder=folder, request_id=request_id)
 
-    def claim_prize(self, archive, prize):
-        # A separate exact earned/claim fixture is required before a claim input.
-        return dict(verified=False, count=None, total=prize.clears, claimed=None,
-                    reason='prize_claim_unverified')
+    def claim_prize(self, archive, prize, folder='./log/war_archives', request_id=None):
+        from module.war_archives.catalog import Archive
+        from module.war_archives.prize_progress import ArchivePrizeProgress
+        archive_id = archive.id if isinstance(archive, Archive) else archive
+        return ArchivePrizeProgress(self).claim(archive_id, prize, folder=folder, request_id=request_id)
 
     def _observe_category(self, category, directory, record, persist, max_pages, deadline):
         if not self._select_category(category, record, persist):
