@@ -1,3 +1,4 @@
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
@@ -593,3 +594,93 @@ def test_routine_collection_follows_existing_receipt_recovery_on_first_invocatio
         helper.run(EVENT)
     assert order == ['treasure_resume', 'mission_receipt', 'treasure_run']
     helper.observe_event_main.assert_not_called()
+
+
+def externally_completed_record(timestamp='2026-10-23T09:17:00'):
+    state = record()
+    # Preserve the actual interrupted journal: Day 2 was clicked and its first
+    # Buy sent, but no owned item receipt or visual completion was observed.
+    state['cards']['day2'].update(claim_clicks=1, confirm_clicks=1, pending=True)
+    state.update(entry_clicks=1, reward_dialogs=0, invocations=3,
+                 externally_completed={'reason': 'user_reported_manual_collection', 'timestamp': timestamp})
+    return state
+
+
+@pytest.mark.parametrize('timestamp', ['2026-10-23T09:17:00', '2026-10-23T09:17:00-07:00'])
+def test_explicit_user_report_skips_all_collector_activity_and_preserves_original_evidence(tmp_path, timestamp):
+    original = externally_completed_record(timestamp)
+    save_reward_observations('alas', {KEY: original, 'unrelated': {'keep': True}}, folder=str(tmp_path))
+    helper = controller()
+    helper.device.app_is_running.return_value = False
+    helper._enter = Mock()
+    helper._collect_free = Mock()
+    helper._return_main = Mock()
+    helper._capture = Mock()
+
+    for _ in range(2):
+        result = helper.run(EVENT, folder=str(tmp_path))
+        assert result['status'] == 'complete' and result['inactive'] and result['returned_main']
+        assert result['reason'] == 'user_reported_manual_collection'
+        assert result['cards'] == original['cards']
+        assert result['externally_completed'] == original['externally_completed']
+        for key in ('entry_clicks', 'home_clicks', 'reward_dialogs', 'invocations'):
+            assert result[key] == original[key]
+
+    saved = load_reward_observations('alas', folder=str(tmp_path))
+    assert saved['unrelated'] == {'keep': True}
+    assert saved[KEY]['cards']['day2']['pending']
+    assert not saved[KEY]['cards']['day2']['receipt_seen']
+    assert not saved[KEY]['cards']['day2']['verified']
+    assert 'confirm_clicks' not in saved[KEY]['cards']['day1']
+    for action in (helper.device.app_is_running, helper.device.screenshot, helper.device.click,
+                   helper._reward_dialog, helper._enter, helper._collect_free, helper._return_main, helper._capture):
+        action.assert_not_called()
+
+
+def test_external_report_does_not_intercept_unrelated_startup_receipt_or_use_old_pending_claim(tmp_path):
+    state = externally_completed_record()
+    save_reward_observations('alas', {KEY: state}, folder=str(tmp_path))
+    helper = controller()
+    helper._reward_dialog.return_value = GET_ITEMS_1
+    helper.run = Mock()
+    assert helper.resume(EVENT, folder=str(tmp_path)) is None
+    assert load_reward_observations('alas', folder=str(tmp_path))[KEY] == state
+    for action in (helper.run, helper.device.app_is_running, helper.device.screenshot,
+                   helper.device.click, helper._reward_dialog):
+        action.assert_not_called()
+
+
+@pytest.mark.parametrize('external', [
+    None, False, [], {},
+    {'reason': 'manual', 'timestamp': '2026-10-23T09:17:00'},
+    {'reason': 'user_reported_manual_collection'},
+    {'reason': 'user_reported_manual_collection', 'timestamp': '2026-10-23T09:17:00', 'verified': True},
+    *({'reason': 'user_reported_manual_collection', 'timestamp': value}
+      for value in [None, False, 0, '', 'not-a-date', '2026-10-23', '2026-02-30T09:17:00',
+                    '2026-10-23 09:17:00', '2026-10-23T09:17:00.123456']),
+])
+@pytest.mark.parametrize('method', ['run', 'resume'])
+def test_malformed_external_report_fails_closed_before_any_device_activity(tmp_path, external, method):
+    state = externally_completed_record()
+    state['externally_completed'] = external
+    save_reward_observations('alas', {KEY: state}, folder=str(tmp_path))
+    helper = controller()
+    with pytest.raises(ScriptError, match='externally completed'):
+        getattr(helper, method)(EVENT, folder=str(tmp_path))
+    assert load_reward_observations('alas', folder=str(tmp_path))[KEY] == state
+    helper.device.app_is_running.assert_not_called()
+    helper.device.screenshot.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_external_report_cannot_bypass_corrupted_original_claim_evidence(tmp_path):
+    state = externally_completed_record()
+    state['cards']['day2']['verified'] = True  # No receipt: internally inconsistent.
+    before = deepcopy(state)
+    save_reward_observations('alas', {KEY: state}, folder=str(tmp_path))
+    helper = controller()
+    with pytest.raises(ScriptError, match='Inconsistent'):
+        helper.run(EVENT, folder=str(tmp_path))
+    assert load_reward_observations('alas', folder=str(tmp_path))[KEY] == before
+    helper.device.screenshot.assert_not_called()
+    helper.device.click.assert_not_called()

@@ -21,6 +21,18 @@ KEY = EVENT + ':treasure_free_packs_v1'
 class EventTreasureFreePacks(EventRewards):
     @staticmethod
     def _validate(record):
+        if 'externally_completed' in record:
+            external = record['externally_completed']
+            if (not isinstance(external, dict) or set(external) != {'reason', 'timestamp'}
+                    or external['reason'] != 'user_reported_manual_collection'
+                    or type(external['timestamp']) is not str):
+                raise ScriptError('Invalid externally completed free treasure metadata')
+            try:
+                timestamp = datetime.fromisoformat(external['timestamp'])
+            except ValueError:
+                raise ScriptError('Invalid externally completed free treasure timestamp') from None
+            if timestamp.isoformat(timespec='seconds') != external['timestamp']:
+                raise ScriptError('Invalid externally completed free treasure timestamp')
         cards = record.get('cards')
         if not isinstance(cards, dict) or set(cards) != set(TREASURE_CARDS):
             raise ScriptError('Invalid free treasure claim journal')
@@ -223,13 +235,22 @@ class EventTreasureFreePacks(EventRewards):
     def run(self, event, folder='./config/stars'):
         if event != EVENT or self.config.config_name != 'alas':
             return dict(status='unsupported', diagnostics=[], returned_main=True)
-        ensure_event_running(self)
         state = load_reward_observations('alas', folder=folder)
         previous = state.get(KEY)
         record = previous if previous is not None else dict(cards={day: dict(claim_clicks=0, confirm_clicks=0, pending=False, receipt_seen=False,
                                                    verified=False) for day in TREASURE_CARDS},
                                   entry_clicks=0, reward_dialogs=0, invocations=0)
         self._validate(record)
+        if 'externally_completed' in record:
+            # This explicit human report ends this collector's responsibility.
+            # It is not evidence of our receipt or an authorization to resume a
+            # pending click. Preserve every original card/counter fact as-is.
+            record.update(status='complete', reason='user_reported_manual_collection',
+                          inactive=True, returned_main=True)
+            state[KEY] = record
+            save_reward_observations('alas', state, folder=folder)
+            return record
+        ensure_event_running(self)
         for row in record['cards'].values():
             row.setdefault('confirm_clicks', 0)
         # Persisted claim reservations survive restart; only read-only settlement
@@ -279,10 +300,14 @@ class EventTreasureFreePacks(EventRewards):
         """
         if event != EVENT or self.config.config_name != 'alas':
             return None
-        ensure_event_running(self)
         previous = load_reward_observations('alas', folder=folder).get(KEY)
         if previous is not None:
             self._validate(previous)
+            if 'externally_completed' in previous:
+                # Do not intercept another collector's receipt or navigate on
+                # a report of manual completion. The ordinary run is inactive.
+                return None
+        ensure_event_running(self)
         self.device.screenshot()
         pending = previous is not None and any(row['pending'] for row in previous['cards'].values())
         if self._treasure_page() or pending:
