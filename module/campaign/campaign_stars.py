@@ -138,6 +138,24 @@ class StageStarsRunner(CampaignRun):
     goal_complete = False
     boss_cleared = False
 
+    def check_stage_morale(self, campaign, check_reduce):
+        battle = campaign._map_battle
+        config = getattr(campaign, 'config', None)
+        if not getattr(config, 'MAP_CLEAR_ALL_THIS_TIME', False):
+            return check_reduce(battle)
+        # _map_battle is when the boss spawns, not the number of fights needed
+        # to clear every escort and siren before it. Spawn rows are increments.
+        # Before map_init, spawn_data can still select a previous clearing-mode
+        # loop; full clears require the original, unlooped stage spawns.
+        battle = max(battle, sum(row.get(kind, 0) for row in campaign.MAP._spawn_data
+                                 for kind in ('enemy', 'siren', 'boss')))
+        fleet_1, fleet_2 = config.Fleet_Fleet1, config.Fleet_Fleet2
+        if fleet_1 and not fleet_2:
+            return check_reduce(battle, fleet_order='fleet1_all_fleet2_standby')
+        if fleet_2 and not fleet_1:
+            return check_reduce(battle, fleet_order='fleet1_standby_fleet2_all')
+        return check_reduce(battle)
+
     def load_campaign(self, name, folder='campaign_main'):
         loaded = super().load_campaign(name, folder)
         if not loaded:
@@ -199,7 +217,7 @@ class StageStarsRunner(CampaignRun):
                 # Inspect the preparation stars before requiring another sortie's
                 # morale. The same preflight check still gates its Start click.
                 try:
-                    original_check_reduce(campaign._map_battle)
+                    self.check_stage_morale(campaign, original_check_reduce)
                 except ScriptEnd:
                     self.scheduler_deferred = True
                     campaign.enter_map_cancel()

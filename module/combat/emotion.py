@@ -336,12 +336,13 @@ class Emotion:
         else:
             return 2
 
-    def check_reduce(self, battle):
+    def check_reduce(self, battle, fleet_order=None):
         """
         Check emotion before entering a campaign.
 
         Args:
             battle (int): Battles in this campaign
+            fleet_order (str | None): Optional allocation for this preflight only.
 
         Raise:
             ScriptEnd: Delay current task to prevent emotion control in the future.
@@ -349,7 +350,7 @@ class Emotion:
         if not self.is_calculate:
             return
 
-        method = self.config.Fleet_FleetOrder
+        method = self.config.Fleet_FleetOrder if fleet_order is None else fleet_order
 
         if method == 'fleet1_mob_fleet2_boss':
             battle = (battle - 1, 1)

@@ -314,9 +314,53 @@ def test_star_inspection_precedes_morale_check_but_new_sortie_still_checks_it(
         assert order == ['stars', 'morale', 'start']
 
 
+@pytest.mark.parametrize('full_clear,fleets,battles,order', [
+    (False, (6, 0), 7, None),
+    (True, (6, 0), 12, 'fleet1_all_fleet2_standby'),
+    (True, (6, 2), 12, None),
+    (True, (0, 6), 12, 'fleet1_standby_fleet2_all'),
+])
+def test_full_clear_preflight_counts_actual_t6_escorts_sirens_and_boss(
+        monkeypatch, full_clear, fleets, battles, order):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    stage_config = SimpleNamespace(MAP_CLEAR_ALL_THIS_TIME=full_clear,
+                                   Fleet_Fleet1=fleets[0], Fleet_Fleet2=fleets[1],
+                                   Fleet_FleetOrder='fleet1_mob_fleet2_boss')
+    check = Mock()
+    campaign = SimpleNamespace(
+        config=stage_config, MAP=stars.load_stage('event_20261022_cn', 't6').MAP, _map_battle=7,
+        triggered_map_stop=Mock(return_value=False), handle_chapter_additional=Mock(),
+        ensure_campaign_ui=Mock(), combat_status=Mock(), emotion=SimpleNamespace(check_reduce=check))
+    monkeypatch.setattr(CampaignRun, 'load_campaign',
+                        lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+    runner.load_campaign('t6', 'event_20261022_cn')
+    assert campaign.triggered_map_stop() is False
+    if order is None:
+        check.assert_called_once_with(battles)
+    else:
+        check.assert_called_once_with(battles, fleet_order=order)
+    assert stage_config.Fleet_FleetOrder == 'fleet1_mob_fleet2_boss'
+
+
+def test_full_clear_preflight_does_not_reuse_the_previous_clearing_mode_spawn_list(monkeypatch):
+    stage_map = stars.load_stage('campaign_main', 'campaign_14_4').MAP
+    monkeypatch.setattr(stage_map, '_spawn_data_use_loop', True)
+    assert sum(row.get(kind, 0) for row in stage_map.spawn_data
+               for kind in ('enemy', 'siren', 'boss')) == 12
+    campaign = SimpleNamespace(
+        config=SimpleNamespace(MAP_CLEAR_ALL_THIS_TIME=True, Fleet_Fleet1=6, Fleet_Fleet2=0),
+        MAP=stage_map, _map_battle=7)
+    check = Mock()
+
+    StageStarsRunner.__new__(StageStarsRunner).check_stage_morale(campaign, check)
+
+    check.assert_called_once_with(13, fleet_order='fleet1_all_fleet2_standby')
+
+
 @pytest.mark.parametrize('goal_name,goal_type,prior_attempts', [('T5', 'three_stars', 1), ('SP', 'clear', 0)])
+@pytest.mark.parametrize('full_clear', [False, True])
 def test_morale_deferral_preserves_copied_config_delay_dormrest_and_battle_budget(
-        monkeypatch, tmp_path, goal_name, goal_type, prior_attempts):
+        monkeypatch, tmp_path, goal_name, goal_type, prior_attempts, full_clear):
     runner = StageStarsRunner.__new__(StageStarsRunner)
     runner.config = config()
     original_time = datetime.now() - timedelta(minutes=1)
@@ -324,9 +368,14 @@ def test_morale_deferral_preserves_copied_config_delay_dormrest_and_battle_budge
     runner.config.Scheduler_NextRun = original_time
     # CampaignRun deep-copies task config; its persisted delay does not refresh
     # the coordinator's cached Scheduler_NextRun value.
-    stage_config = SimpleNamespace(Scheduler_NextRun=original_time, task_call=Mock())
+    stage_config = SimpleNamespace(Scheduler_NextRun=original_time, task_call=Mock(),
+                                   MAP_CLEAR_ALL_THIS_TIME=full_clear,
+                                   Fleet_Fleet1=6, Fleet_Fleet2=0,
+                                   Fleet_FleetOrder='fleet1_mob_fleet2_boss')
 
-    def delay_for_morale(count):
+    def delay_for_morale(count, fleet_order=None):
+        assert count == (12 if full_clear else 6)
+        assert fleet_order == ('fleet1_all_fleet2_standby' if full_clear else None)
         stage_config.Scheduler_NextRun = recovered
         stage_config.task_call('DormRest', force_call=False)
         raise ScriptEnd('Emotion control')
@@ -334,6 +383,7 @@ def test_morale_deferral_preserves_copied_config_delay_dormrest_and_battle_budge
     campaign = SimpleNamespace(
         config=stage_config, triggered_map_stop=Mock(return_value=False),
         handle_chapter_additional=Mock(), ensure_campaign_ui=Mock(), combat_status=Mock(),
+        MAP=stars.load_stage('event_20261022_cn', 't6').MAP,
         emotion=SimpleNamespace(check_reduce=delay_for_morale), _map_battle=6,
         enter_map_cancel=Mock(), run_lost=False)
     start = Mock()
@@ -363,6 +413,7 @@ def test_morale_deferral_preserves_copied_config_delay_dormrest_and_battle_budge
     assert progress.record(goal) == dict(attempts=prior_attempts, status='deferred')
     assert stage_config.Scheduler_NextRun == recovered
     assert runner.config.Scheduler_NextRun == original_time
+    assert stage_config.Fleet_FleetOrder == 'fleet1_mob_fleet2_boss'
     stage_config.task_call.assert_called_once_with('DormRest', force_call=False)
     campaign.enter_map_cancel.assert_called_once_with()
     start.assert_not_called()

@@ -143,3 +143,23 @@ def test_task_waits_for_the_lowest_ship_and_dorm_rest_runs():
     # Hatakaze recovers 5 every 6 minutes on the second floor, 2 ticks
     assert timedelta(minutes=6) < target - datetime.now() <= timedelta(minutes=12)
     config.task_call.assert_called_once_with('DormRest', force_call=False)
+
+
+@pytest.mark.parametrize('order,expected', [
+    (None, (22, 2)),
+    ('fleet1_all_fleet2_standby', (24, 0)),
+    ('fleet1_standby_fleet2_all', (0, 24)),
+])
+def test_preflight_can_allocate_all_twelve_fights_without_changing_farm_order(order, expected):
+    config = Config(dorm_rest=False)
+    emotion = Emotion(config)
+    recovered = datetime.now() - timedelta(seconds=1)
+    emotion.fleet_1.get_recovered = Mock(return_value=recovered)
+    emotion.fleet_2.get_recovered = Mock(return_value=recovered)
+
+    emotion.check_reduce(12, fleet_order=order)
+
+    emotion.fleet_1.get_recovered.assert_called_once_with(expected[0])
+    emotion.fleet_2.get_recovered.assert_called_once_with(expected[1])
+    assert config.Fleet_FleetOrder == 'fleet1_mob_fleet2_boss'
+    config.task_delay.assert_not_called()
