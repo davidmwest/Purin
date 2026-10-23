@@ -37,12 +37,13 @@ def controller(monkeypatch, *, progress=(False, True), one_clear=False, lost=Fal
         _map_battle=5, emotion=SimpleNamespace(check_reduce=Mock()),
         is_in_map=lambda: state.in_map, is_in_stage=lambda: state.in_stage,
         handle_oil_purchase=Mock(return_value=False), appear=Mock(return_value=False),
-        withdraw=Mock(), execute_a_battle=Mock(),
+        withdraw=Mock(), execute_a_battle=Mock(), fleet_preparation=Mock(),
         triggered_map_stop=lambda: next(state.progress))
 
     def enter(*args, **kwargs):
         campaign.handle_oil_purchase()
         campaign.triggered_map_stop()
+        campaign.fleet_preparation()
         assert owner.reserved, 'Start before durable reservation'
         state.starts += 1
         state.in_map, state.in_stage = True, False
@@ -404,3 +405,258 @@ def test_post_win_inspection_cannot_allow_a_third_entry(monkeypatch):
     with pytest.raises(ex.ArchiveBlocked, match='second_sortie_forbidden'):
         campaign.enter_map(campaign.ENTRANCE)
     assert state.starts == 1
+
+
+def test_legacy_fleet_dropdown_open_loop_is_frame_bounded_and_device_restored(monkeypatch):
+    from module.map.map_fleet_preparation import FleetOperator
+
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_device = campaign.device
+    operator = FleetOperator.__new__(FleetOperator)
+    operator.main, operator.options, operator._choose = campaign, {}, object()
+    operator.update_options = Mock()  # The dropdown never appears.
+    campaign.fleet_preparation = operator.open
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'fleet_preparation_frame_limit'
+    assert result['reserved'] is True and state.starts == 0
+    assert campaign.device is original_device
+    assert original_device.screenshot.call_count == 91  # Provider + 90 nested frames.
+    assert original_device.click.call_count <= 12
+    assert not isinstance(owner.device, ex._FleetPreparationDevice)
+
+
+def test_legacy_fleet_clear_loop_is_deadline_bounded(monkeypatch):
+    from module.map.map_fleet_preparation import FleetOperator
+
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_device = campaign.device
+    now = [0]
+    monkeypatch.setattr(ex, 'monotonic', lambda: now[0])
+    operator = FleetOperator.__new__(FleetOperator)
+    operator.main, operator._clear = campaign, object()
+    operator.allow = Mock(return_value=False)
+    campaign.handle_popup_confirm = Mock(return_value=False)
+
+    def loop():
+        while True:
+            now[0] += 5
+            campaign.device.screenshot()
+            yield None
+
+    campaign.loop = loop
+    campaign.fleet_preparation = operator.clear
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'fleet_preparation_timeout'
+    assert now[0] == 45 and state.starts == 0
+    assert campaign.device is original_device
+    original_device.click.assert_not_called()
+
+
+def test_nested_fleet_clicks_share_one_budget_and_never_reach_final_go(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_device = campaign.device
+
+    def fleet():
+        while True:
+            campaign.device.click(object())
+
+    campaign.fleet_preparation = fleet
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'fleet_preparation_click_limit'
+    assert original_device.click.call_count == 12 and state.starts == 0
+    assert campaign.device is original_device
+
+
+@pytest.mark.parametrize('modal,reason', [
+    (ex.GET_ITEMS_2, 'unowned_receipt'),
+    (ex.USE_DATA_KEY, 'unverified_data_key_dialog'),
+    (ex.POPUP_CONFIRM_WHITE, 'unrecognized_entry_dialog')])
+def test_new_nested_modal_is_vetoed_after_fresh_frame_before_fleet_click(monkeypatch, modal, reason):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_device = campaign.device
+    visible = [None]
+    campaign.appear.side_effect = lambda button, **kwargs: button is visible[0]
+
+    def fleet():
+        visible[0] = modal
+        campaign.device.screenshot()
+        campaign.device.click(object())
+
+    campaign.fleet_preparation = fleet
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == reason and state.starts == 0
+    original_device.click.assert_not_called()
+    assert campaign.device is original_device
+
+
+@pytest.mark.parametrize('forbidden', [ex.POPUP_CONFIRM, ex.POPUP_CANCEL_WHITE, ex.FLEET_PREPARATION])
+def test_nested_generic_dialog_or_go_control_is_never_forwarded(monkeypatch, forbidden):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_device = campaign.device
+    campaign.fleet_preparation = lambda: campaign.device.click(forbidden)
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'unrecognized_fleet_control' and state.starts == 0
+    original_device.click.assert_not_called()
+    assert campaign.device is original_device
+
+
+@pytest.mark.parametrize('error', [TaskEnd('preempted'), RuntimeError('fleet failed')])
+def test_nested_fleet_exception_preserves_exception_and_original_device(monkeypatch, error):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_device = campaign.device
+    campaign.fleet_preparation = Mock(side_effect=error)
+    with pytest.raises(type(error)) as caught:
+        invoke(owner, proof, prepare, reserve)
+    assert caught.value is error and caught.value.archive_reserved is True
+    assert campaign.device is original_device and state.starts == 0
+
+
+def test_exact_oil_cancel_inside_nested_guard_does_not_recurse(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_device = campaign.device
+    oil_visible = [False]
+
+    def oil():
+        if oil_visible[0]:
+            campaign.device.screenshot()
+            campaign.device.click(object())  # Existing exact oil Cancel handler.
+            raise OilExhausted()
+        return False
+
+    def fleet():
+        oil_visible[0] = True
+        campaign.device.screenshot()
+
+    campaign.handle_oil_purchase = oil
+    campaign.fleet_preparation = fleet
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['status'] == 'deferred' and result['reason'] == 'oil_exhausted'
+    assert original_device.click.call_count == 1 and state.starts == 0
+    assert campaign.device is original_device
+
+
+def fleet_probe_entry(owner, campaign, state):
+    def enter(*args, **kwargs):
+        campaign.handle_oil_purchase()
+        campaign.triggered_map_stop()
+        campaign.device.click(ex.MAP_PREPARATION)
+        campaign.fleet_preparation()
+        campaign.device.click(ex.FLEET_PREPARATION)
+        state.starts += 1
+    campaign.enter_map = enter
+
+
+@pytest.mark.parametrize('complete', [False, True])
+def test_fleet_probe_captures_completed_or_incomplete_without_reserve_or_go(monkeypatch, complete):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch, progress=(complete,))
+    fleet_probe_entry(owner, campaign, state)
+    original_fleet = campaign.fleet_preparation
+    morale = campaign.emotion.check_reduce
+    proof.update(verified_for_execution=False, raw_keys=0)
+    campaign.appear.side_effect = lambda button, **kwargs: button is ex.FLEET_PREPARATION
+    capture = Mock(return_value='/tmp/archive_fleet.png')
+    monkeypatch.setattr(ex, 'save_event_diagnostic', capture)
+    result = invoke(owner, proof, prepare, reserve, inspect_fleet_only=True)
+    assert result == dict(status='observed', reason='fleet_preparation', reserved=False,
+                         boss_won=False, stage_complete=complete, diagnostic='/tmp/archive_fleet.png')
+    assert state.starts == 0 and owner.fleet_probe_advances == 1
+    owner.device.click.assert_called_once_with(ex.MAP_PREPARATION)
+    reserve.assert_not_called()
+    owner.get_oil.assert_not_called()
+    morale.assert_not_called()
+    original_fleet.assert_not_called()
+    capture.assert_called_once()
+    owner._cancel_preparation.assert_called_once_with(campaign)
+
+
+def test_fleet_probe_rejects_unknown_fleet_page_without_setup_or_go(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch, progress=(False,))
+    fleet_probe_entry(owner, campaign, state)
+    original_fleet = campaign.fleet_preparation
+    capture = Mock()
+    monkeypatch.setattr(ex, 'save_event_diagnostic', capture)
+    result = invoke(owner, proof, prepare, reserve, inspect_fleet_only=True)
+    assert result['reason'] == 'fleet_preparation_unrecognized' and state.starts == 0
+    owner.device.click.assert_called_once_with(ex.MAP_PREPARATION)
+    original_fleet.assert_not_called()
+    reserve.assert_not_called()
+    capture.assert_not_called()
+
+
+def test_fleet_probe_never_repeats_map_preparation_advance(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch, progress=(True, True))
+
+    def enter(*args, **kwargs):
+        for _ in range(2):
+            campaign.triggered_map_stop()
+            campaign.device.click(ex.MAP_PREPARATION)
+
+    campaign.enter_map = enter
+    result = invoke(owner, proof, prepare, reserve, inspect_fleet_only=True)
+    assert result['reason'] == 'fleet_preparation_not_reached' and state.starts == 0
+    owner.device.click.assert_called_once_with(ex.MAP_PREPARATION)
+    reserve.assert_not_called()
+
+
+def test_conflicting_inspection_modes_never_navigate(monkeypatch):
+    owner, _, _, proof, prepare, reserve = controller(monkeypatch)
+    result = invoke(owner, proof, prepare, reserve, inspect_only=True, inspect_fleet_only=True)
+    assert result['reason'] == 'conflicting_inspection_modes'
+    owner.load_campaign.assert_not_called()
+    prepare.assert_not_called()
+    reserve.assert_not_called()
+
+
+def test_fleet_probe_failed_capture_cancels_without_reserve_or_go(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    fleet_probe_entry(owner, campaign, state)
+    campaign.appear.side_effect = lambda button, **kwargs: button is ex.FLEET_PREPARATION
+    monkeypatch.setattr(ex, 'save_event_diagnostic', Mock(return_value=None))
+    result = invoke(owner, proof, prepare, reserve, inspect_fleet_only=True)
+    assert result['reason'] == 'fleet_preparation_capture_failed' and state.starts == 0
+    owner._cancel_preparation.assert_called_once_with(campaign)
+    reserve.assert_not_called()
+    owner.device.click.assert_called_once_with(ex.MAP_PREPARATION)
+
+
+class ReadyTimer:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def start(self):
+        return self
+
+    def reset(self):
+        return self
+
+    def reached(self):
+        return True
+
+
+def test_cancel_requires_preparation_disappearance_before_background_stage_success(monkeypatch):
+    owner, campaign, state, _, _, _ = controller(monkeypatch)
+    monkeypatch.setattr(ex, 'Timer', ReadyTimer)
+    visible = [ex.FLEET_PREPARATION]
+
+    def loop(**kwargs):
+        yield None  # Stage background is already recognizable below the overlay.
+        assert campaign.device.click.call_count == 1
+        visible[0] = None
+        yield None
+
+    campaign.loop = loop
+    campaign.appear.side_effect = lambda button, **kwargs: button is visible[0]
+    assert ex.WarArchivesExecution._cancel_preparation(owner, campaign) is True
+    campaign.device.click.assert_called_once_with(ex.MAP_PREPARATION_CANCEL)
+    assert state.in_stage is True
+
+
+@pytest.mark.parametrize('overlay', [ex.GET_ITEMS_2, ex.POPUP_CONFIRM_WHITE, ex.USE_DATA_KEY])
+def test_cancel_rejects_receipt_or_unknown_dialog_above_recognizable_stage(monkeypatch, overlay):
+    owner, campaign, _, _, _, _ = controller(monkeypatch)
+    monkeypatch.setattr(ex, 'Timer', ReadyTimer)
+    campaign.loop = lambda **kwargs: iter([None])
+    campaign.appear.side_effect = lambda button, **kwargs: button is overlay
+    with pytest.raises(ex.ArchiveBlocked, match='preparation_return_unrecognized'):
+        ex.WarArchivesExecution._cancel_preparation(owner, campaign)
+    campaign.device.click.assert_not_called()

@@ -13,11 +13,13 @@ from module.campaign.run import CampaignRun
 from module.campaign.stage import stage_names
 from module.config.config import TaskEnd
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP
+from module.eventstory.eventstory import save_event_diagnostic
 from module.exception import CampaignEnd, OilExhausted, ScriptEnd
 from module.handler.assets import POPUP_CANCEL, POPUP_CONFIRM, USE_DATA_KEY
 from module.handler.fast_forward import to_map_file_name
 from module.logger import logger
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_CANCEL, MAP_PREPARATION_HARD
+from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 from module.war_archives.catalog import get_archive
 
 
@@ -27,6 +29,56 @@ class ArchiveBlocked(ScriptEnd):
 
 class ArchiveInspected(ScriptEnd):
     pass
+
+
+class _FleetPreparationDevice:
+    """Bound legacy FleetOperator loops only while this archive prepares fleets."""
+
+    def __init__(self, device, guard, *, deadline, max_frames=90, max_clicks=12):
+        self._device, self._guard, self._deadline = device, guard, deadline
+        self._max_frames, self._max_clicks = max_frames, max_clicks
+        self._frames = self._clicks = 0
+        self._checking = False
+
+    def __getattr__(self, name):
+        return getattr(self._device, name)
+
+    def _check(self):
+        if monotonic() >= self._deadline:
+            raise ArchiveBlocked('fleet_preparation_timeout')
+
+    def _check_dialog(self):
+        # The exact oil handler may itself screenshot/cancel its known modal.
+        # Its controls still consume the same budgets, without recursive guards.
+        if not self._checking:
+            self._checking = True
+            try:
+                self._guard()
+            finally:
+                self._checking = False
+
+    def screenshot(self, *args, **kwargs):
+        self._check()
+        if self._frames >= self._max_frames:
+            raise ArchiveBlocked('fleet_preparation_frame_limit')
+        self._frames += 1
+        result = self._device.screenshot(*args, **kwargs)
+        self._check()
+        self._check_dialog()
+        return result
+
+    def click(self, button, *args, **kwargs):
+        self._check()
+        if self._clicks >= self._max_clicks:
+            raise ArchiveBlocked('fleet_preparation_click_limit')
+        if any(button is forbidden for forbidden in (
+                POPUP_CONFIRM, POPUP_CONFIRM_WHITE, POPUP_CANCEL, POPUP_CANCEL_WHITE,
+                FLEET_PREPARATION)):
+            raise ArchiveBlocked('unrecognized_fleet_control')
+        self._check_dialog()
+        self._check()
+        self._clicks += 1
+        return self._device.click(button, *args, **kwargs)
 
 
 @contextmanager
@@ -59,6 +111,8 @@ class WarArchivesExecution(CampaignRun):
     ``verified_for_navigation=True``. Initial observation requires the same proof.
     ``verified_for_execution=True`` additionally authorizes combat, never an
     unknown key dialog. ``inspect_only`` needs no execution/key authorization.
+    ``inspect_fleet_only`` instead captures the next Fleet Preparation and
+    cancels before any fleet setup or Fleet Go, including already-cleared stages.
 
     ``reserve(goal, raw_keys=cost, key_mode=mode, attempt_kind=kind)`` must persist
     the caller's shared daily/surplus budget and return literal True. No Start is
@@ -108,15 +162,22 @@ class WarArchivesExecution(CampaignRun):
     def _cancel_preparation(self, campaign):
         clicks = 0
         settle = Timer(2, count=2).start()
+        returned = Timer(1, count=2).start()
         for _ in campaign.loop(skip_first=False, timeout=12):
-            if campaign.is_in_stage():
-                return True
-            if (campaign.appear(POPUP_CONFIRM, offset=(20, 20))
-                    or campaign.appear(POPUP_CANCEL, offset=(20, 20))):
+            # Background stage markers may still match beneath preparation or
+            # a receipt. Never report a return, or tap through those overlays.
+            if any(campaign.appear(button, offset=(20, 30)) for button in (
+                    GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP, USE_DATA_KEY,
+                    POPUP_CONFIRM, POPUP_CANCEL, POPUP_CONFIRM_WHITE, POPUP_CANCEL_WHITE)):
                 break
-            if (clicks < 2 and settle.reached() and any(
-                    campaign.appear(button, offset=(20, 50)) for button in
-                    (MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION))):
+            preparation = any(campaign.appear(button, offset=(20, 50)) for button in
+                              (MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION))
+            if not preparation and campaign.is_in_stage():
+                if returned.reached():
+                    return True
+                continue
+            returned.reset()
+            if preparation and clicks < 2 and settle.reached():
                 campaign.device.click(MAP_PREPARATION_CANCEL)
                 clicks += 1
                 settle.reset()
@@ -130,6 +191,7 @@ class WarArchivesExecution(CampaignRun):
         original_oil_popup = campaign.handle_oil_purchase
         original_battle = campaign.execute_a_battle
         original_morale = campaign.emotion.check_reduce
+        original_fleet = campaign.fleet_preparation
         entry_deadline, entry_frames = None, 0
 
         def entry_guard():
@@ -146,8 +208,8 @@ class WarArchivesExecution(CampaignRun):
                 # A generic confirm may buy keys, oil, or an unknown entitlement.
                 # Let the exact oil guard cancel its known purchase dialog first.
                 original_oil_popup()
-                if (campaign.appear(POPUP_CONFIRM, offset=(20, 20))
-                        or campaign.appear(POPUP_CANCEL, offset=(20, 20))):
+                if any(campaign.appear(button, offset=(20, 20)) for button in (
+                        POPUP_CONFIRM, POPUP_CANCEL, POPUP_CONFIRM_WHITE, POPUP_CANCEL_WHITE)):
                     raise ArchiveBlocked('unrecognized_entry_dialog')
                 return False
             return original_oil_popup()
@@ -167,6 +229,14 @@ class WarArchivesExecution(CampaignRun):
             self.preparation_seen = True
             self.stage_complete = (self.proof.get('stage_complete') is True if self.one_clear
                                    else bool(original_stop()))
+            if self.fleet_inspection:
+                # Permit exactly one known Map Preparation -> Fleet Preparation
+                # transition, even for a completed stage. Never authorize Go.
+                if self.fleet_probe_advances:
+                    self._cancel_preparation(campaign)
+                    raise ArchiveBlocked('fleet_preparation_not_reached')
+                self.fleet_probe_advances += 1
+                return False
             if (self.stage_complete and self.goal.goal == 'archive_clear') or self.inspection:
                 self._cancel_preparation(campaign)
                 raise ArchiveInspected('complete' if self.stage_complete else 'incomplete')
@@ -193,6 +263,32 @@ class WarArchivesExecution(CampaignRun):
                     logger.warning(f'Archive preparation cleanup failed: {cleanup_error}')
                 raise
             return False
+
+        def fleet_preparation(*args, **kwargs):
+            original_device = campaign.device
+            if self.fleet_inspection:
+                campaign.device.screenshot()
+                entry_guard()
+                if (self.fleet_probe_advances != 1 or campaign.is_in_map()
+                        or not campaign.appear(FLEET_PREPARATION, offset=(20, 50))):
+                    raise ArchiveBlocked('fleet_preparation_unrecognized')
+                self.diagnostic = str(save_event_diagnostic(
+                    original_device,
+                    f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_fleet_probe') or '')
+                self._cancel_preparation(campaign)
+                if not self.diagnostic:
+                    raise ArchiveBlocked('fleet_preparation_capture_failed')
+                raise ArchiveInspected('fleet_preparation')
+            deadline = min(entry_deadline, monotonic() + 45) if entry_deadline is not None else monotonic() + 45
+            campaign.device = _FleetPreparationDevice(original_device, entry_guard, deadline=deadline)
+            try:
+                entry_guard()
+                result = original_fleet(*args, **kwargs)
+                campaign.device._check()
+                entry_guard()
+                return result
+            finally:
+                campaign.device = original_device
 
         def status(drop=None, expected_end=None):
             won_before, lost_before = campaign.combat_won, campaign.combat_lost
@@ -229,6 +325,7 @@ class WarArchivesExecution(CampaignRun):
         campaign.ui_goto_event = campaign.ui_goto_archives_campaign
         campaign.ui_goto_sp = campaign.ui_goto_archives_campaign
         campaign.enter_map = enter
+        campaign.fleet_preparation = fleet_preparation
         campaign.triggered_map_stop = stop
         campaign.combat_status = status
         campaign.handle_oil_purchase = entry_guard
@@ -250,15 +347,23 @@ class WarArchivesExecution(CampaignRun):
                 pass
 
     def _result(self, status, reason=''):
-        return dict(status=status, reason=reason, reserved=self.reserved,
-                    boss_won=self.boss_won, stage_complete=self.stage_complete)
+        result = dict(status=status, reason=reason, reserved=self.reserved,
+                      boss_won=self.boss_won, stage_complete=self.stage_complete)
+        if self.diagnostic:
+            result['diagnostic'] = self.diagnostic
+        return result
 
     def run_once(self, goal, observation, reserve, prepare, *, key_mode=None, key_cost=None,
-                 attempt_kind='daily', extra_oil_reserve=5000, inspect_only=False):
+                 attempt_kind='daily', extra_oil_reserve=5000, inspect_only=False,
+                 inspect_fleet_only=False):
         self.goal, self.reserve, self.prepare = goal, reserve, prepare
         self.reserved = self.boss_won = self.stage_complete = self.preparation_seen = False
         self.oil_deferred = False
+        self.diagnostic = ''
+        self.fleet_inspection, self.fleet_probe_advances = inspect_fleet_only, 0
         self.entry_calls, self.inspection = 0, inspect_only
+        if inspect_only and inspect_fleet_only:
+            return self._result('blocked', 'conflicting_inspection_modes')
         try:
             archive = get_archive(goal.event)
             valid_stage = (archive.supported and to_map_file_name(goal.stage) in archive.stages(goal.mode)
@@ -275,7 +380,7 @@ class WarArchivesExecution(CampaignRun):
         if (attempt_kind not in ('daily', 'extra') or type(extra_oil_reserve) is not int
                 or extra_oil_reserve < 0):
             return self._result('blocked', 'invalid_attempt_policy')
-        if not inspect_only:
+        if not (inspect_only or inspect_fleet_only):
             self.key_mode, self.key_cost = key_mode, key_cost
             if not self._proof(observation, execution=True) or not self._key_proof(observation):
                 return self._result('blocked', 'key_entitlement_unverified')
@@ -309,7 +414,9 @@ class WarArchivesExecution(CampaignRun):
                 self._prepare()
                 self.campaign.enter_map(self.campaign.ENTRANCE, mode=goal.mode)
                 return self._result('won', 'post_win_inspection_unverified')
-        except ArchiveInspected:
+        except ArchiveInspected as error:
+            if self.fleet_inspection:
+                return self._result('observed', str(error))
             return self._result('complete' if self.stage_complete else ('won' if self.boss_won else 'incomplete'))
         except ArchiveBlocked as error:
             # defer_for_oil owns NextRun; the coordinator must not replace that
