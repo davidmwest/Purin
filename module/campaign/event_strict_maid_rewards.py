@@ -7,7 +7,7 @@ from module.campaign.event_completion import (
 from module.campaign.event_rewards import EventRewards, SUPPORTED_EVENTS
 from module.campaign.event_strict_maid import STRICT_MAID_TAB
 from module.campaign.event_strict_maid_rewards_assets import (
-    OCR_STRICT_MAID_TOTAL, STRICT_MAID_COLLECT_ALL, STRICT_MAID_HOME,
+    OCR_STRICT_MAID_TOTAL, STRICT_MAID_HOME,
     STRICT_MAID_PAGE, STRICT_MAID_PROCEED, STRICT_MAID_ROW_COLLECT,
     STRICT_MAID_ROW_COLLECTED, STRICT_MAID_ROW_OFFSETS)
 from module.eventstory.eventstory import ensure_event_running, save_event_diagnostic
@@ -29,8 +29,8 @@ class StrictMaidRewards(EventRewards):
         # The local collection deadline owns this verified page, including a
         # changed/disabled action. Unknown screens retain the device watchdog.
         self.device.stuck_record_clear()
-        if not self.match_template_color(STRICT_MAID_COLLECT_ALL, offset=(3, 3), similarity=.85):
-            return None
+        # Collect All changes appearance when any row is earned. The exact
+        # title/Home and each individual row own this collector's recognition.
         rows = []
         for index, (dx, dy) in enumerate(STRICT_MAID_ROW_OFFSETS):
             offset = (dx - 3, dy - 3, dx + 3, dy + 3)

@@ -1,6 +1,6 @@
 """Earned ticket controls and first locked story observed by Purin, 2026-10-22."""
 from module.base.button import Button
-from module.ocr.ocr import Digit, DigitCounter
+from module.ocr.ocr import Ocr, DigitCounter
 
 _IMAGE = './assets/en/event_completion/TEMPESTA_BECKONING_TICKETS_20261022.png'
 
@@ -23,7 +23,8 @@ BECKONING_FIRST_LOCK = Button(
     area=(88, 239, 278, 341), color=(114, 104, 148), button=(145, 251, 215, 300),
     file=_IMAGE, name='BECKONING_FIRST_LOCK')
 
-OCR_BECKONING_TICKETS = Digit(
-    (1198, 40, 1251, 69), letter=(230, 231, 249), threshold=64, name='BECKONING_TICKETS')
+OCR_BECKONING_TICKETS = Ocr(
+    (1198, 40, 1251, 69), letter=(230, 231, 249), threshold=128,
+    alphabet='0123456789', name='BECKONING_TICKETS')
 OCR_BECKONING_VICTORIES = DigitCounter(
     (918, 595, 1015, 617), letter=(92, 79, 78), threshold=80, name='BECKONING_VICTORIES')

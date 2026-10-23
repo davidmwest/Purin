@@ -47,6 +47,20 @@ def record(rows=None):
     return dict(status='collecting', rows=rows or {}, diagnostics=[], story_complete=False)
 
 
+@pytest.mark.parametrize('raw,expected', [('', None), ('garbled', None), ('0', 0), ('1', 1), ('99', 99), ('100', None)])
+def test_ticket_reader_keeps_unreadable_separate_from_zero(monkeypatch, raw, expected):
+    helper = controller()
+    monkeypatch.setattr(beckoning.OCR_BECKONING_TICKETS, 'ocr', Mock(return_value=raw))
+    assert BeckoningTickets._tickets(helper) == expected
+
+
+@pytest.mark.parametrize('fixture,expected', [('tempesta_side_choice.png', 0), ('beckoning_ticket_received.png', 1)])
+def test_actual_ticket_digit_including_received_one_is_read(fixture, expected):
+    helper = controller()
+    helper.device.image = np.asarray(Image.open('tests/campaign/data/' + fixture).convert('RGB'))
+    assert BeckoningTickets._tickets(helper) == expected
+
+
 def test_observed_missions_claim_controls_and_first_lock_match_actual_choice():
     image = np.asarray(Image.open('tests/campaign/data/tempesta_side_choice.png').convert('RGB'))
     for button in (BECKONING_FIRST_LOCK, BECKONING_FIRST_STORY, BECKONING_MONTHLY_COLLECT,

@@ -91,12 +91,20 @@ def test_missing_rows_do_not_prove_empty_and_all_gray_is_positive_empty():
     assert controller(image=all_collected())._strict_state() == 'empty'
 
 
-@pytest.mark.parametrize('missing', [STRICT_MAID_PAGE, STRICT_MAID_HOME, STRICT_MAID_COLLECT_ALL])
+@pytest.mark.parametrize('missing', [STRICT_MAID_PAGE, STRICT_MAID_HOME])
 def test_missing_exact_page_or_action_never_authorizes_claim(missing):
     helper = controller()
     helper.match_template_color = Mock(side_effect=lambda button, **kwargs: button != missing)
     assert helper._strict_state() == 'unknown'
-    assert helper.device.stuck_record_clear.call_count == (1 if missing == STRICT_MAID_COLLECT_ALL else 0)
+    helper.device.stuck_record_clear.assert_not_called()
+
+
+def test_actual_f2p_login_reward_remains_claimable_when_collect_all_changes():
+    image = np.asarray(Image.open('tests/campaign/data/strict_maid_f2p_login.png').convert('RGB'))
+    helper = controller(image=image)
+    assert not STRICT_MAID_COLLECT_ALL.match_template_color(image, offset=(3, 3), similarity=.85)
+    assert helper._strict_rows() == ['collected', 'proceed', 'claimable', 'proceed']
+    assert helper._strict_total() == 100
 
 
 def test_unmatched_pink_control_is_unknown_and_absent_rows_do_not_prove_empty():

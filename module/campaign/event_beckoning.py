@@ -34,7 +34,9 @@ class BeckoningTickets(Reward):
 
     def _tickets(self):
         value = OCR_BECKONING_TICKETS.ocr(self.device.image)
-        return value if isinstance(value, int) and 0 <= value <= 99 else None
+        if isinstance(value, str) and value.isdigit() and 0 <= int(value) <= 99:
+            return int(value)
+        return None
 
     def _earned(self, row):
         if row == 'monthly':
