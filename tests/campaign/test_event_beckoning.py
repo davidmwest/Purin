@@ -7,20 +7,24 @@ import pytest
 from PIL import Image
 
 from module.campaign import event_beckoning as beckoning
+from module.campaign import event_completion as completion
 from module.campaign.event_beckoning import BeckoningTickets, EVENT
 from module.campaign.event_beckoning_assets import (
     BECKONING_FIRST_LOCK, BECKONING_FIRST_STORY, BECKONING_MONTHLY_COLLECT,
     BECKONING_MONTHLY_EARNED, BECKONING_VICTORY_COLLECT, BECKONING_VICTORY_MISSION)
-from module.campaign.event_completion import load_reward_observations, save_reward_observations
+from module.campaign.event_completion import EventCompletion, load_reward_observations, save_reward_observations
 from module.campaign.event_completion_assets import TEMPESTA_SIDE_CHOICE_BACK, TEMPESTA_SIDE_CHOICE_PAGE
 from module.combat.assets import GET_ITEMS_1
 from module.exception import GameNotRunningError
+from module.ui.assets import GOTO_MAIN
+from module.ui.page import page_main
 
 
 def controller(frames=8):
     helper = BeckoningTickets.__new__(BeckoningTickets)
     helper.config = SimpleNamespace(config_name='f2p')
-    helper.device = SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True), image=None)
+    helper.device = SimpleNamespace(click=Mock(), screenshot=Mock(), app_is_running=Mock(return_value=True),
+                                    image=None, display_scale=1)
     helper.loop = Mock(side_effect=lambda **kwargs: iter(range(frames)))
     helper._on_choice = Mock(return_value=True)
     helper._matches = Mock(return_value=True)
@@ -36,6 +40,7 @@ def immediate(monkeypatch):
     timer.start.return_value = timer
     timer.reached.return_value = True
     monkeypatch.setattr(beckoning, 'Timer', Mock(return_value=timer))
+    monkeypatch.setattr(completion, 'Timer', Mock(return_value=timer))
 
 
 def record(rows=None):
@@ -50,6 +55,87 @@ def test_observed_missions_claim_controls_and_first_lock_match_actual_choice():
         assert not button.match_template_color(np.zeros_like(image), offset=(3, 3), similarity=.85)
     # The mission crop itself includes the monthly completed (1/1).
     assert BECKONING_MONTHLY_EARNED.area == (918, 481, 1063, 531)
+
+
+@pytest.mark.parametrize('missing_home', [False, True])
+def test_captured_map_recovers_only_known_home_before_choice_entry(immediate, missing_home):
+    helper = controller()
+    helper.device.image = np.asarray(Image.open('tests/campaign/data/beckoning_entry_map.png').convert('RGB')).copy()
+    if missing_home:
+        x1, y1, x2, y2 = GOTO_MAIN.area
+        helper.device.image[max(0, y1-30):y2+30, max(0, x1-30):x2+30] = 0
+    helper._on_choice = lambda: BeckoningTickets._on_choice(helper)
+    helper._matches = lambda button: button.match_template_color(helper.device.image, offset=(3, 3), similarity=.85)
+    navigator = EventCompletion.__new__(EventCompletion)
+    navigator.device = helper.device
+    navigator.config = helper.config
+    navigator.loop = lambda **kwargs: iter(range(5))
+    navigator.match_template_color = lambda button, **kwargs: button.match_template_color(helper.device.image, **kwargs)
+    location = ['map']
+    navigator.ui_page_appear = lambda page: page == page_main and location[0] == 'main'
+
+    def go_home(button):
+        assert button is GOTO_MAIN
+        assert location[0] == 'map'
+        location[0] = 'main'
+
+    helper.device.click.side_effect = go_home
+
+    def enter(audit, **kwargs):
+        assert location[0] == 'main'
+        helper.device.image = np.asarray(Image.open('tests/campaign/data/tempesta_side_choice.png').convert('RGB'))
+        location[0] = 'choice'
+        audit['status'] = 'observed'
+
+    navigator._inspect_event_side_story = Mock(side_effect=enter)
+    audit = record()
+    assert helper._enter_choice(navigator, audit) is not missing_home
+    assert audit['entry_returned_main'] is not missing_home
+    helper.device.screenshot.assert_called_once_with()
+    if missing_home:
+        helper.device.click.assert_not_called()
+        navigator._inspect_event_side_story.assert_not_called()
+    else:
+        helper.device.click.assert_called_once_with(GOTO_MAIN)
+        navigator._inspect_event_side_story.assert_called_once()
+
+
+def test_unrecognized_start_cannot_attempt_the_choice_entry(immediate):
+    helper = controller()
+    helper._on_choice.return_value = False
+    navigator = Mock()
+    navigator._return_event_hub_main.return_value = False
+    audit = record()
+    assert helper._enter_choice(navigator, audit) is False
+    assert audit['reason'] == 'choice_entry_main_unavailable'
+    navigator._inspect_event_side_story.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_observer_departure_without_exact_choice_cannot_authorize_collection(immediate, monkeypatch, tmp_path):
+    helper = controller()
+    helper._on_choice.return_value = False
+    navigator = Mock()
+    navigator._return_event_hub_main.return_value = True
+    navigator._inspect_event_side_story.side_effect = lambda audit, **kwargs: audit.update(status='observed')
+    monkeypatch.setattr(beckoning, 'EventCompletion', Mock(return_value=navigator))
+    helper._collect = Mock()
+    audit = helper.run(EVENT, folder=tmp_path)
+    assert audit['status'] == 'failed'
+    assert audit['reason'] == 'choice_destination_unrecognized'
+    helper._collect.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_already_open_exact_choice_keeps_navigation_and_card_budgets(immediate):
+    helper = controller()
+    navigator = Mock()
+    audit = record()
+    assert helper._enter_choice(navigator, audit) is True
+    navigator._return_event_hub_main.assert_not_called()
+    navigator._inspect_event_side_story.assert_not_called()
+    helper.device.screenshot.assert_called_once_with()
+    helper.device.click.assert_not_called()
 
 
 @pytest.mark.parametrize('missing', [TEMPESTA_SIDE_CHOICE_BACK, TEMPESTA_SIDE_CHOICE_PAGE])
@@ -250,10 +336,11 @@ def test_closed_game_does_not_spend_any_budget(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_run_preserves_row_audits_and_returns_through_known_helper(monkeypatch, tmp_path):
+def test_run_preserves_row_audits_and_returns_through_known_helper(immediate, monkeypatch, tmp_path):
     previous = dict(monthly=dict(clicks=1, pending=False, verified=True))
     save_reward_observations('f2p', {EVENT + ':beckoning_ticket_collection': dict(rows=previous)}, folder=tmp_path)
     helper = controller()
+    helper._on_choice.side_effect = [False, True]
 
     def navigate(audit, **kwargs):
         saved = load_reward_observations('f2p', folder=tmp_path)
@@ -270,5 +357,5 @@ def test_run_preserves_row_audits_and_returns_through_known_helper(monkeypatch, 
     assert audit['returned_main'] is True and audit['story_complete'] is False
     assert audit['rows'] == previous
     helper._inspect_first_unlock.assert_called_once()
-    navigator._return_event_hub_main.assert_called_once()
+    assert navigator._return_event_hub_main.call_count == 2
     assert load_reward_observations('f2p', folder=tmp_path)[EVENT + ':beckoning_ticket_collection']['returned_main'] is True

@@ -49,6 +49,35 @@ class BeckoningTickets(Reward):
             record['diagnostics'].append(path)
         return path
 
+    def _enter_choice(self, helper, record):
+        # EventStory can leave a recognized active map after its bounded failure.
+        # That screen has a known Home exit but is outside ensure_event_page's
+        # page graph. Recover through the same bounded exit used on completion
+        # before trying the featured-event route, rather than timing out first.
+        self.device.screenshot()
+        if self._on_choice():
+            record.update(status='observed', reason='choice_page_already_open')
+            return True
+        record['entry_returned_main'] = helper._return_event_hub_main()
+        if not record['entry_returned_main']:
+            record.update(status='failed', reason='choice_entry_main_unavailable')
+            return False
+        helper._inspect_event_side_story(record, entry=TEMPESTA_BECKONING_CHOICE, panel='beckoning_choice')
+        if record.get('status') != 'observed':
+            return False
+        # The observer detects departure from its landing page. Actual claims
+        # additionally require the exact destination title and Back on fresh,
+        # settled frames, so an unexpected panel never authorizes a claim.
+        settled = Timer(1, count=2).start()
+        for _ in self.loop(skip_first=False, timeout=10):
+            if not self._on_choice():
+                settled.reset()
+                continue
+            if settled.reached():
+                return True
+        record.update(status='failed', reason='choice_destination_unrecognized')
+        return False
+
     def _collect(self, record, persist):
         """Never repeat a row click, even after interruption or rejected input."""
         settled = Timer(2, count=3).start()
@@ -180,9 +209,8 @@ class BeckoningTickets(Reward):
         persist()
         helper = EventCompletion(config=self.config, device=self.device)
         try:
-            helper._inspect_event_side_story(record, entry=TEMPESTA_BECKONING_CHOICE, panel='beckoning_choice')
-            if record.get('status') != 'observed':
-                record.update(status='failed', reason='choice_page_unavailable')
+            if not self._enter_choice(helper, record):
+                record.update(status='failed', reason=record.get('reason', 'choice_page_unavailable'))
             elif self._collect(record, persist):
                 self._inspect_first_unlock(record, state, event + ':beckoning_first_unlock', persist)
             self._capture(record, 'ticket_step_finished')
