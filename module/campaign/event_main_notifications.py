@@ -43,8 +43,15 @@ class EventMainNotifications(EventCompletion):
         return (self.ui_page_appear(page) and (title is None or self._exact(title))
                 and self._exact(button))
 
+    def _treasure_home(self):
+        from module.campaign.event_treasure_free_pack_assets import (
+            TREASURE_DATES, TREASURE_HEADER, TREASURE_HOME)
+        if all(self._exact(button) for button in (TREASURE_HEADER, TREASURE_DATES, TREASURE_HOME)):
+            return TREASURE_HOME
+        return None
+
     def _notification_return_main(self, record, persist):
-        """Use Home only on an exactly recognized ordinary Events or Shop page."""
+        """Use Home only on an exactly recognized destination captured by Purin."""
         settled = Timer(1, count=2).start()
         clicked = False
         for _ in self.loop(skip_first=False, timeout=8):
@@ -60,6 +67,8 @@ class EventMainNotifications(EventCompletion):
                 home = EVENTS_HOME
             elif self.ui_page_appear(page_shop) and self._exact(SHOP_TITLE) and self._exact(SHOP_HOME):
                 home = SHOP_HOME
+            else:
+                home = self._treasure_home()
             if home is None:
                 # Unknown destinations are evidence only, with no guessed exit.
                 return False

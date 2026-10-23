@@ -30,6 +30,8 @@ def controller():
     helper.observe_event_strict_maid = Mock(return_value=dict(status='observed'))
     helper._resume_event_mission_receipt = Mock(return_value=True)
     helper._resume_completed_event_panel = Mock(return_value=True)
+    helper.collect_treasure_free_packs = Mock(return_value=dict(status='unsupported', returned_main=True))
+    helper.resume_treasure_free_packs = Mock(return_value=None)
     helper._event_mission_receipt = Mock(return_value=None)
     return helper
 

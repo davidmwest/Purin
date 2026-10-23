@@ -8,6 +8,7 @@ import pytest
 from module.campaign import event_completion as completion
 from module.campaign import event_strict_maid, event_strict_maid_milestones
 from module.campaign import event_sp_observation, event_main_notifications
+from module.campaign import event_build_orders_observation
 from module.campaign.event_completion import EventCompletion, load_reward_observations, save_reward_observations
 from module.exception import GameNotRunningError, GamePageUnknownError
 
@@ -34,6 +35,8 @@ def audit(monkeypatch, tmp_path):
     helper.device = SimpleNamespace(app_is_running=Mock(return_value=True))
     helper._resume_event_mission_receipt = Mock(return_value=True)
     helper._resume_completed_event_panel = Mock(return_value=True)
+    helper.collect_treasure_free_packs = Mock(return_value=dict(status='complete', returned_main=True))
+    helper.resume_treasure_free_packs = Mock(return_value=None)
     for name in METHODS:
         setattr(helper, name, Mock(return_value=dict(status='observed', returned_main=True, diagnostics=[])))
     strict = Mock()
@@ -50,6 +53,9 @@ def audit(monkeypatch, tmp_path):
             status='observed', returned_main=True, diagnostics=[])
     monkeypatch.setattr(event_sp_observation, 'EventSPObservation', sp)
     monkeypatch.setattr(event_main_notifications, 'EventMainNotifications', notifications)
+    build = Mock()
+    build.return_value.observe.return_value = dict(status='observed', returned_main=True, diagnostics=[])
+    monkeypatch.setattr(event_build_orders_observation, 'EventBuildOrdersObservation', build)
     monkeypatch.setattr(completion, 'EVENT_AUDIT_DIR', str(tmp_path / 'audits'))
     monkeypatch.setattr(completion, 'save_event_diagnostic', Mock(return_value=None))
     return helper, strict, milestones
@@ -86,7 +92,7 @@ def test_identity_and_flag_are_durable_before_first_control_with_separate_ledger
         getattr(helper, method).assert_called_once_with(EVENT, folder=result['folder'])
     strict.return_value.run.assert_called_once_with(EVENT, folder=result['folder'])
     milestones.return_value.observe.assert_called_once_with(EVENT, folder=result['folder'])
-    assert list(result['observations'])[-4:] == ['sp_availability', 'day7', 'rental_outfits', 'packs']
+    assert list(result['observations'])[-5:] == ['sp_availability', 'day7', 'rental_outfits', 'packs', 'build_orders']
 
 
 @pytest.mark.parametrize('entry', ['day7', 'rental_outfits', 'packs'])

@@ -137,7 +137,7 @@ def test_unknown_destination_has_no_exit_input(monkeypatch):
     owner = controller(monkeypatch)
     del owner._notification_return_main
     owner.ui_page_appear = Mock(return_value=False)
-    owner._exact = Mock(return_value=True)
+    owner._exact = Mock(return_value=False)
     assert owner._notification_return_main({}, Mock()) is False
     owner.device.click.assert_not_called()
 
@@ -185,3 +185,49 @@ def test_accounts_do_not_share_observation_budget(monkeypatch, tmp_path):
     owner.config.config_name = 'f2p'
     assert not owner.observe_day7(EVENT, tmp_path).get('reused')
     assert owner.device.click.call_count == 2
+
+
+@pytest.mark.parametrize('missing', [None, 'header', 'dates', 'home'])
+def test_actual_treasure_return_requires_each_exact_witness(missing):
+    from module.campaign.event_treasure_free_pack_assets import (
+        TREASURE_DATES, TREASURE_HEADER, TREASURE_HOME)
+    image = np.asarray(Image.open(Path(__file__).parent / 'data' /
+                                  'treasure_free_packs.png').convert('RGB')).copy()
+    if missing:
+        button = dict(header=TREASURE_HEADER, dates=TREASURE_DATES, home=TREASURE_HOME)[missing]
+        x1, y1, x2, y2 = button.area
+        image[y1:y2, x1:x2] = 0
+    owner = EventMainNotifications.__new__(EventMainNotifications)
+    owner.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert owner._treasure_home() is (None if missing else TREASURE_HOME)
+
+
+def test_treasure_home_uses_existing_one_click_durable_return_budget(monkeypatch):
+    from module.campaign.event_treasure_free_pack_assets import TREASURE_HOME
+    owner = controller(monkeypatch)
+    del owner._notification_return_main
+    on_main = [False]
+    owner.ui_page_appear = Mock(side_effect=lambda page: on_main[0] and page is page_main)
+    owner._treasure_home = Mock(return_value=TREASURE_HOME)
+    record = dict(home_clicks=0)
+    persisted = []
+
+    def click(button):
+        assert button is TREASURE_HOME
+        assert persisted == [1]
+        on_main[0] = True
+
+    owner.device.click.side_effect = click
+    assert owner._notification_return_main(record, lambda: persisted.append(record['home_clicks']))
+    owner.device.click.assert_called_once_with(TREASURE_HOME)
+
+
+def test_treasure_home_does_not_repeat_when_main_return_is_unverified(monkeypatch):
+    from module.campaign.event_treasure_free_pack_assets import TREASURE_HOME
+    owner = controller(monkeypatch)
+    del owner._notification_return_main
+    owner.ui_page_appear = Mock(return_value=False)
+    owner._treasure_home = Mock(return_value=TREASURE_HOME)
+    record = dict(home_clicks=0)
+    assert owner._notification_return_main(record, Mock()) is False
+    owner.device.click.assert_called_once_with(TREASURE_HOME)

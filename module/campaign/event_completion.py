@@ -724,6 +724,7 @@ class EventCompletion(Reward):
         from module.campaign.event_strict_maid_milestones import StrictMaidMilestones
         from module.campaign.event_sp_observation import EventSPObservation
         from module.campaign.event_main_notifications import EventMainNotifications
+        from module.campaign.event_build_orders_observation import EventBuildOrdersObservation
 
         ensure_event_running(self)
         account = self.config.config_name
@@ -778,6 +779,7 @@ class EventCompletion(Reward):
             ('day7', EventMainNotifications(config=self.config, device=self.device).observe_day7),
             ('rental_outfits', EventMainNotifications(config=self.config, device=self.device).observe_rental_outfits),
             ('packs', EventMainNotifications(config=self.config, device=self.device).observe_packs),
+            ('build_orders', EventBuildOrdersObservation(config=self.config, device=self.device).observe),
         )
         record['status'] = 'observing'
         persist()
@@ -811,13 +813,36 @@ class EventCompletion(Reward):
 
         return StrictMaidMilestones(config=self.config, device=self.device).resume(event)
 
+    def collect_treasure_free_packs(self, event):
+        from module.campaign.event_treasure_free_packs import EventTreasureFreePacks
+
+        return EventTreasureFreePacks(config=self.config, device=self.device).run(event)
+
+    def resume_treasure_free_packs(self, event):
+        from module.campaign.event_treasure_free_packs import EventTreasureFreePacks
+
+        return EventTreasureFreePacks(config=self.config, device=self.device).resume(event)
+
     def run(self, event, collect_rewards=True, complete_story=False):
         result = dict(story='disabled', rewards='disabled', event_hub_rewards='disabled')
         if collect_rewards:
             if not self._resume_completed_event_panel(event):
                 raise GamePageUnknownError('Completed event panel could not return through recognized controls')
+            treasure = None
+            if event == 'event_20261022_cn' and self.config.config_name == 'alas':
+                treasure = self.resume_treasure_free_packs(event)
+                if treasure is not None and treasure.get('returned_main') is not True:
+                    raise GamePageUnknownError('Free treasure pack result requires observation')
             if not self._resume_event_mission_receipt():
                 raise GamePageUnknownError('Event mission receipt could not be safely dismissed')
+            if event == 'event_20261022_cn' and self.config.config_name == 'alas':
+                if treasure is None:
+                    treasure = self.collect_treasure_free_packs(event)
+                result['event_treasure_free_collection'] = treasure
+                # A reserved free claim may expose an unknown confirmation. Do
+                # not route or dismiss it through ordinary event navigation.
+                if treasure.get('returned_main') is not True:
+                    raise GamePageUnknownError('Free treasure pack result requires observation')
             result['event_main_observation'] = self.observe_event_main(event)
             result['event_hub_observation'] = self.observe_event_hub(event)
             result['event_featured_observation'] = self.observe_event_featured(event)
@@ -866,6 +891,8 @@ class EventCompletion(Reward):
                 result['event_strict_maid_reward_collection'] = strict
                 self.ensure_completion_return(result)
                 statuses = [record.get('status', 'failed') for record in (collection, strict)]
+                if 'event_treasure_free_collection' in result:
+                    statuses.append(result['event_treasure_free_collection'].get('status', 'failed'))
                 if any(status not in ('complete', 'unsupported') for status in statuses):
                     result['event_hub_rewards'] = 'failed'
                 else:
