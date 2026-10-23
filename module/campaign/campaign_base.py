@@ -19,6 +19,13 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
     # Which fleet lost it in auto search, 1 the mob fleet, 2 the boss fleet. None if not known.
     run_lost_fleet = None
 
+    def combat_status(self, *args, **kwargs):
+        # Cleanup resets combat_lost, and a sunk fleet can return straight to the stage list,
+        # raising CampaignEnd before combat() gets control back. Preserve the defeat first.
+        if self.combat_lost:
+            self.run_lost = True
+        return super().combat_status(*args, **kwargs)
+
     def combat(self, *args, **kwargs):
         """
         A battle lost ends the run of the map. The fleet may have sunk, which leaves the map without a fleet,
@@ -28,10 +35,19 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
             CampaignEnd: After leaving the map, if the battle was lost.
         """
         super().combat(*args, **kwargs)
-        if self.combat_lost:
+        if self.combat_lost or self.run_lost:
             logger.warning('Battle lost, leave the map')
-            self.run_lost = True
+            self._withdraw_after_loss()
+
+    def _withdraw_after_loss(self):
+        self.combat_lost = False
+        self.run_lost = True
+        # withdraw() checks handle_in_stage() while the map is still visible.
+        self._loss_withdraw_active = True
+        try:
             self.withdraw()
+        finally:
+            self._loss_withdraw_active = False
 
     def handle_in_stage(self):
         """
@@ -45,15 +61,17 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
         Raises:
             CampaignEnd: On the main page, on the list of stages, or after leaving the map once a battle is lost.
         """
+        # The result may be recognized only during cleanup. Record it before either UI exit,
+        # as both can raise CampaignEnd without returning to combat().
+        if self.combat_lost:
+            self.run_lost = True
         if self.ui_page_appear(page_main):
             logger.info('Left the map for page_main')
             raise CampaignEnd('Main page')
-        if self.combat_lost and self.is_in_map():
+        if (self.combat_lost or self.run_lost) and not getattr(self, '_loss_withdraw_active', False) \
+                and self.is_in_map():
             logger.warning('Battle lost, back on the map, leave it')
-            # withdraw() looks for the list of stages through here too
-            self.combat_lost = False
-            self.run_lost = True
-            self.withdraw()
+            self._withdraw_after_loss()
         return super().handle_in_stage()
 
     def handle_combat_low_emotion(self):
