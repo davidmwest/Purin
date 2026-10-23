@@ -15,6 +15,8 @@ from module.war_archives.state import ArchiveState
 
 def verified_prize(value, prize):
     """Ownership or a local run count never establishes a guaranteed claim."""
+    if not isinstance(value, dict) or value.get('returned_stage') is not True:
+        return False
     if (isinstance(value, dict) and value.get('verified') is True
             and value.get('claimed') is True and value.get('count') is None
             and value.get('proof_kind') == 'source_received_hidden_button'
@@ -61,10 +63,36 @@ class ArchiveCoordinator:
             daily_tickets=self.config.Archive_DailyTickets,
             extra_reserve=self.config.Archive_ExtraOilReserve)
 
+    def _safe_target_failure(self, value, goal):
+        """Only a fresh exact stage page can permit trying another archive."""
+        if (not isinstance(value, dict) or value.get('status') != 'blocked'
+                or value.get('reason') not in ('target_locked_or_unreadable', 'hard_lineup')
+                or value.get('reserved') is not False):
+            return False
+        proof = value.get('safe_target_return')
+        return (isinstance(proof, dict) and proof.get('verified') is True
+                and proof.get('proof_kind') == 'fresh_exact_archive_stage'
+                and proof.get('account') == self.config.config_name
+                and proof.get('event') == goal.event and proof.get('mode') == goal.mode
+                and proof.get('stage') == goal.stage.lower()
+                and type(proof.get('page')) is int and proof['page'] >= 0)
+
+    @staticmethod
+    def _prize_failure(value, fallback):
+        """Keep an adapter's failed return visible and never act through it."""
+        if isinstance(value, dict) and value.get('returned_stage') is not True:
+            reason = value.get('reason')
+            return dict(status='blocked', reason=(reason if isinstance(reason, str) and reason
+                                                  else 'prize_return_unverified'), reserved=False)
+        return dict(status='blocked', reason=fallback, reserved=False)
+
     def _attempt(self, goal, inspect_only=False):
         before = self.state.used(self.period)
         try:
             proof = self.observer.proof_for_goal(goal)
+            if isinstance(proof, dict) and self._safe_target_failure(dict(proof, reserved=False), goal):
+                return dict(status='blocked', reason=proof['reason'], reserved=False,
+                            safe_target_return=proof['safe_target_return'])
             runner = self.runner_factory()
             kind = ('daily' if before < self.config.Archive_DailyTickets else 'extra')
             result = runner.run_once(
@@ -99,7 +127,7 @@ class ArchiveCoordinator:
         key = prize_key(plan.archive, prize)
         observed = self.observer.observe_prize(plan.archive, prize)
         if not verified_prize(observed, prize):
-            return dict(status='blocked', reason='prize_counter_unverified', reserved=False)
+            return self._prize_failure(observed, 'prize_counter_unverified')
         self.state.update(key, **observed)
         if observed['claimed']:
             return dict(status='complete', reserved=False)
@@ -110,14 +138,15 @@ class ArchiveCoordinator:
             if verified_prize(result, prize) and result['claimed']:
                 self.state.update(key, **result)
                 return dict(status='complete', reserved=False)
-            return dict(status='blocked', reason='prize_claim_unverified', reserved=False)
+            return self._prize_failure(result, 'prize_claim_unverified')
         goal = StageGoal(plan.archive.id, prize.stage, prize.mode, 'archive_prize')
         result = self._attempt(goal, inspect_only=observe_only)
         if result.get('boss_won'):
             refreshed = self.observer.observe_prize(plan.archive, prize)
             if (not verified_prize(refreshed, prize)
                     or refreshed['count'] != min(prize.clears, observed['count'] + 1)):
-                return dict(result, status='blocked', reason='prize_increment_unverified')
+                failure = self._prize_failure(refreshed, 'prize_increment_unverified')
+                return dict(result, status='blocked', reason=failure['reason'])
             self.state.update(key, **refreshed)
         return result
 
@@ -135,6 +164,7 @@ class ArchiveCoordinator:
                 if self.config.task_switched():
                     return dict(status='deferred', sorties=sorties)
                 goal = next_story(plan, self.state)
+                target_goal = goal
                 if goal is not None:
                     result = self._attempt(goal, inspect_only=observe_only)
                     if next_story(plan, self.state) is None:
@@ -144,13 +174,15 @@ class ArchiveCoordinator:
                     prize = next_prize(plan, self.state)
                     if prize is None:
                         break
+                    target_goal = StageGoal(plan.archive.id, prize.stage, prize.mode, 'archive_prize')
                     result = self._prize(plan, prize, observe_only)
                 inspections += 1
                 sorties += bool(result.get('reserved'))
-                if result.get('reason') == 'hard_lineup':
-                    deferred_archives.append(dict(archive=plan.archive.id,
-                                                  diagnostic=result.get('diagnostic', '')))
-                    logger.warning(f'{plan.archive.name}: hard lineup unavailable; trying next archive')
+                if not observe_only and self._safe_target_failure(result, target_goal):
+                    deferred_archives.append(dict(archive=plan.archive.id, reason=result['reason'],
+                                                  safe_target_return=result['safe_target_return']))
+                    logger.warning(f'{plan.archive.name}: target unavailable on verified stage page; '
+                                   'trying next archive')
                     break
                 if observe_only:
                     return dict(result, status='observed' if result['status'] in
@@ -161,7 +193,9 @@ class ArchiveCoordinator:
                 return dict(status='pending', sorties=sorties, **(
                     dict(deferred_archives=deferred_archives) if deferred_archives else {}))
         if deferred_archives:
-            return dict(status='blocked', reason='hard_lineup', sorties=sorties,
+            reason = ('hard_lineup' if all(item.get('reason', 'hard_lineup') == 'hard_lineup'
+                                          for item in deferred_archives) else 'target_unavailable')
+            return dict(status='blocked', reason=reason, sorties=sorties,
                         deferred_archives=deferred_archives)
         deferred_prizes = sum(len(plan.deferred_prizes) for plan in plans)
         if deferred_prizes:
