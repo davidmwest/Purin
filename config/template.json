@@ -46,6 +46,7 @@
   },
   "General": {
     "Retirement": {
+      "DryRun": false,
       "RetireMode": "one_click_retire"
     },
     "OneClickRetire": {

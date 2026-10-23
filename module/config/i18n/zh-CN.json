@@ -696,6 +696,10 @@
       "name": "退役设置",
       "help": ""
     },
+    "DryRun": {
+      "name": "Preview Only",
+      "help": "Blocks all retirement confirmations. Scheduled RetireShips records the Quick Retire selection with R/E/N priorities and Keep Enough to Max LB, then cancels it. A full dock stops for review."
+    },
     "RetireMode": {
       "name": "退役模式",
       "help": "若选择强化，强化材料不足时回退到一键退役",

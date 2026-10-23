@@ -124,6 +124,7 @@ DropRecord:
     value: do_not
     option: [ do_not, save, upload, save_and_upload ]
 Retirement:
+  DryRun: false
   RetireMode:
     value: one_click_retire
     option: [ one_click_retire, enhance, old_retire, do_not_retire ]

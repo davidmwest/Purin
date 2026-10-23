@@ -319,6 +319,10 @@
   },
   "General": {
     "Retirement": {
+      "DryRun": {
+        "type": "checkbox",
+        "value": false
+      },
       "RetireMode": {
         "type": "select",
         "value": "one_click_retire",

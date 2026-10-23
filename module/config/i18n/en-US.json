@@ -696,6 +696,10 @@
       "name": "Retirement Settings",
       "help": ""
     },
+    "DryRun": {
+      "name": "Preview Only",
+      "help": "Blocks all retirement confirmations. Scheduled RetireShips records the Quick Retire selection with R/E/N priorities and Keep Enough to Max LB, then cancels it. A full dock stops for review."
+    },
     "RetireMode": {
       "name": "Retirement Mode",
       "help": "If mode is one click retire, in game retire settings are enforced\nIf mode is enhance but unable to do so, will fallback to one click retire as default\nIf mode is do not retire, Alas stops and asks for you when the dock is full",

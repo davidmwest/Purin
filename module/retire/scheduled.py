@@ -5,13 +5,13 @@ EnhanceShips: ships of the dock that can still be enhanced, highest level first,
     the game recommends, see Enhancement.enhance_ships() and the options of Enhance.
 RetireShips: the retire page of the build menu, one-click retire with the quick retire options set in the game,
     or old retire with the options of OldRetire, as Retirement.RetireMode says.
-    Unlike a full dock, the quick retire options of the game are never changed, and nothing to retire is fine.
+    Preview mode verifies conservative quick retire options and cancels the selection; nothing to retire is fine.
 """
 from module.base.timer import Timer
 from module.exception import GameStuckError
 from module.gacha.ui import GachaUI
 from module.logger import logger
-from module.retire.assets import IN_RETIREMENT_CHECK
+from module.retire.assets import IN_RETIREMENT_CHECK, RETIRE_SETTING_QUIT
 from module.retire.retirement import Retirement
 from module.ui.page import page_build, page_dock
 
@@ -67,9 +67,21 @@ class RetireShips(Retirement, GachaUI):
             self.config.task_delay(server_update=True)
             return
 
-        self.ui_ensure(page_build)
-        self.retire_page_enter()
+        dry_run = getattr(self.config, 'Retirement_DryRun', False)
+        # A full dock may have interrupted a sortie with the settings popup still open.
+        if dry_run and self.appear(RETIRE_SETTING_QUIT, offset=(30, 100)):
+            self._retire_setting_quit()
+        if not (dry_run and self.appear(IN_RETIREMENT_CHECK, offset=(20, 20))):
+            self.ui_ensure(page_build)
+            self.retire_page_enter()
         self.handle_dock_cards_loading()
+        if dry_run:
+            # Preview the conservative fallback proposed for a full dock. Actual retirement is guarded globally.
+            self.quick_retire_setting_set(filter_5='keep_limit_break')
+            self.retire_ships_one_click()
+            self._retirement_quit()
+            self.config.task_delay(server_update=True)
+            return
         if mode == 'old_retire':
             total = self.retire_ships_old()
         else:

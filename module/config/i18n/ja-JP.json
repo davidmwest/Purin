@@ -696,6 +696,10 @@
       "name": "Retirement._info.name",
       "help": "Retirement._info.help"
     },
+    "DryRun": {
+      "name": "Preview Only",
+      "help": "Blocks all retirement confirmations. Scheduled RetireShips records the Quick Retire selection with R/E/N priorities and Keep Enough to Max LB, then cancels it. A full dock stops for review."
+    },
     "RetireMode": {
       "name": "Retirement.RetireMode.name",
       "help": "Retirement.RetireMode.help",

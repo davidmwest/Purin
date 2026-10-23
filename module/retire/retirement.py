@@ -1,9 +1,13 @@
+import json
+from datetime import datetime
+from pathlib import Path
+
 from module.base.button import Button, ButtonGrid
 from module.base.timer import Timer
-from module.base.utils import color_similar, get_color, resize
+from module.base.utils import color_similar, get_color, resize, save_image
 from module.combat.assets import GET_ITEMS_1
 from module.exception import RequestHumanTakeover, ScriptError
-from module.handler.assets import AUTO_SEARCH_MAP_OPTION_OFF, AUTO_SEARCH_MAP_OPTION_ON
+from module.handler.assets import AUTO_SEARCH_MAP_OPTION_OFF, AUTO_SEARCH_MAP_OPTION_ON, POPUP_CANCEL
 from module.logger import logger
 from module.retire.assets import *
 from module.retire.enhancement import Enhancement
@@ -81,6 +85,8 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                 SHIP_CONFIRM if using old_retire
             out: IN_RETIREMENT_CHECK
         """
+        if getattr(self.config, 'Retirement_DryRun', False):
+            raise RequestHumanTakeover('Retirement.DryRun blocks every retirement confirmation')
         logger.info('Retirement confirm')
         executed = False
         for button in [SHIP_CONFIRM, SHIP_CONFIRM_2, EQUIP_CONFIRM, EQUIP_CONFIRM_2, GET_ITEMS_1, SR_SSR_CONFIRM]:
@@ -225,8 +231,10 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                 # End
                 if self.appear(SHIP_CONFIRM_2, offset=(30, 30)):
                     break
-                if self.info_bar_count():
+                if self.info_bar_count() and (click_count or not getattr(self.config, 'Retirement_DryRun', False)):
                     logger.info('No more ships to retire.')
+                    if getattr(self.config, 'Retirement_DryRun', False):
+                        self._retirement_preview_empty()
                     end = True
                     break
 
@@ -256,6 +264,9 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
             if end:
                 break
             # SHIP_CONFIRM_2 -> IN_RETIREMENT_CHECK
+            if getattr(self.config, 'Retirement_DryRun', False):
+                self._retirement_preview()
+                return 0
             self._retirement_confirm()
             total += 10
             # if total >= amount:
@@ -265,6 +276,67 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
 
         logger.info(f'Total retired round: {total // 10}')
         return total
+
+    def _retirement_preview_empty(self):
+        """Record the game's no-eligible-ships result without creating a selection."""
+        if not self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)):
+            raise RequestHumanTakeover('Could not verify empty Quick Retire preview')
+        directory = Path('config/retire') / self.config.config_name / datetime.now().strftime('%Y%m%d-%H%M%S')
+        directory.mkdir(parents=True, exist_ok=True)
+        image = directory / 'empty-selection.png'
+        save_image(self.device.image, str(image))
+        report = dict(time=datetime.now().isoformat(timespec='seconds'), dry_run=True,
+                      pages=[str(image)], complete=True, cancelled=True, selection_empty=True)
+        with (directory / 'preview.json').open('w', encoding='utf-8') as file:
+            json.dump(report, file, indent=2)
+        logger.info(f'Quick Retire preview: no eligible ships; evidence saved to {directory}')
+
+    def _retirement_preview(self):
+        """Capture the game's selected ships, then cancel. Never enter a confirmation handler."""
+        directory = Path('config/retire') / self.config.config_name / datetime.now().strftime('%Y%m%d-%H%M%S')
+        report = dict(time=datetime.now().isoformat(timespec='seconds'), dry_run=True,
+                      pages=[], complete=False, cancelled=False)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            # The dialog starts at the top. Overlap pages so every selected card can be reviewed.
+            for index in range(30):
+                if not self.appear(SHIP_CONFIRM_2, offset=(30, 30)):
+                    raise RequestHumanTakeover('Quick Retire preview dialog disappeared unexpectedly')
+                file = directory / f'page-{index + 1:02d}.png'
+                save_image(self.device.image, str(file))
+                report['pages'].append(str(file))
+                if not RETIRE_CONFIRM_SCROLL.appear(main=self) or RETIRE_CONFIRM_SCROLL.at_bottom(main=self):
+                    report['complete'] = True
+                    break
+                # One bounded scrollbar drag per page. Scroll.set() retries indefinitely on a stuck thumb.
+                scroll = RETIRE_CONFIRM_SCROLL
+                current = scroll.cal_position(main=self)
+                target = min(1.0, current + 0.65 * scroll.length / (scroll.total - scroll.length))
+                start = scroll.position_to_screen(current, random_range=(0, 0))
+                end = scroll.position_to_screen(target, random_range=(0, 0))
+                self.device.swipe(((start[0] + start[2]) // 2, (start[1] + start[3]) // 2),
+                                  ((end[0] + end[2]) // 2, (end[1] + end[3]) // 2),
+                                  name='RETIRE_PREVIEW_SCROLL', distance_check=False)
+                self.device.screenshot()
+                if scroll.cal_position(main=self) <= current + 0.001:
+                    raise RequestHumanTakeover('Quick Retire preview scrollbar did not advance')
+        finally:
+            # Only a Cancel template may be clicked here, with the ship-selection dialog still visible.
+            # Do not use generic popup confirmation or navigation to escape an unrecognized dialog.
+            for _ in self.loop(timeout=12):
+                if not self.appear(SHIP_CONFIRM_2, offset=(30, 30)):
+                    if self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)):
+                        report['cancelled'] = True
+                        break
+                elif self.appear(POPUP_CANCEL, offset=(350, 180), interval=2, similarity=0.8):
+                    self.device.click(POPUP_CANCEL)
+            with (directory / 'preview.json').open('w', encoding='utf-8') as file:
+                json.dump(report, file, indent=2)
+            logger.info(f'Quick Retire preview saved to {directory}; cancelled={report["cancelled"]}')
+            if not report['cancelled']:
+                raise RequestHumanTakeover('Quick Retire preview could not verify Cancel; worker stopped safely')
+        if not report['complete']:
+            raise RequestHumanTakeover('Quick Retire preview is incomplete; retirement remains blocked')
 
     def retire_ships_old(self, amount=None, rarity=None):
         """
@@ -395,9 +467,9 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
         # 2025.05.29 game tips that infos skin feature when you enter dock
         if self.handle_game_tips():
             return True
-        if self.config.Retirement_RetireMode == 'do_not_retire':
+        if self.config.Retirement_RetireMode == 'do_not_retire' or getattr(self.config, 'Retirement_DryRun', False):
             if self.appear(RETIRE_APPEAR_1, offset=(20, 20)):
-                logger.critical('Dock is full, and Retirement.RetireMode is do_not_retire')
+                logger.critical('Dock is full, and retirement is disabled or preview only')
                 logger.critical('Make room in the dock, or choose another retirement mode')
                 raise RequestHumanTakeover
             return False
