@@ -173,3 +173,117 @@ def test_names_read_their_own_way_are_the_same_ship(matcher):
     # Kept the same way: a locked McCall read "__McCall", her copies "McC all"
     dock = census(('__McCall', True, 0), 'McC all', 'McCall', matcher=matcher)
     assert material_fits('McC all', card(), dock, matcher).startswith('kept to limit break')
+
+
+def test_equipped_enhancement_material_opens_the_exact_disassembly_dialog(monkeypatch):
+    from unittest.mock import Mock
+    from module.base.button import Button
+    from module.leveling import enhance
+    image = load_image(os.path.join(DATA, 'enhance_equipment_dialog.png'))
+    # Use the real EN asset: test collection defaults to CN elsewhere.
+    confirm = Button(area=(980, 589, 1113, 614), color=(158, 185, 219), button=(980, 589, 1113, 614),
+                     file='./assets/en/retire/EQUIP_CONFIRM.png', name='EQUIP_CONFIRM')
+    monkeypatch.setattr(enhance, 'EQUIP_CONFIRM', confirm)
+    controller = enhance.FleetEnhance.__new__(enhance.FleetEnhance)
+    controller.device = SimpleNamespace(image=image)
+    controller.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert controller.is_enhance_equipment_dialog()
+    # Neither a blue Confirm alone nor this explanatory text without its Confirm is sufficient.
+    image[518:558, 330:1090] = 0
+    assert not controller.is_enhance_equipment_dialog()
+    image = load_image(os.path.join(DATA, 'enhance_equipment_dialog.png'))
+    controller.device.image = image
+    image[580:625, 970:1120] = 0
+    assert not controller.is_enhance_equipment_dialog()
+
+
+def finish_controller(monkeypatch, frames):
+    from unittest.mock import Mock
+    from module.leveling import enhance
+    controller = enhance.FleetEnhance.__new__(enhance.FleetEnhance)
+    controller.device = SimpleNamespace(click=Mock(), image=None)
+    controller.is_enhance_equipment_dialog = lambda: controller.device.image == 'equipment'
+    controller.is_enhance_tab = lambda: controller.device.image in ('filled', 'empty')
+    controller.is_enhance_slot_empty = lambda: controller.device.image == 'empty'
+    controller.match_template_color = lambda button, **kwargs: controller.device.image == 'receipt'
+    controller.handle_popup_confirm_loose = Mock(return_value=False)
+    controller.save_enhance_stall = Mock()
+
+    def loop(**kwargs):
+        for frame in frames:
+            controller.device.image = frame
+            yield frame
+
+    controller.loop = Mock(side_effect=loop)
+    timer = Mock()
+    timer.start.return_value = timer
+    timer.reached.return_value = True
+    monkeypatch.setattr(enhance, 'Timer', Mock(return_value=timer))
+    return controller
+
+
+def test_enhancement_confirms_observed_equipment_then_receipt_and_empty_tab(monkeypatch):
+    from unittest.mock import call
+    from module.leveling.enhance import ENHANCE_BUTTON, EQUIP_CONFIRM, GET_ITEMS_1_RETIREMENT_SAVE
+    controller = finish_controller(monkeypatch, ['equipment', 'receipt', 'empty', 'empty'])
+    assert controller.enhance_finish(1) == 1
+    assert controller.device.click.call_args_list == [call(ENHANCE_BUTTON), call(EQUIP_CONFIRM),
+                                                     call(GET_ITEMS_1_RETIREMENT_SAVE)]
+    controller.save_enhance_stall.assert_not_called()
+    controller.loop.assert_called_once_with(timeout=40)
+
+
+def test_enhancement_equipment_rejected_clicks_are_capped(monkeypatch):
+    from unittest.mock import call
+    from module.exception import ScriptError
+    from module.leveling.enhance import ENHANCE_BUTTON, EQUIP_CONFIRM
+    controller = finish_controller(monkeypatch, ['equipment'] * 20)
+    with pytest.raises(ScriptError, match='equipment confirmation'):
+        controller.enhance_finish(1)
+    assert controller.device.click.call_args_list == [call(ENHANCE_BUTTON), call(EQUIP_CONFIRM), call(EQUIP_CONFIRM)]
+    controller.save_enhance_stall.assert_called_once_with('equipment_confirmation_rejected')
+
+
+def test_enhancement_unknown_pages_are_never_tapped(monkeypatch):
+    from module.exception import ScriptError
+    from module.leveling.enhance import ENHANCE_BUTTON
+    controller = finish_controller(monkeypatch, ['unknown'] * 20)
+    with pytest.raises(ScriptError, match='recognized empty tab'):
+        controller.enhance_finish(1)
+    controller.device.click.assert_called_once_with(ENHANCE_BUTTON)
+    controller.save_enhance_stall.assert_called_once_with('completion_timeout')
+
+
+def test_enhancement_known_receipt_without_our_equipment_confirmation_is_not_dismissed(monkeypatch):
+    from module.exception import ScriptError
+    from module.leveling.enhance import ENHANCE_BUTTON
+    controller = finish_controller(monkeypatch, ['receipt'] * 20)
+    with pytest.raises(ScriptError):
+        controller.enhance_finish(1)
+    controller.device.click.assert_called_once_with(ENHANCE_BUTTON)
+
+
+def test_enhancement_start_retries_are_capped_and_leave_a_known_tab(monkeypatch):
+    from unittest.mock import call
+    from module.leveling.enhance import ENHANCE_BUTTON
+    controller = finish_controller(monkeypatch, ['filled'] * 20)
+    assert controller.enhance_finish(1) == 0
+    assert controller.device.click.call_args_list == [call(ENHANCE_BUTTON)] * 3
+    controller.save_enhance_stall.assert_called_once_with('materials_not_consumed')
+
+
+def test_one_transient_empty_slot_is_not_enhancement_success(monkeypatch):
+    controller = finish_controller(monkeypatch, ['empty', 'filled', 'filled', 'filled'])
+    assert controller.enhance_finish(1) == 0
+
+
+def test_enhancement_receipt_dismissals_are_capped(monkeypatch):
+    from unittest.mock import call
+    from module.exception import ScriptError
+    from module.leveling.enhance import ENHANCE_BUTTON, EQUIP_CONFIRM, GET_ITEMS_1_RETIREMENT_SAVE
+    controller = finish_controller(monkeypatch, ['equipment'] + ['receipt'] * 20)
+    with pytest.raises(ScriptError, match='receipt did not close'):
+        controller.enhance_finish(1)
+    assert controller.device.click.call_args_list == [call(ENHANCE_BUTTON), call(EQUIP_CONFIRM)] + [
+        call(GET_ITEMS_1_RETIREMENT_SAVE)] * 3
+    controller.save_enhance_stall.assert_called_once_with('receipt_stalled')

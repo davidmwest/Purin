@@ -15,12 +15,16 @@ The picker of materials is set to those rarities, lowest level first, and only i
 a card picked before would put it back. A ship gets what that screen has, the next run gives more.
 """
 from collections import Counter
+from datetime import datetime
+import os
 
 import cv2
 
 from module.base.timer import Timer
-from module.base.utils import crop, load_image
+from module.base.utils import crop, load_image, save_image
+from module.combat.assets import GET_ITEMS_1
 from module.equipment.assets import FLEET_DETAIL_CHECK
+from module.exception import ScriptError
 from module.handler.assets import POPUP_CANCEL, POPUP_CONFIRM
 from module.inventory.inventory import CARD_LEFTS
 from module.leveling.fleet import CARD_NAME, LevelingFleet, area_button, card_name_area
@@ -28,6 +32,7 @@ from module.leveling.plan import name_key
 from module.logger import logger
 from module.ocr.ocr import Ocr
 from module.retire.dock_walk import DockWalker
+from module.retire.assets import EQUIP_CONFIRM, GET_ITEMS_1_RETIREMENT_SAVE
 from module.retire.scanner import ShipScanner
 from module.ui.page import page_dock, page_fleet, page_main
 
@@ -46,8 +51,10 @@ PICKER_CONFIRM = area_button((950, 648, 1095, 690), 'ENHANCE_PICKER_CONFIRM')
 PICKER_CANCEL = area_button((735, 648, 880, 690), 'ENHANCE_PICKER_CANCEL')
 # Her name on top of the detail page, white letters
 DETAIL_NAME = area_button((230, 86, 420, 118), 'DETAIL_NAME')
-# The ship drawn on the left of the tab, no button there: a tap goes through the screens an enhancement shows
-ENHANCE_SAFE_TAP = area_button((330, 380, 370, 420), 'ENHANCE_SAFE')
+# Enhancement materials with gear open this exact disassembly dialog before the tab returns.
+# Its default selection and confirmation follow the existing retirement enhancement path.
+ENHANCE_EQUIPMENT_MESSAGE = './assets/leveling/enhance_equipment_message.png'
+ENHANCE_EQUIPMENT_AREA = (330, 518, 1090, 558)
 SIMILARITY = 0.85
 # Confirm of a popup told by its color: 12 from it on "You've selected a Elite and above ship", 34 and more on the
 # limit break and enhance tabs, the picker and the result of a limit break
@@ -63,6 +70,12 @@ MLB_COPIES = 4
 CENSUS_NAME_SHIFT = -2
 # Seconds for each step
 STEP_TIMEOUT = 20
+ENHANCE_RETRIES = 2
+EQUIPMENT_RETRIES = 2
+RECEIPT_RETRIES = 3
+POPUP_RETRIES = 3
+ENHANCE_DIAGNOSTICS = './log/enhance'
+ENHANCE_DIAGNOSTICS_KEEP = 20
 
 
 def template_score(image, template, area):
@@ -168,6 +181,24 @@ class FleetEnhance(LevelingFleet):
     def is_enhance_picker(self):
         return template_score(
             self.device.image, self._enhance_template(ENHANCE_PICKER), ENHANCE_PICKER_AREA) > SIMILARITY
+
+    def is_enhance_equipment_dialog(self):
+        return (template_score(self.device.image, self._enhance_template(ENHANCE_EQUIPMENT_MESSAGE),
+                               ENHANCE_EQUIPMENT_AREA) > SIMILARITY
+                and self.match_template_color(EQUIP_CONFIRM, offset=(3, 3), similarity=SIMILARITY))
+
+    def save_enhance_stall(self, reason):
+        try:
+            os.makedirs(ENHANCE_DIAGNOSTICS, exist_ok=True)
+            name = f'{datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")}_{reason}.png'
+            path = os.path.join(ENHANCE_DIAGNOSTICS, name)
+            save_image(self.device.image, path)
+            logger.warning(f'Enhancement stalled, screen saved: {path}')
+            for old in sorted(name for name in os.listdir(ENHANCE_DIAGNOSTICS) if name.endswith('.png'))[
+                    :-ENHANCE_DIAGNOSTICS_KEEP]:
+                os.remove(os.path.join(ENHANCE_DIAGNOSTICS, old))
+        except Exception as error:
+            logger.warning(f'Enhancement screen not saved: {error}')
 
     def handle_popup_confirm_loose(self, name):
         """
@@ -372,26 +403,73 @@ class FleetEnhance(LevelingFleet):
         if self.is_enhance_slot_empty():
             logger.info('The materials did not come in the slots')
             return 0
-        # Enhance, a popup maybe, the screens of the enhancement, the tab back with its slots empty
+        return self.enhance_finish(picked)
+
+    def enhance_finish(self, picked):
+        """Complete only recognized gear/receipt pages and verify the materials emptied."""
         self.device.click(ENHANCE_BUTTON)
-        tap = Timer(2)
+        click = Timer(2, count=3).start()
         retry = Timer(4, count=8).start()
+        empty = Timer(1, count=2).start()
+        empty_reads = 0
+        retries = equipment_clicks = receipts = popups = 0
         for _ in self.loop(timeout=STEP_TIMEOUT * 2):
+            if not click.reached():
+                continue
+            if self.is_enhance_equipment_dialog():
+                empty_reads = 0
+                empty.reset()
+                if equipment_clicks >= EQUIPMENT_RETRIES:
+                    self.save_enhance_stall('equipment_confirmation_rejected')
+                    raise ScriptError('Enhancement equipment confirmation was not accepted')
+                self.device.click(EQUIP_CONFIRM)
+                equipment_clicks += 1
+                click.reset()
+                continue
+            if equipment_clicks and self.match_template_color(GET_ITEMS_1, offset=(30, 30), similarity=SIMILARITY):
+                empty_reads = 0
+                empty.reset()
+                if receipts >= RECEIPT_RETRIES:
+                    self.save_enhance_stall('receipt_stalled')
+                    raise ScriptError('Enhancement equipment receipt did not close')
+                self.device.click(GET_ITEMS_1_RETIREMENT_SAVE)
+                receipts += 1
+                click.reset()
+                continue
+            if popups >= POPUP_RETRIES:
+                self.save_enhance_stall('popup_limit')
+                raise ScriptError('Enhancement confirmation limit reached')
             if self.handle_popup_confirm_loose('ENHANCE'):
+                empty_reads = 0
+                empty.reset()
+                popups += 1
+                click.reset()
                 continue
             if self.is_enhance_tab():
                 if self.is_enhance_slot_empty():
-                    logger.info(f'Enhanced with {picked} materials')
-                    return picked
+                    empty_reads += 1
+                    if empty_reads >= 2 and empty.reached():
+                        logger.info(f'Enhanced with {picked} materials')
+                        return picked
+                    continue
+                empty_reads = 0
+                empty.reset()
                 if retry.reached():
+                    if retries >= ENHANCE_RETRIES or equipment_clicks:
+                        self.save_enhance_stall('materials_not_consumed')
+                        logger.warning('Enhancement did not consume its materials; no more retries')
+                        return 0
                     self.device.click(ENHANCE_BUTTON)
+                    retries += 1
                     retry.reset()
+                    click.reset()
                 continue
-            if tap.reached():
-                self.device.click(ENHANCE_SAFE_TAP)
-                tap.reset()
-        logger.warning('The enhancement did not come back to its tab')
-        return 0
+            empty_reads = 0
+            empty.reset()
+            # Unknown pages are captured, never tapped. An equipped material used to leave this loop
+            # clicking the disassembly dialog's empty body until the global click watchdog fired.
+        self.save_enhance_stall('completion_timeout')
+        raise ScriptError('Enhancement did not return to a recognized empty tab')
 
     def enhance_fleet(self, members, matcher):
         """
