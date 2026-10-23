@@ -8,7 +8,7 @@ never proves that an account has unlocked, cleared or claimed it.
 Stage names are local lowercase campaign codes in the client's chapter order.
 Side stages (AS/BS/CS/DS/TS/HTS) remain included: some contain real battles, so
 an ``S`` suffix is not proof of a story-only node. Most SP archives have one
-normal route; Interlude of Illusions also has a real hard route. Four current EN archives
+normal route; Interlude of Illusions also has a real hard route. Two current EN archives
 lack local maps and remain metadata-only with ``supported=False``.
 """
 from dataclasses import dataclass
@@ -262,14 +262,14 @@ ARCHIVES = (
             (),
             (),
             (), supported=False, game_id=51),
-    Archive(None, 'Tempesta and the Sleeping Sea', 'sp',
+    Archive('war_archives_20241024_cn', 'Tempesta and the Sleeping Sea', 'sp',
             ('t1', 't2', 't3', 't4', 't5', 't6'),
             (),
-            (Prize(9600091, 'Amity', 't6', 'normal', 60, 'ship'),), supported=False, game_id=52),
-    Archive(None, 'Tempesta and Islas de Libertád', 'sp',
+            (Prize(9600091, 'Amity', 't6', 'normal', 60, 'ship'),), supported=True, game_id=52),
+    Archive('war_archives_20251023_cn', 'Tempesta and Islas de Libertád', 'sp',
             ('t1', 't2', 't3', 't4', 't5', 't6'),
             (),
-            (Prize(9600141, 'Pearl', 't6', 'normal', 60, 'ship'),), supported=False, game_id=53),
+            (Prize(9600141, 'Pearl', 't6', 'normal', 60, 'ship'),), supported=True, game_id=53),
 )
 
 ARCHIVES_BY_ID = MappingProxyType({archive.id: archive for archive in ARCHIVES if archive.id is not None})

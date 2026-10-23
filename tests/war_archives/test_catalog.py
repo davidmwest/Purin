@@ -18,10 +18,9 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_complete_current_en_list_and_explicit_unsupported_entries():
     assert len(ARCHIVES) == 52
     assert set(ARCHIVES_BY_GAME_ID) == {1, 2, *range(4, 54)}
-    assert len(ARCHIVES_BY_ID) == 48
+    assert len(ARCHIVES_BY_ID) == 50
     assert {a.name for a in ARCHIVES if not a.supported} == {
-        'Frostfall', 'Welcome to Little Academy', 'Tempesta and the Sleeping Sea',
-        'Tempesta and Islas de Libertád',
+        'Frostfall', 'Welcome to Little Academy',
     }
     assert all(a.id is None for a in ARCHIVES if not a.supported)
     assert all(a.id and a.normal_stages for a in ARCHIVES if a.supported)

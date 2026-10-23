@@ -1,6 +1,6 @@
 # War Archives catalog
 
-Reviewed for the EN client on **2026-10-23**. This catalog contains **52 current archives**, **48 existing local campaign mappings**, and **38 one-time guaranteed counter prizes**. The four archives without local maps are listed for selection visibility; Purin must defer them rather than invent a campaign folder.
+Reviewed for the EN client on **2026-10-23**. This catalog contains **52 current archives**, **50 local campaign mappings**, and **38 one-time guaranteed counter prizes**. The two activity archives without local maps are listed for selection visibility; Purin must defer them rather than invent a campaign folder.
 
 ## Data Keys and daily policy
 
@@ -33,7 +33,9 @@ The scheduler resumes bounded chunks from `config/war_archives/<account>.json`. 
 
 Archive identity, list completion, stage progress and key balance must be read from a settled screen before entry. List scans use overlapping pages so a card cannot remain clipped between scrolls. Hard entry accepts the captured two-surface-fleet layout only when both rows are occupied, every displayed stat requirement is satisfied and the Go control is enabled. It uses the stage's existing Hard fleets; common fleet numbers do not select Hard lineups. An unprepared or unfamiliar Hard lineup stops with a diagnostic rather than rearranging ships.
 
-Guaranteed prizes use a separate identity-bound counter panel. Opening and claiming have durable journals, and a claim requires the expected reward, stage and 60/60 counter followed by a verified receipt and return. A hidden reward button proves an earlier receipt only for the captured Visitors Dyed in Red layout; absence elsewhere stops for inspection. Unsupported catalog entries are reported by name, including when `Target=all`; “all” does not mean those four archives have been completed.
+Guaranteed prizes use a separate identity-bound counter panel. Opening and claiming have durable journals, and a claim requires the expected reward, stage and 60/60 counter followed by a verified receipt and return. A hidden reward button proves an earlier receipt only for the captured Visitors Dyed in Red layout; absence elsewhere stops for inspection. Unsupported catalog entries are reported by name, including when `Target=all`; “all” does not mean those two archives have been completed.
+
+After a durable reservation and an observed Fleet Go, Purin may acknowledge the exact current five-key reminder once. It leaves the Notified checkbox untouched and requires bounded fresh-frame validation; an unfamiliar or differently priced prompt stops entry.
 
 The stage-information Start button opens fleet preparation; it does not itself debit keys. The game debits five keys after a successful Fleet Go tracking response. Purin reserves its shared allowance before advancing preparation, so a crash or unreadable transition cannot authorize a duplicate retry. This conservative reservation can remain spent even when the client did not debit keys.
 
@@ -107,8 +109,16 @@ All supported folder names below are exact existing paths under `campaign/`. “
 | Interlude of Illusions | SP | `war_archives_20240725_cn` | t1, t2, t3 | ht1, ht2, ht3 | L'Audacieux — Hard `ht3`, 60 clears |
 | Frostfall | SP | **Unsupported** | — | — | — |
 | Welcome to Little Academy | SP | **Unsupported** | — | — | — |
-| Tempesta and the Sleeping Sea | SP | **Unsupported** | t1, t2, t3, t4, t5, t6 | — | Amity — Normal `t6`, 60 clears |
-| Tempesta and Islas de Libertád | SP | **Unsupported** | t1, t2, t3, t4, t5, t6 | — | Pearl — Normal `t6`, 60 clears |
+| Tempesta and the Sleeping Sea | SP | `war_archives_20241024_cn` | t1, t2, t3, t4, t5, t6 | — | Amity — Normal `t6`, 60 clears |
+| Tempesta and Islas de Libertád | SP | `war_archives_20251023_cn` | t1, t2, t3, t4, t5, t6 | — | Pearl — Normal `t6`, 60 clears |
+
+## Ordinary Tempesta archive mappings
+
+Sleeping Sea and Islas de Libertád reuse their original T1–T6 maps. The pinned client maps original chapters `1860001–1860006` to `2200181–2200186` and `1970001–1970006` to `2200191–2200196`. Chapter names, grids, boss IDs, enemy/AI refresh schedules and stage positions are unchanged. The archive map IDs split T1–T3 onto page 1 (`2200180` / `2200190`) and T4–T6 onto page 2 (`2200181` / `2200191`). No Hard, SP or EX route is fabricated.
+
+The wrappers import Sleeping Sea's handwritten battle methods and its original `EventGrid` classes without rewriting them. Islas retains its original declarative maps and battle plans. Only the current-event chapter switch and stage-entrance configuration are replaced with ordinary archive navigation. Fresh exact title, stage, mode/page and key proof remains required by the bounded progression runner; source support alone does not authorize a sortie.
+
+The identity templates come from the account's 2026-10-23 SP archive census, `20261023T121124655760-bf30443e7105/sp_09.png`: Sleeping Sea crop `(218,508,535,624)` and Islas crop `(736,542,1080,610)` in the 1280×720 image. The full captured fixture and pinned chapter comparisons are retained in `tests/war_archives/data/`. A recognized logo on a clipped card does not prove list completion.
 
 ## Sources and maintenance
 

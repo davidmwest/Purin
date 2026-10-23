@@ -1,0 +1,510 @@
+{
+  "revision": "6a9e95792cd201463d4cf80a2ab731ee66c671b7",
+  "source": "EN/sharecfgdata/chapter_template.lua",
+  "stages": [
+    {
+      "archive": "war_archives_20241024_cn",
+      "stage": "t1",
+      "original_id": 1860001,
+      "archived_id": 2200181,
+      "chapter_name": "T1",
+      "name": "The Treasure Hunters",
+      "type": 1,
+      "map": 2200180,
+      "formation": 2200180,
+      "shape": [
+        8,
+        7
+      ],
+      "boss_refresh": 4,
+      "unchanged_fields_sha256": {
+        "chapter_name": "28c39090b86b5acdea5c9d3ea1d1ad36e168f726e995dcdde43927f955213b11",
+        "name": "9be53a01d95f52490fdce0af6ebf28a3c999df7ab2491da1733b408b9314c164",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "8f1b50cfbb212ed4214e9a521e7e21bc080ebc89ff1755d31361dbe2dba1c4ae",
+        "boss_expedition_id": "6c0833bd525a0cf22c7de313c512d279de37363bd6c715d430e02dfd20fdfbab",
+        "enemy_refresh": "f6831630fb34d8581074289eef6897d4bf4392cb9d29873f6099b4cb36681f63",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "1be98f409d8bc1b59efc6a9fc5a2a4696192ba4260f80659442c6f88f58f3cd7",
+        "pos_y": "e59cdd26542581a9f73fc493dc08fc6b739d94f0877d5f2b565fdb817a66f1df"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "28c39090b86b5acdea5c9d3ea1d1ad36e168f726e995dcdde43927f955213b11",
+        "name": "9be53a01d95f52490fdce0af6ebf28a3c999df7ab2491da1733b408b9314c164",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "8f1b50cfbb212ed4214e9a521e7e21bc080ebc89ff1755d31361dbe2dba1c4ae",
+        "boss_expedition_id": "6c0833bd525a0cf22c7de313c512d279de37363bd6c715d430e02dfd20fdfbab",
+        "enemy_refresh": "f6831630fb34d8581074289eef6897d4bf4392cb9d29873f6099b4cb36681f63",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "1be98f409d8bc1b59efc6a9fc5a2a4696192ba4260f80659442c6f88f58f3cd7",
+        "pos_y": "e59cdd26542581a9f73fc493dc08fc6b739d94f0877d5f2b565fdb817a66f1df"
+      }
+    },
+    {
+      "archive": "war_archives_20241024_cn",
+      "stage": "t2",
+      "original_id": 1860002,
+      "archived_id": 2200182,
+      "chapter_name": "T2",
+      "name": "Run-In with a Treasure Ship",
+      "type": 1,
+      "map": 2200180,
+      "formation": 2200180,
+      "shape": [
+        8,
+        7
+      ],
+      "boss_refresh": 4,
+      "unchanged_fields_sha256": {
+        "chapter_name": "a450dd77bdc49d7f90ad489d50d240dc593c3671efe5c23ca888baedb0bab9b9",
+        "name": "a4cc49d65de87a91c62af038f10062d321615edadfb30433a251bacf4c24f0a6",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "34c2339323972d24bf34d2dfaabb6bca673de491adad95875af583a1139be6e9",
+        "boss_expedition_id": "8da9b26f37f398a73525eb0f48e37a383612f4a445b5944ea1ae3a4db88b6b78",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "f86eac93e2033105ca8d8d9e4f8f9acc9d12c275eaf99058c004a62dbb37bfe3",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "a450dd77bdc49d7f90ad489d50d240dc593c3671efe5c23ca888baedb0bab9b9",
+        "name": "a4cc49d65de87a91c62af038f10062d321615edadfb30433a251bacf4c24f0a6",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "34c2339323972d24bf34d2dfaabb6bca673de491adad95875af583a1139be6e9",
+        "boss_expedition_id": "8da9b26f37f398a73525eb0f48e37a383612f4a445b5944ea1ae3a4db88b6b78",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "f86eac93e2033105ca8d8d9e4f8f9acc9d12c275eaf99058c004a62dbb37bfe3",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      }
+    },
+    {
+      "archive": "war_archives_20241024_cn",
+      "stage": "t3",
+      "original_id": 1860003,
+      "archived_id": 2200183,
+      "chapter_name": "T3",
+      "name": "Amidst the Fountain's Ruins",
+      "type": 1,
+      "map": 2200180,
+      "formation": 2200180,
+      "shape": [
+        9,
+        7
+      ],
+      "boss_refresh": 5,
+      "unchanged_fields_sha256": {
+        "chapter_name": "6412f06863834b2c2bf09cd592efae5c592ceaf55c4a53a0f34556564be9abd4",
+        "name": "d4ca9b452db8068151e2bfd755e4c97c391d53630af5c92da35b52b5b7eb5e91",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "3a2a91bff2a056e90ce635ccc3b1ec7763dd5e2e337f80973bb507f624daffa1",
+        "boss_expedition_id": "749524327f074800867a1ecf05f6afd1e15fa5fa7d30d222bdfad653c243cf04",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "50df8c9e3f365b77ee12daac1796c6f4149e53b3ae077145f7a32afb4916b844",
+        "pos_y": "5c529a9bf9957ebdcc0792383a9ecdbd33839d09152310bc3778459464f29eeb"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "6412f06863834b2c2bf09cd592efae5c592ceaf55c4a53a0f34556564be9abd4",
+        "name": "d4ca9b452db8068151e2bfd755e4c97c391d53630af5c92da35b52b5b7eb5e91",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "3a2a91bff2a056e90ce635ccc3b1ec7763dd5e2e337f80973bb507f624daffa1",
+        "boss_expedition_id": "749524327f074800867a1ecf05f6afd1e15fa5fa7d30d222bdfad653c243cf04",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "50df8c9e3f365b77ee12daac1796c6f4149e53b3ae077145f7a32afb4916b844",
+        "pos_y": "5c529a9bf9957ebdcc0792383a9ecdbd33839d09152310bc3778459464f29eeb"
+      }
+    },
+    {
+      "archive": "war_archives_20241024_cn",
+      "stage": "t4",
+      "original_id": 1860004,
+      "archived_id": 2200184,
+      "chapter_name": "T4",
+      "name": "The Sleeping Sea",
+      "type": 1,
+      "map": 2200181,
+      "formation": 2200181,
+      "shape": [
+        9,
+        7
+      ],
+      "boss_refresh": 5,
+      "unchanged_fields_sha256": {
+        "chapter_name": "a847ff82f333ea988600b085608d0318752b4b81312a636811b67dad844bd49f",
+        "name": "2762846b8ac5f007a31598433186594389f9a6a654774eed4fba4ed7c9775e2f",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "83836fd608843728e4de8b090c875fa2467e8cb99dd3c04ffd9b2979e320ae38",
+        "boss_expedition_id": "33f18ab5230905e8cba1ee06778a68794027196bf080dfd5f14e9ee77272a76b",
+        "enemy_refresh": "97503f438dc06e35dadd5d4ee01afe920d82e60bda2b806c74236c28e81a67da",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "55e9fcd5c8d027a04e714d71082ffa5cd0d742fb5820f597c9933d4f75959262",
+        "pos_y": "1edd7a816f0f04f59840097b9174d54d97acb14c4dde709a4331df311cb2d02d"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "a847ff82f333ea988600b085608d0318752b4b81312a636811b67dad844bd49f",
+        "name": "2762846b8ac5f007a31598433186594389f9a6a654774eed4fba4ed7c9775e2f",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "83836fd608843728e4de8b090c875fa2467e8cb99dd3c04ffd9b2979e320ae38",
+        "boss_expedition_id": "33f18ab5230905e8cba1ee06778a68794027196bf080dfd5f14e9ee77272a76b",
+        "enemy_refresh": "97503f438dc06e35dadd5d4ee01afe920d82e60bda2b806c74236c28e81a67da",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "55e9fcd5c8d027a04e714d71082ffa5cd0d742fb5820f597c9933d4f75959262",
+        "pos_y": "1edd7a816f0f04f59840097b9174d54d97acb14c4dde709a4331df311cb2d02d"
+      }
+    },
+    {
+      "archive": "war_archives_20241024_cn",
+      "stage": "t5",
+      "original_id": 1860005,
+      "archived_id": 2200185,
+      "chapter_name": "T5",
+      "name": "Silent Souls",
+      "type": 1,
+      "map": 2200181,
+      "formation": 2200181,
+      "shape": [
+        11,
+        7
+      ],
+      "boss_refresh": 6,
+      "unchanged_fields_sha256": {
+        "chapter_name": "7536284535a4df67ac5377d99e09c9442cbe585a2be953ee4c2ba9d4b6801591",
+        "name": "7f2319120ae80cab9badac6041a97195c26adce20420672a4ba37a19eaec75e6",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "348f08227cab5fb0457d545530130ba325c7712dbe69fbc3c2f293568c7997d3",
+        "boss_expedition_id": "51de0ab94b0f69216aae3c9903c848f889a77be1a5bc2e01267367106b67fec9",
+        "enemy_refresh": "97503f438dc06e35dadd5d4ee01afe920d82e60bda2b806c74236c28e81a67da",
+        "ai_refresh": "46b5f381a1fcd79e06b24d5d4c1dec545600615996bae3693a4077cdcc967df6",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "eed8fa2915f888a1f53a222807c27c32f5446cf230482e4bdcd2fdfff4c3a065",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "7536284535a4df67ac5377d99e09c9442cbe585a2be953ee4c2ba9d4b6801591",
+        "name": "7f2319120ae80cab9badac6041a97195c26adce20420672a4ba37a19eaec75e6",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "348f08227cab5fb0457d545530130ba325c7712dbe69fbc3c2f293568c7997d3",
+        "boss_expedition_id": "51de0ab94b0f69216aae3c9903c848f889a77be1a5bc2e01267367106b67fec9",
+        "enemy_refresh": "97503f438dc06e35dadd5d4ee01afe920d82e60bda2b806c74236c28e81a67da",
+        "ai_refresh": "46b5f381a1fcd79e06b24d5d4c1dec545600615996bae3693a4077cdcc967df6",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "eed8fa2915f888a1f53a222807c27c32f5446cf230482e4bdcd2fdfff4c3a065",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      }
+    },
+    {
+      "archive": "war_archives_20241024_cn",
+      "stage": "t6",
+      "original_id": 1860006,
+      "archived_id": 2200186,
+      "chapter_name": "T6",
+      "name": "Wind and Rain Orchestra",
+      "type": 1,
+      "map": 2200181,
+      "formation": 2200181,
+      "shape": [
+        10,
+        9
+      ],
+      "boss_refresh": 6,
+      "unchanged_fields_sha256": {
+        "chapter_name": "8c0168d17b11aea449963f1e9d2dc2ce49b7e0e0bde25dda94f7d79e833c6453",
+        "name": "ceb58a276b419b70fa25254688766bfdf52af3232a15252f19381927b7329aa2",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "27167942fc637d21d0ce045ddb1907a647d6312718dec19f278ab7675b5067b4",
+        "boss_expedition_id": "03ac17001189d691aa0f723e9277e9246d569ba5c7173ff598a2a9249e0cff2e",
+        "enemy_refresh": "50a27b57197d6fd57115b4998c7d74502f5b9a3d70dc8488faef106efed441b2",
+        "ai_refresh": "f75d8e6bc4507156b43ce6fca3df9e519aa1294b48ebc9ca13a30cdb9abfd2b2",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "d72c94f5472a78895aae92383e64c0c5e24c4ee0e82aed3225e01f7ef23ed4b6",
+        "pos_y": "228c5410bd88aa2313ae36cc615d980bec6fedfe9cb779629bb9918091e3cc63"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "8c0168d17b11aea449963f1e9d2dc2ce49b7e0e0bde25dda94f7d79e833c6453",
+        "name": "ceb58a276b419b70fa25254688766bfdf52af3232a15252f19381927b7329aa2",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "27167942fc637d21d0ce045ddb1907a647d6312718dec19f278ab7675b5067b4",
+        "boss_expedition_id": "03ac17001189d691aa0f723e9277e9246d569ba5c7173ff598a2a9249e0cff2e",
+        "enemy_refresh": "50a27b57197d6fd57115b4998c7d74502f5b9a3d70dc8488faef106efed441b2",
+        "ai_refresh": "f75d8e6bc4507156b43ce6fca3df9e519aa1294b48ebc9ca13a30cdb9abfd2b2",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "d72c94f5472a78895aae92383e64c0c5e24c4ee0e82aed3225e01f7ef23ed4b6",
+        "pos_y": "228c5410bd88aa2313ae36cc615d980bec6fedfe9cb779629bb9918091e3cc63"
+      }
+    },
+    {
+      "archive": "war_archives_20251023_cn",
+      "stage": "t1",
+      "original_id": 1970001,
+      "archived_id": 2200191,
+      "chapter_name": "T1",
+      "name": "You Are Invited",
+      "type": 1,
+      "map": 2200190,
+      "formation": 2200190,
+      "shape": [
+        8,
+        7
+      ],
+      "boss_refresh": 4,
+      "unchanged_fields_sha256": {
+        "chapter_name": "28c39090b86b5acdea5c9d3ea1d1ad36e168f726e995dcdde43927f955213b11",
+        "name": "b6b75a6b5da7599aa3db63a2bd9f04eec4f6b792cd236b8da0bb6c3e965cb93a",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "b88b7e58324f2899928b59e809ad97b284dad26061957e7be78d5a35db0d19f8",
+        "boss_expedition_id": "fceaf5c8539110fded9d561a5356eb4bce942d3dd98939ae9c8f1dc1a932567f",
+        "enemy_refresh": "f6831630fb34d8581074289eef6897d4bf4392cb9d29873f6099b4cb36681f63",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "1be98f409d8bc1b59efc6a9fc5a2a4696192ba4260f80659442c6f88f58f3cd7",
+        "pos_y": "e59cdd26542581a9f73fc493dc08fc6b739d94f0877d5f2b565fdb817a66f1df"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "28c39090b86b5acdea5c9d3ea1d1ad36e168f726e995dcdde43927f955213b11",
+        "name": "b6b75a6b5da7599aa3db63a2bd9f04eec4f6b792cd236b8da0bb6c3e965cb93a",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "b88b7e58324f2899928b59e809ad97b284dad26061957e7be78d5a35db0d19f8",
+        "boss_expedition_id": "fceaf5c8539110fded9d561a5356eb4bce942d3dd98939ae9c8f1dc1a932567f",
+        "enemy_refresh": "f6831630fb34d8581074289eef6897d4bf4392cb9d29873f6099b4cb36681f63",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "1be98f409d8bc1b59efc6a9fc5a2a4696192ba4260f80659442c6f88f58f3cd7",
+        "pos_y": "e59cdd26542581a9f73fc493dc08fc6b739d94f0877d5f2b565fdb817a66f1df"
+      }
+    },
+    {
+      "archive": "war_archives_20251023_cn",
+      "stage": "t2",
+      "original_id": 1970002,
+      "archived_id": 2200192,
+      "chapter_name": "T2",
+      "name": "Mar del Demonios",
+      "type": 1,
+      "map": 2200190,
+      "formation": 2200190,
+      "shape": [
+        8,
+        7
+      ],
+      "boss_refresh": 4,
+      "unchanged_fields_sha256": {
+        "chapter_name": "a450dd77bdc49d7f90ad489d50d240dc593c3671efe5c23ca888baedb0bab9b9",
+        "name": "7b37e3fab0c00a9dd9e2577a3bad290f8cc7737b5b29f855a391aee974d65516",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "c870033057e1499b74d3e18fd07dd8bd64ad3e9080fa8ac5e0792e5c7664305b",
+        "boss_expedition_id": "f68f71c2b3a6f5eb908b4b48dc6581dff048a5b1b66137ad899f854799f77a5a",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "f86eac93e2033105ca8d8d9e4f8f9acc9d12c275eaf99058c004a62dbb37bfe3",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "a450dd77bdc49d7f90ad489d50d240dc593c3671efe5c23ca888baedb0bab9b9",
+        "name": "7b37e3fab0c00a9dd9e2577a3bad290f8cc7737b5b29f855a391aee974d65516",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "c870033057e1499b74d3e18fd07dd8bd64ad3e9080fa8ac5e0792e5c7664305b",
+        "boss_expedition_id": "f68f71c2b3a6f5eb908b4b48dc6581dff048a5b1b66137ad899f854799f77a5a",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "7dbf9ccdefaa0d90e0e3f8ac500b48ef98683279e18874235cd6f6d9a5a07047",
+        "boss_refresh": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "f86eac93e2033105ca8d8d9e4f8f9acc9d12c275eaf99058c004a62dbb37bfe3",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      }
+    },
+    {
+      "archive": "war_archives_20251023_cn",
+      "stage": "t3",
+      "original_id": 1970003,
+      "archived_id": 2200193,
+      "chapter_name": "T3",
+      "name": "Arrival on the Isles",
+      "type": 1,
+      "map": 2200190,
+      "formation": 2200190,
+      "shape": [
+        9,
+        7
+      ],
+      "boss_refresh": 5,
+      "unchanged_fields_sha256": {
+        "chapter_name": "6412f06863834b2c2bf09cd592efae5c592ceaf55c4a53a0f34556564be9abd4",
+        "name": "dd2a2039e1effb72da2718e06cb91c7b44913772442cf163324064517e3f056d",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "61d6e6a763d83ad00ab541496d342fff0c544eff2c9a24162e9c72ae876740e7",
+        "boss_expedition_id": "3ce350708c475ae7e577113ef8400397df3525484dd782fcde7a03809b12f7d9",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "50df8c9e3f365b77ee12daac1796c6f4149e53b3ae077145f7a32afb4916b844",
+        "pos_y": "5c529a9bf9957ebdcc0792383a9ecdbd33839d09152310bc3778459464f29eeb"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "6412f06863834b2c2bf09cd592efae5c592ceaf55c4a53a0f34556564be9abd4",
+        "name": "dd2a2039e1effb72da2718e06cb91c7b44913772442cf163324064517e3f056d",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "61d6e6a763d83ad00ab541496d342fff0c544eff2c9a24162e9c72ae876740e7",
+        "boss_expedition_id": "3ce350708c475ae7e577113ef8400397df3525484dd782fcde7a03809b12f7d9",
+        "enemy_refresh": "ccd5eb09449acd86d896dbf0ecaddb2534406b498b4f04822636c9f969ebfb58",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "50df8c9e3f365b77ee12daac1796c6f4149e53b3ae077145f7a32afb4916b844",
+        "pos_y": "5c529a9bf9957ebdcc0792383a9ecdbd33839d09152310bc3778459464f29eeb"
+      }
+    },
+    {
+      "archive": "war_archives_20251023_cn",
+      "stage": "t4",
+      "original_id": 1970004,
+      "archived_id": 2200194,
+      "chapter_name": "T4",
+      "name": "Impromptu Response",
+      "type": 1,
+      "map": 2200191,
+      "formation": 2200191,
+      "shape": [
+        9,
+        7
+      ],
+      "boss_refresh": 5,
+      "unchanged_fields_sha256": {
+        "chapter_name": "a847ff82f333ea988600b085608d0318752b4b81312a636811b67dad844bd49f",
+        "name": "5dd4603483e02b41a39c3fd7383a1f25fc673ca2066859498b9f8c5ae3d04081",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "dd94f27daf2f138b23f802f27318d2fab87b723045fc151daaf92d56c62193d7",
+        "boss_expedition_id": "bb369b97b592417ebc4c4dfa75f404eb8ba52bfb207df3fd6b9218c2740f2417",
+        "enemy_refresh": "bc7070219f650f9bf7cd1f6dc80085d010807f381e612d6c8257ce95fad16d48",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "55e9fcd5c8d027a04e714d71082ffa5cd0d742fb5820f597c9933d4f75959262",
+        "pos_y": "1edd7a816f0f04f59840097b9174d54d97acb14c4dde709a4331df311cb2d02d"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "a847ff82f333ea988600b085608d0318752b4b81312a636811b67dad844bd49f",
+        "name": "5dd4603483e02b41a39c3fd7383a1f25fc673ca2066859498b9f8c5ae3d04081",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "dd94f27daf2f138b23f802f27318d2fab87b723045fc151daaf92d56c62193d7",
+        "boss_expedition_id": "bb369b97b592417ebc4c4dfa75f404eb8ba52bfb207df3fd6b9218c2740f2417",
+        "enemy_refresh": "bc7070219f650f9bf7cd1f6dc80085d010807f381e612d6c8257ce95fad16d48",
+        "ai_refresh": "4c4eb4af93c9e9d335b0a2ffe8ea1990bc71aae10082aa422eeab0aa9d007661",
+        "boss_refresh": "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "55e9fcd5c8d027a04e714d71082ffa5cd0d742fb5820f597c9933d4f75959262",
+        "pos_y": "1edd7a816f0f04f59840097b9174d54d97acb14c4dde709a4331df311cb2d02d"
+      }
+    },
+    {
+      "archive": "war_archives_20251023_cn",
+      "stage": "t5",
+      "original_id": 1970005,
+      "archived_id": 2200195,
+      "chapter_name": "T5",
+      "name": "Battle Beneath the Stars",
+      "type": 1,
+      "map": 2200191,
+      "formation": 2200191,
+      "shape": [
+        7,
+        9
+      ],
+      "boss_refresh": 6,
+      "unchanged_fields_sha256": {
+        "chapter_name": "7536284535a4df67ac5377d99e09c9442cbe585a2be953ee4c2ba9d4b6801591",
+        "name": "43927d44cb54c2953c8d1a718c1fe25c8412847dbebc2e2955b46bb4a5e8faf1",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "c43be2d0457f7d9511aea9ff4cf5484d9351d85dd97f2892f68d3a53385f087c",
+        "boss_expedition_id": "a24a5365a48df421e5a28409646ff6091a71e367acf50c3e8fd645d7e470972d",
+        "enemy_refresh": "bc7070219f650f9bf7cd1f6dc80085d010807f381e612d6c8257ce95fad16d48",
+        "ai_refresh": "46b5f381a1fcd79e06b24d5d4c1dec545600615996bae3693a4077cdcc967df6",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "eed8fa2915f888a1f53a222807c27c32f5446cf230482e4bdcd2fdfff4c3a065",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "7536284535a4df67ac5377d99e09c9442cbe585a2be953ee4c2ba9d4b6801591",
+        "name": "43927d44cb54c2953c8d1a718c1fe25c8412847dbebc2e2955b46bb4a5e8faf1",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "c43be2d0457f7d9511aea9ff4cf5484d9351d85dd97f2892f68d3a53385f087c",
+        "boss_expedition_id": "a24a5365a48df421e5a28409646ff6091a71e367acf50c3e8fd645d7e470972d",
+        "enemy_refresh": "bc7070219f650f9bf7cd1f6dc80085d010807f381e612d6c8257ce95fad16d48",
+        "ai_refresh": "46b5f381a1fcd79e06b24d5d4c1dec545600615996bae3693a4077cdcc967df6",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "eed8fa2915f888a1f53a222807c27c32f5446cf230482e4bdcd2fdfff4c3a065",
+        "pos_y": "fe5d850edc6f5ad9074922476cfa8b621a52d6749a12b322b633a2c4f7a41263"
+      }
+    },
+    {
+      "archive": "war_archives_20251023_cn",
+      "stage": "t6",
+      "original_id": 1970006,
+      "archived_id": 2200196,
+      "chapter_name": "T6",
+      "name": "One Strike to Seize Victory",
+      "type": 1,
+      "map": 2200191,
+      "formation": 2200191,
+      "shape": [
+        10,
+        6
+      ],
+      "boss_refresh": 6,
+      "unchanged_fields_sha256": {
+        "chapter_name": "8c0168d17b11aea449963f1e9d2dc2ce49b7e0e0bde25dda94f7d79e833c6453",
+        "name": "55b7937193ff30c152a51c56d938b76cfa48773aca946aa18a9c7eb4fe7fa1db",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "4e4c6b88833d7e3f677e4d515bbb9f5828c00f847d54ac27e1845582cc128cf8",
+        "boss_expedition_id": "9f3e44e7076899f7094670abeccb84c85e7bfe9d8e8e04648e925665014f7cce",
+        "enemy_refresh": "bc7070219f650f9bf7cd1f6dc80085d010807f381e612d6c8257ce95fad16d48",
+        "ai_refresh": "46b5f381a1fcd79e06b24d5d4c1dec545600615996bae3693a4077cdcc967df6",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "d72c94f5472a78895aae92383e64c0c5e24c4ee0e82aed3225e01f7ef23ed4b6",
+        "pos_y": "228c5410bd88aa2313ae36cc615d980bec6fedfe9cb779629bb9918091e3cc63"
+      },
+      "remapped_fields_sha256": {
+        "chapter_name": "8c0168d17b11aea449963f1e9d2dc2ce49b7e0e0bde25dda94f7d79e833c6453",
+        "name": "55b7937193ff30c152a51c56d938b76cfa48773aca946aa18a9c7eb4fe7fa1db",
+        "type": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "grids": "4e4c6b88833d7e3f677e4d515bbb9f5828c00f847d54ac27e1845582cc128cf8",
+        "boss_expedition_id": "9f3e44e7076899f7094670abeccb84c85e7bfe9d8e8e04648e925665014f7cce",
+        "enemy_refresh": "bc7070219f650f9bf7cd1f6dc80085d010807f381e612d6c8257ce95fad16d48",
+        "ai_refresh": "46b5f381a1fcd79e06b24d5d4c1dec545600615996bae3693a4077cdcc967df6",
+        "boss_refresh": "e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683",
+        "is_ai": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "pos_x": "d72c94f5472a78895aae92383e64c0c5e24c4ee0e82aed3225e01f7ef23ed4b6",
+        "pos_y": "228c5410bd88aa2313ae36cc615d980bec6fedfe9cb779629bb9918091e3cc63"
+      }
+    }
+  ]
+}
