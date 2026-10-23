@@ -61,3 +61,16 @@ TEMPESTA_BECKONING_TAB = Button(
 TEMPESTA_FOGGY_SUPPLY_TAB = Button(
     area=(44, 258, 230, 284), color=(54, 61, 77), button=(45, 257, 230, 287),
     file=_PANELS, name='TEMPESTA_FOGGY_SUPPLY_TAB')
+
+# Beckoning side-story landing observed at 2026-10-22_22-57-59_605503.
+# These are known entrance labels only; their destination actions are unsupported.
+_BECKONING = './assets/en/event_completion/TEMPESTA_BECKONING_20261022.png'
+TEMPESTA_BECKONING_LANDING = Button(
+    area=(509, 548, 882, 676), color=(106, 96, 111), button=(509, 548, 882, 676),
+    file=_BECKONING, name='TEMPESTA_BECKONING_LANDING')
+TEMPESTA_BECKONING_PREPARE = Button(
+    area=(211, 614, 444, 664), color=(92, 67, 89), button=(215, 613, 444, 665),
+    file=_BECKONING, name='TEMPESTA_BECKONING_PREPARE')
+TEMPESTA_BECKONING_CHOICE = Button(
+    area=(944, 617, 1168, 664), color=(70, 87, 106), button=(946, 615, 1168, 665),
+    file=_BECKONING, name='TEMPESTA_BECKONING_CHOICE')

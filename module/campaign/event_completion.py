@@ -12,6 +12,7 @@ from time import monotonic
 
 from module.base.timer import Timer
 from module.campaign.event_completion_assets import (
+    TEMPESTA_BECKONING_CHOICE, TEMPESTA_BECKONING_LANDING, TEMPESTA_BECKONING_PREPARE,
     TEMPESTA_BECKONING_TAB, TEMPESTA_CAMPAIGN, TEMPESTA_FEATURED_ENTRY, TEMPESTA_FOGGY_SUPPLY_TAB,
     TEMPESTA_HUB, TEMPESTA_HUB_HOME,
     TEMPESTA_HUB_INACTIVE,
@@ -282,7 +283,48 @@ class EventCompletion(Reward):
         """Inspect the known Foggy Supply Station tab without buying or claiming."""
         return self._observe_event_tab(event, TEMPESTA_FOGGY_SUPPLY_TAB, 'foggy_supply', folder=folder)
 
-    def _observe_event_tab(self, event, tab, panel, folder=REWARD_OBSERVATION_DIR):
+    def observe_event_side_prepare(self, event, folder=REWARD_OBSERVATION_DIR):
+        """Capture Beckoning's mission entrance without claiming or spending."""
+        return self._observe_event_tab(event, TEMPESTA_BECKONING_TAB, 'beckoning_prepare', folder=folder,
+                                       side_entry=TEMPESTA_BECKONING_PREPARE)
+
+    def observe_event_side_choice(self, event, folder=REWARD_OBSERVATION_DIR):
+        """Capture Beckoning's story entrance without selecting or unlocking."""
+        return self._observe_event_tab(event, TEMPESTA_BECKONING_TAB, 'beckoning_choice', folder=folder,
+                                       side_entry=TEMPESTA_BECKONING_CHOICE)
+
+    def _inspect_event_side_story(self, record, entry, panel):
+        self._inspect_event_rewards_panel(record, tab_button=TEMPESTA_BECKONING_TAB, panel='beckoning')
+        if record.get('status') != 'observed':
+            return
+        settled = Timer(1, count=2).start()
+        clicks = 0
+        for _ in self.loop(skip_first=False, timeout=20):
+            landing = self.match_template_color(TEMPESTA_BECKONING_LANDING, offset=(3, 3),
+                                                similarity=self.text_similarity)
+            known = landing and all(self.match_template_color(button, offset=(3, 3),
+                                                              similarity=self.text_similarity)
+                                    for button in (TEMPESTA_HUB_INACTIVE, TEMPESTA_HUB_HOME, entry))
+            if not clicks and not known:
+                settled.reset()
+                continue
+            if not settled.reached():
+                continue
+            if clicks and not landing:
+                record.update(status='observed', reason=f'{panel}_assets_required')
+                return
+            if not known:
+                continue
+            if clicks >= 2:
+                record.update(status='blocked', reason=f'{panel}_did_not_open')
+                return
+            self.device.click(entry)
+            clicks += 1
+            record[f'{panel}_clicks'] = clicks
+            settled = Timer(3, count=4).start()
+        record.update(status='blocked', reason=f'{panel}_timeout' if clicks else f'{panel}_unrecognized')
+
+    def _observe_event_tab(self, event, tab, panel, folder=REWARD_OBSERVATION_DIR, side_entry=None):
         if event not in REWARD_OBSERVATION_EVENTS:
             return dict(status='unsupported', diagnostics=[])
         ensure_event_running(self)
@@ -301,7 +343,10 @@ class EventCompletion(Reward):
         state[key] = record
         save_reward_observations(account, state, folder=folder)
         try:
-            self._inspect_event_rewards_panel(record, tab_button=tab, panel=panel)
+            if side_entry is None:
+                self._inspect_event_rewards_panel(record, tab_button=tab, panel=panel)
+            else:
+                self._inspect_event_side_story(record, entry=side_entry, panel=panel)
             path = save_event_diagnostic(self.device, f'{account}_event_{panel}_{record["status"]}')
             if path:
                 record['diagnostics'].append(path)
@@ -591,6 +636,11 @@ class EventCompletion(Reward):
                 logger.info('CompleteStory enabled: bounded game restarts may skip story battles')
                 story = EventStory(config=self.config, device=self.device)
                 result['story'] = 'complete' if story.run(event=event, skip_battle=True) else 'failed'
+                if event in REWARD_OBSERVATION_EVENTS:
+                    result['event_side_prepare_observation'] = self.observe_event_side_prepare(event)
+                    result['event_side_choice_observation'] = self.observe_event_side_choice(event)
+                    result['event_side_story'] = 'unsupported'
+                    logger.warning('Side stories need supported destination assets; campaign story handled separately')
             else:
                 logger.warning(f'Automatic event story is not supported for {event}')
                 result['story'] = 'unsupported'
