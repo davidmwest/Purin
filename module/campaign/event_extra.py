@@ -483,6 +483,16 @@ class EventExtraRunner(EventExtraScout, Combat):
             # through its exact bounded retreat before inspecting a fresh EX
             # entrance; never launch the stale board as this attempt's combat.
             self.device.screenshot()
+            if not self._extra_map_appear():
+                # Entering Campaign from another routine can restore a saved
+                # tactical board. Inspect a fresh destination frame before the
+                # combat selector, even when the broad page_sp check matched it.
+                arrived = ensure_event_page(self, page_sp)
+                self.device.screenshot()
+                if not self._extra_map_appear() and not arrived:
+                    record.update(status='blocked', reason='event_page_unrecognized', returned_event=False)
+                    self._extra_capture(record, 'event_page_unrecognized')
+                    return record
             if self._extra_map_appear():
                 record['initial_map_recovery'] = True
                 self._extra_capture(record, 'initial_map_recovery')

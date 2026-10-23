@@ -243,7 +243,7 @@ def test_actual_runner_never_starts_without_fleet_proof(monkeypatch, tmp_path, p
 
 def test_unverified_return_never_reports_completed_objective(monkeypatch, tmp_path):
     helper = runner_controller()
-    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=False))
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(side_effect=[True, False]))
     helper._direct_extra_battle = Mock(side_effect=lambda record, reserve: (reserve() or 'complete', 'battle_won'))
     result = helper.run(EVENT, folder=tmp_path)
     assert result['status'] == 'blocked'
@@ -253,6 +253,7 @@ def test_unverified_return_never_reports_completed_objective(monkeypatch, tmp_pa
 
 def test_combat_exception_keeps_budget_spent(monkeypatch, tmp_path):
     helper = runner_controller()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
     def battle(record, reserve):
         reserve()
         raise ScriptError('unknown result')
@@ -875,6 +876,90 @@ def test_failed_existing_map_recovery_blocks_fresh_entry_and_does_not_spend_comb
     helper._direct_extra_battle.assert_not_called()
     helper.device.click.assert_not_called()
     assert helper.config.override.call_args_list[-1].kwargs == {'STAGE_ENTRANCE': ['old']}
+
+
+@pytest.mark.parametrize('navigation_reported_arrival', [False, True])
+def test_campaign_navigation_restored_map_is_recovered_before_selector(
+        monkeypatch, tmp_path, english_assets, navigation_reported_arrival):
+    helper = map_fixture_controller()
+    restored = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_after_campaign.png').convert('RGB')).copy()
+    helper.device.image = np.zeros_like(restored)  # A different routine before navigation.
+    order = []
+
+    def navigate(main, destination):
+        order.append('navigate')
+        helper.device.image = restored.copy()
+        return navigation_reported_arrival
+
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(side_effect=navigate))
+
+    def recover(record):
+        order.append('recover')
+        stored = load_extra_state('f2p', tmp_path)[f'{EVENT}/combat']
+        assert stored['initial_map_recovery'] is True
+        assert stored['combat_attempted'] is False
+        assert helper._extra_map_appear()
+        helper.device.image = np.zeros_like(restored)
+        return True
+
+    def inspect(record):
+        order.append('inspect')
+        assert record['initial_map_recovered'] is True
+        assert not helper._extra_map_appear()
+        return 'locked', 'required_stage_not_cleared'
+
+    helper._inspect_extra.side_effect = inspect
+    # The ordinary final return is separate from the verified initial recovery.
+    helper._return_extra_event = Mock(
+        side_effect=lambda record: recover(record) if not order.count('recover') else True)
+    helper._direct_extra_battle = Mock()
+    result = helper.run(EVENT, folder=tmp_path)
+    assert order == ['navigate', 'recover', 'inspect']
+    assert result['combat_attempted'] is False
+    assert result['initial_map_recovered'] is True
+    helper._prepare_extra_fleet.assert_not_called()
+    helper._direct_extra_battle.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_failed_recovery_after_campaign_navigation_never_reaches_selector(
+        monkeypatch, tmp_path, english_assets):
+    helper = map_fixture_controller()
+    restored = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_after_campaign.png').convert('RGB')).copy()
+    helper.device.image = np.zeros_like(restored)
+
+    def navigate(main, destination):
+        helper.device.image = restored.copy()
+        return True
+
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(side_effect=navigate))
+    helper._return_extra_event = Mock(return_value=False)
+    helper._direct_extra_battle = Mock()
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['reason'] == 'initial_map_recovery_failed'
+    assert result['combat_attempted'] is False
+    assert result['returned_event'] is False
+    assert load_extra_state('f2p', tmp_path)[f'{EVENT}/combat'] == result
+    helper._inspect_extra.assert_not_called()
+    helper._prepare_extra_fleet.assert_not_called()
+    helper._direct_extra_battle.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_unknown_campaign_destination_stops_before_selector(monkeypatch, tmp_path):
+    helper = runner_controller()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=False))
+    helper._direct_extra_battle = Mock()
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['reason'] == 'event_page_unrecognized'
+    assert result['combat_attempted'] is False
+    assert result['returned_event'] is False
+    helper._inspect_extra.assert_not_called()
+    helper._prepare_extra_fleet.assert_not_called()
+    helper._direct_extra_battle.assert_not_called()
+    helper.device.click.assert_not_called()
 
 
 def test_unknown_map_is_not_withdrawn_and_does_not_fall_into_generic_navigation(monkeypatch):
