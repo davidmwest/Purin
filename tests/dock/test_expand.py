@@ -146,6 +146,9 @@ def test_a_purchase_cancels_the_popup_after_it_and_never_confirms(monkeypatch):
     expand.device = SimpleNamespace(image=shop, click=click, stuck_record_add=Mock(), display_scale=2.0,
                                     screenshot=Mock(), sleep=Mock())
     expand.interval_timer = {}
+    save = Mock()
+    monkeypatch.setattr('module.dock.expand.save_image', save)
+    monkeypatch.setattr('module.dock.expand.os.makedirs', Mock())
 
     def loop():
         while 1:
@@ -161,3 +164,36 @@ def test_a_purchase_cancels_the_popup_after_it_and_never_confirms(monkeypatch):
     assert any(name.startswith(POPUP_CANCEL_WHITE.name) for name in clicks)
     assert not any(name.startswith(POPUP_CONFIRM_WHITE.name) for name in clicks)
     assert state['now'] == 'shop'
+    save.assert_called_once()
+    assert (save.call_args[0][0] == frames['white']).all()
+    assert save.call_args[0][1].startswith('log/dock_expand/')
+    assert save.call_args[0][1].endswith('_unverified_popup.png')
+
+
+def test_no_diagnostic_is_written_without_a_popup(monkeypatch):
+    expand = make_expand('shop_items_f2p')
+    expand.handle_popup_cancel = Mock(return_value=False)
+    save = Mock()
+    monkeypatch.setattr('module.dock.expand.save_image', save)
+
+    assert expand._cancel_purchase_popup() is False
+
+    save.assert_not_called()
+
+
+def test_popup_capture_keeps_the_frame_before_the_cancel_handler(monkeypatch):
+    expand = make_expand('dock_expansion_popup_f2p')
+    before = expand.device.image.copy()
+
+    def cancel(name):
+        expand.device.image[:] = 0
+        return True
+
+    expand.handle_popup_cancel = cancel
+    save = Mock()
+    monkeypatch.setattr('module.dock.expand.save_image', save)
+    monkeypatch.setattr('module.dock.expand.os.makedirs', Mock())
+
+    assert expand._cancel_purchase_popup() is True
+
+    assert (save.call_args[0][0] == before).all()

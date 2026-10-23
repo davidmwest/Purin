@@ -15,10 +15,13 @@ Pages:
     in: Any page
     out: page_dock
 """
+import os
+from datetime import datetime
+
 import cv2
 
 from module.base.timer import Timer
-from module.base.utils import crop, load_image
+from module.base.utils import crop, load_image, save_image
 from module.inventory.inventory import OCR_DOCK_AMOUNT
 from module.leveling.fleet import area_button
 from module.logger import logger
@@ -188,7 +191,7 @@ class DockExpand(UI):
                 if self._appear(POPUP_TITLE, POPUP_TITLE_AREA):
                     logger.warning('The popup of the Dock Expansion is still open, cancelled')
                     self.device.click(CANCEL_BUTTON)
-                elif self.handle_popup_cancel('DOCK_EXPANSION'):
+                elif self._cancel_purchase_popup():
                     logger.warning('A popup is still open, cancelled')
                 else:
                     logger.warning('The purchase of a Dock Expansion did not end on the shop')
@@ -201,7 +204,7 @@ class DockExpand(UI):
                     timeout.reset()
                 continue
             if purchased:
-                if self.handle_popup_cancel('DOCK_EXPANSION'):
+                if self._cancel_purchase_popup():
                     logger.warning('A popup came after Purchase, cancelled')
                     settled.clear()
                     continue
@@ -218,6 +221,25 @@ class DockExpand(UI):
             if offer is not None and click.reached():
                 self.device.click(offer[0])
                 click.reset()
+
+    def _cancel_purchase_popup(self):
+        """Cancel an unverified popup and retain its pre-click frame for review.
+
+        A second confirmation might be the dock purchase, or an offer to buy gems. Until its contents are verified,
+        neither is confirmed. Keep the frame before the cancel handler taps, since a later screenshot is the shop.
+        """
+        image = self.device.image.copy()
+        if not self.handle_popup_cancel('DOCK_EXPANSION'):
+            return False
+        folder = os.path.join('log', 'dock_expand')
+        file = os.path.join(folder, f'{datetime.now():%Y-%m-%d_%H-%M-%S-%f}_unverified_popup.png')
+        try:
+            os.makedirs(folder, exist_ok=True)
+            save_image(image, file)
+            logger.warning(f'Unverified Dock Expansion popup cancelled; pre-click screenshot saved to {file}')
+        except OSError as exc:
+            logger.warning(f'Unverified Dock Expansion popup cancelled; screenshot could not be saved: {exc}')
+        return True
 
     def run(self):
         self.ui_ensure(page_main)
