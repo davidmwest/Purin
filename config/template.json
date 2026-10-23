@@ -640,7 +640,8 @@
     },
     "EventCompletion": {
       "CollectRewards": true,
-      "CompleteStory": false
+      "CompleteStory": false,
+      "Audit": false
     },
     "StopCondition": {
       "OilLimit": 1000,
@@ -901,7 +902,8 @@
     },
     "EventCompletion": {
       "CollectRewards": true,
-      "CompleteStory": false
+      "CompleteStory": false,
+      "Audit": false
     },
     "StopCondition": {
       "OilLimit": 1000,

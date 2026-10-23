@@ -1022,6 +1022,10 @@
     "CompleteStory": {
       "name": "Complete event story",
       "help": "Finish supported event story before farming. Disabled by default."
+    },
+    "Audit": {
+      "name": "Audit event panels once",
+      "help": "After normal event rewards and stories, capture fresh known panels in a separate audit folder. Turns itself off before navigation and stops at an unknown destination."
     }
   },
   "StopCondition": {

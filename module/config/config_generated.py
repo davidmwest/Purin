@@ -98,6 +98,7 @@ class GeneratedConfig:
     # Group `EventCompletion`
     EventCompletion_CollectRewards = True
     EventCompletion_CompleteStory = False
+    EventCompletion_Audit = False
 
     # Group `StopCondition`
     StopCondition_OilLimit = 1000

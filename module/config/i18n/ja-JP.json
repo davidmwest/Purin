@@ -1022,6 +1022,10 @@
     "CompleteStory": {
       "name": "EventCompletion.CompleteStory.name",
       "help": "EventCompletion.CompleteStory.help"
+    },
+    "Audit": {
+      "name": "EventCompletion.Audit.name",
+      "help": "EventCompletion.Audit.help"
     }
   },
   "StopCondition": {

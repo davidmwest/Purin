@@ -37,6 +37,7 @@ def test_generated_task_fields_match_job_guards_and_safe_defaults():
     for task in ('Event', 'Event2'):
         assert args[task]['EventCompletion']['CollectRewards']['value'] is True
         assert args[task]['EventCompletion']['CompleteStory']['value'] is False
+        assert args[task]['EventCompletion']['Audit']['value'] is False
     assert args['General']['Retirement']['CommonDuplicates']['value'] is False
     assert ManualConfig.SCHEDULER_PRIORITY.index('EventExtra') < ManualConfig.SCHEDULER_PRIORITY.index('EventStars')
 

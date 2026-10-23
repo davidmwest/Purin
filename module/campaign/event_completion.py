@@ -6,9 +6,11 @@ are separate UIs and are deliberately not claimed without supported recognition 
 import json
 import os
 import re
+import shutil
 import tempfile
 from datetime import datetime
 from time import monotonic
+from uuid import uuid4
 
 from module.base.timer import Timer
 from module.campaign.event_completion_assets import (
@@ -18,7 +20,7 @@ from module.campaign.event_completion_assets import (
     TEMPESTA_HUB_INACTIVE,
     TEMPESTA_HUB_LANDING, TEMPESTA_MAIN_ENTRY, TEMPESTA_REWARDS_TAB, TEMPESTA_SUPPLIES,
     TEMPESTA_SIDE_CHOICE_BACK, TEMPESTA_SIDE_CHOICE_PAGE)
-from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
+from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import GamePageUnknownError, ScriptError
 from module.logger import logger
@@ -29,9 +31,11 @@ from module.ui.page import page_event_list, page_main, page_mission, page_sp
 
 SUPPORTED_STORY_EVENTS = frozenset(('event_20251023_cn', 'event_20261022_cn'))
 MISSION_CLAIMS_MAX = 24
+MISSION_RECEIPTS_MAX = 24
 MISSION_TIMEOUT = 120
 REWARD_OBSERVATION_EVENTS = frozenset(('event_20261022_cn',))
 REWARD_OBSERVATION_DIR = './config/stars'
+EVENT_AUDIT_DIR = './config/event_audits'
 SUPPLIES_CLICKS_MAX = 3
 
 
@@ -563,6 +567,8 @@ class EventCompletion(Reward):
         clicks = 0
         click_interval = Timer(1, count=2)
         for _ in self.loop(timeout=15):
+            if self._event_mission_receipt() is not None:
+                return clicked
             on_mission = self.ui_page_appear(page_mission)
             if not on_mission:
                 if clicked:
@@ -585,43 +591,84 @@ class EventCompletion(Reward):
                     click_interval.reset()
         return False
 
+    def _event_mission_receipt(self):
+        # GET_ITEMS_1 is the exact "Item Found" header. The mission page can
+        # remain recognizable behind this modal, including its now-empty list.
+        for button in (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3):
+            if self.appear(button, offset=(30, 30)):
+                return GET_ITEMS_1
+        if self.appear(GET_SHIP, offset=(20, 20)):
+            return GET_SHIP
+        return None
+
     def _event_mission_receive(self):
-        for _ in self.loop(timeout=20):
+        settled = Timer(1, count=2).start()
+        click_interval = Timer(1, count=2)
+        last_state = None
+        receipt_clicks = 0
+        for _ in self.loop(skip_first=False, timeout=20):
+            receipt = self._event_mission_receipt()
+            if receipt is not None:
+                settled.reset()
+                last_state = None
+                if receipt_clicks >= MISSION_RECEIPTS_MAX:
+                    break
+                if click_interval.reached():
+                    self.device.click(receipt)
+                    receipt_clicks += 1
+                    click_interval.reset()
+                continue
+            if self.handle_mission_popup_ack():
+                settled.reset()
+                continue
+            if self.handle_vote_popup():
+                settled.reset()
+                continue
+            if self.handle_story_skip():
+                settled.reset()
+                continue
+            if self.handle_popup_confirm('MISSION_REWARD'):
+                settled.reset()
+                continue
             if self.ui_page_appear(page_mission):
                 state = self._reward_get_state()
                 if state:
-                    return state
-            if self.appear_then_click(GET_ITEMS_1, offset=(30, 30), interval=1):
-                continue
-            if self.appear_then_click(GET_ITEMS_2, offset=(30, 30), interval=1):
-                continue
-            if self.appear_then_click(GET_SHIP, offset=(20, 20), interval=1):
-                continue
-            if self.handle_mission_popup_ack():
-                continue
-            if self.handle_vote_popup():
-                continue
-            if self.handle_story_skip():
-                continue
-            if self.handle_popup_confirm('MISSION_REWARD'):
-                continue
+                    if state != last_state:
+                        settled.reset()
+                        last_state = state
+                    if settled.reached():
+                        return state
+                    continue
+            settled.reset()
+            last_state = None
         return 'timeout'
+
+    def _resume_event_mission_receipt(self):
+        """Dismiss an already-open exact reward receipt before page discovery."""
+        self.device.screenshot()
+        if self._event_mission_receipt() is None:
+            return True
+        if self._event_mission_receive() != 'timeout':
+            return True
+        save_event_diagnostic(self.device, 'mission_receipt_blocked')
+        return False
 
     def collect_event_missions(self):
         """Collect recognized ordinary mission claims; return false on an unknown screen."""
+        if not self._resume_event_mission_receipt():
+            return False
         if not ensure_event_page(self, page_main):
             save_event_diagnostic(self.device, 'mission_main_blocked')
             return False
-        if not self.reward_mission_notice():
-            logger.info('No pending mission rewards')
-            return True
+        # A missing Main badge is not proof that all mission receipts/claims
+        # finished. Verify the actual All tab even when no notice is visible.
         if not ensure_event_page(self, page_mission):
             save_event_diagnostic(self.device, 'mission_page_blocked')
             return False
         if not self.reward_side_navbar_ensure(upper=1):
             save_event_diagnostic(self.device, 'mission_navbar_blocked')
             return False
-        state = self._reward_wait_mission_list()
+        state = self._event_mission_receive()
         deadline = monotonic() + MISSION_TIMEOUT
         for _ in range(MISSION_CLAIMS_MAX):
             if state in (MISSION_EMPTY, MISSION_UNFINISH):
@@ -631,7 +678,7 @@ class EventCompletion(Reward):
                 break
             self.device.stuck_record_clear()
             self.device.click_record_clear()
-            self.interval_clear([GET_ITEMS_1, GET_ITEMS_2, MISSION_MULTI, MISSION_SINGLE, GET_SHIP])
+            self.interval_clear([GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, MISSION_MULTI, MISSION_SINGLE, GET_SHIP])
             if not self._event_mission_click():
                 break
             state = self._event_mission_receive()
@@ -671,9 +718,92 @@ class EventCompletion(Reward):
             save_event_diagnostic(self.device, 'event_completion_return_unknown')
             raise GamePageUnknownError('Event completion could not return through recognized controls')
 
+    def audit_event(self, event, folder=None):
+        """Consume one explicit request, keeping its fresh observations apart from jobs."""
+        from module.campaign.event_strict_maid import StrictMaidObserver
+        from module.campaign.event_strict_maid_milestones import StrictMaidMilestones
+
+        ensure_event_running(self)
+        account = self.config.config_name
+        # Validate before using the account as a directory component.
+        reward_observation_path(account)
+        request = f'{datetime.now():%Y%m%dT%H%M%S%f}-{uuid4().hex[:12]}'
+        audit_folder = os.path.abspath(os.path.join(folder or EVENT_AUDIT_DIR, account, request))
+        os.makedirs(audit_folder, exist_ok=False)
+        record = dict(status='reserved', request=request, account=account, event=event,
+                      folder=audit_folder, started=datetime.now().isoformat(timespec='seconds'),
+                      observations={})
+
+        def persist():
+            # Observers add their own once-only budgets to this same fresh folder.
+            state = load_reward_observations(account, folder=audit_folder)
+            state['_audit'] = record
+            save_reward_observations(account, state, folder=audit_folder)
+
+        def preserve_diagnostics(observation):
+            archived = []
+            for path in observation.get('diagnostics', []):
+                if os.path.isfile(path):
+                    destination = os.path.join(audit_folder, os.path.basename(path))
+                    shutil.copy2(path, destination)
+                    archived.append(destination)
+            if archived:
+                observation['audit_diagnostics'] = archived
+
+        # Identity is durable before consuming the flag, and consumption is durable
+        # before any UI control. A restart cannot replay a half-finished request.
+        persist()
+        with self.config.multi_set():
+            self.config.EventCompletion_Audit = False
+        if account not in ('alas', 'f2p') or event not in REWARD_OBSERVATION_EVENTS:
+            record.update(status='unsupported', reason='unsupported_account' if account not in ('alas', 'f2p')
+                          else 'unsupported_event', finished=datetime.now().isoformat(timespec='seconds'))
+            persist()
+            return record
+        observations = (
+            ('main', self.observe_event_main),
+            ('hub', self.observe_event_hub),
+            ('featured', self.observe_event_featured),
+            ('catalog', self.observe_event_rewards_panel),
+            ('beckoning', self.observe_event_beckoning),
+            ('foggy_supply', self.observe_event_foggy_supply),
+            ('activity', self.observe_event_rewards),
+            ('supplies', self.observe_event_supplies),
+            ('strict_maid', StrictMaidObserver(config=self.config, device=self.device).run),
+            # This newly observed destination must be last: unknown exits stop here.
+            ('strict_maid_milestones', StrictMaidMilestones(config=self.config, device=self.device).observe),
+        )
+        record['status'] = 'observing'
+        persist()
+        try:
+            for name, observe in observations:
+                record['current'] = name
+                persist()
+                observation = dict(observe(event, folder=audit_folder))
+                preserve_diagnostics(observation)
+                record['observations'][name] = observation
+                persist()
+                if (observation.get('status') not in ('observed', 'complete', 'unsupported')
+                        or observation.get('returned_main') is False):
+                    raise GamePageUnknownError(f'Event audit stopped at {name}: {observation.get("reason", "unknown state")}')
+            record.update(status='complete', finished=datetime.now().isoformat(timespec='seconds'))
+            persist()
+        except Exception:
+            record.update(status='blocked', finished=datetime.now().isoformat(timespec='seconds'))
+            path = save_event_diagnostic(self.device, f'{account}_event_audit_blocked')
+            if path:
+                record['diagnostics'] = [path]
+                preserve_diagnostics(record)
+            persist()
+            raise
+        logger.attr('EventAudit', record)
+        return record
+
     def run(self, event, collect_rewards=True, complete_story=False):
         result = dict(story='disabled', rewards='disabled', event_hub_rewards='disabled')
         if collect_rewards:
+            if not self._resume_event_mission_receipt():
+                raise GamePageUnknownError('Event mission receipt could not be safely dismissed')
             result['event_main_observation'] = self.observe_event_main(event)
             result['event_hub_observation'] = self.observe_event_hub(event)
             result['event_featured_observation'] = self.observe_event_featured(event)
@@ -727,5 +857,8 @@ class EventCompletion(Reward):
                 else:
                     result['event_hub_rewards'] = 'complete' if 'complete' in statuses else 'unsupported'
             self.ensure_completion_return(result)
+        if getattr(self.config, 'EventCompletion_Audit', False):
+            # Ordinary rewards and stories progress before the final audit probe.
+            result['event_audit'] = self.audit_event(event)
         logger.attr('EventCompletion', result)
         return result

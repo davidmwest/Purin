@@ -173,6 +173,7 @@ StarPass:
 EventCompletion:
   CollectRewards: true
   CompleteStory: false
+  Audit: false
 StopCondition:
   OilLimit: 1000
   RunCount: 0

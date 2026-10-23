@@ -3271,6 +3271,10 @@
       "CompleteStory": {
         "type": "checkbox",
         "value": false
+      },
+      "Audit": {
+        "type": "checkbox",
+        "value": false
       }
     },
     "StopCondition": {
@@ -4688,6 +4692,10 @@
         "value": true
       },
       "CompleteStory": {
+        "type": "checkbox",
+        "value": false
+      },
+      "Audit": {
         "type": "checkbox",
         "value": false
       }

@@ -28,6 +28,8 @@ def controller():
     helper.collect_strict_maid_rewards = Mock(return_value=dict(status='unsupported', diagnostics=[]))
     helper.collect_beckoning_tickets = Mock(return_value=dict(status='unsupported', story_complete=False))
     helper.observe_event_strict_maid = Mock(return_value=dict(status='observed'))
+    helper._resume_event_mission_receipt = Mock(return_value=True)
+    helper._event_mission_receipt = Mock(return_value=None)
     return helper
 
 
@@ -1211,13 +1213,13 @@ def mission_controller(monkeypatch, state):
     helper.reward_side_navbar_ensure = Mock(return_value=True)
     helper._reward_wait_mission_list = Mock(return_value=state)
     helper._event_mission_click = Mock(return_value=True)
-    helper._event_mission_receive = Mock(return_value=MISSION_UNFINISH)
+    helper._event_mission_receive = Mock(side_effect=[state, MISSION_UNFINISH])
     return helper
 
 
 def test_clear_and_star_mission_claims_are_followed_until_no_claims_remain(monkeypatch):
     helper = mission_controller(monkeypatch, MISSION_MULTI)
-    helper._event_mission_receive.side_effect = [MISSION_SINGLE, MISSION_UNFINISH]
+    helper._event_mission_receive.side_effect = [MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH]
 
     assert helper.collect_event_missions() is True
 
@@ -1237,6 +1239,7 @@ def test_unknown_mission_state_stops_without_claiming(monkeypatch, state):
 
 def test_repeated_claims_have_a_finite_budget(monkeypatch):
     helper = mission_controller(monkeypatch, MISSION_MULTI)
+    helper._event_mission_receive.side_effect = None
     helper._event_mission_receive.return_value = MISSION_MULTI
     monkeypatch.setattr(completion, 'MISSION_CLAIMS_MAX', 2)
     assert helper.collect_event_missions() is False
@@ -1244,19 +1247,20 @@ def test_repeated_claims_have_a_finite_budget(monkeypatch):
     completion.save_event_diagnostic.assert_called_once()
 
 
-def test_missing_notice_does_not_enter_the_mission_screen(monkeypatch):
-    helper = mission_controller(monkeypatch, MISSION_MULTI)
+def test_missing_notice_still_verifies_the_actual_all_missions_list(monkeypatch):
+    helper = mission_controller(monkeypatch, MISSION_UNFINISH)
     helper.reward_mission_notice.return_value = False
     assert helper.collect_event_missions() is True
-    completion.ensure_event_page.assert_called_once_with(helper, page_main)
-    helper.reward_side_navbar_ensure.assert_not_called()
+    assert completion.ensure_event_page.call_args_list[1].args == (helper, page_mission)
+    helper.reward_side_navbar_ensure.assert_called_once_with(upper=1)
+    helper._event_mission_click.assert_not_called()
 
 
 def test_failed_all_missions_navbar_does_not_claim_another_tabs_empty_state(monkeypatch):
     helper = mission_controller(monkeypatch, MISSION_UNFINISH)
     helper.reward_side_navbar_ensure.return_value = False
     assert helper.collect_event_missions() is False
-    helper._reward_wait_mission_list.assert_not_called()
+    helper._event_mission_receive.assert_not_called()
     helper._event_mission_click.assert_not_called()
     completion.save_event_diagnostic.assert_called_once()
 
@@ -1281,7 +1285,111 @@ def test_unknown_reward_popup_expires_instead_of_resetting_forever():
     for method in ('handle_mission_popup_ack', 'handle_vote_popup', 'handle_story_skip', 'handle_popup_confirm'):
         setattr(helper, method, Mock(return_value=False))
     assert helper._event_mission_receive() == 'timeout'
-    helper.loop.assert_called_once_with(timeout=20)
+    helper.loop.assert_called_once_with(skip_first=False, timeout=20)
+
+
+class MissionFrameTimer:
+    """Advance settled-frame checks without sleeping in receipt state tests."""
+    def __init__(self, limit, count=0):
+        self.count = count
+        self.access = 0
+        self.started = False
+
+    def start(self):
+        self.started = True
+        return self
+
+    def reset(self):
+        self.access = 0
+        self.started = True
+        return self
+
+    def reached(self):
+        self.access += 1
+        return not self.started or self.access > self.count
+
+
+def receipt_controller(monkeypatch, frames):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(frames)))
+    helper.ui_page_appear = Mock(return_value=True)
+    helper._reward_get_state = Mock(return_value=MISSION_UNFINISH)
+    for method in ('handle_mission_popup_ack', 'handle_vote_popup', 'handle_story_skip', 'handle_popup_confirm'):
+        setattr(helper, method, Mock(return_value=False))
+    monkeypatch.setattr(completion, 'Timer', MissionFrameTimer)
+    return helper
+
+
+def test_actual_item_found_overlaps_mission_header_and_has_priority(monkeypatch):
+    from pathlib import Path
+    import numpy as np
+    from PIL import Image
+    from module.base.button import Button
+
+    # The application selects EN assets at startup; this test must not depend
+    # on the process-global server/cache left by unrelated asset regressions.
+    for name in ('GET_ITEMS_1', 'GET_ITEMS_2', 'GET_ITEMS_3', 'GET_SHIP'):
+        button = getattr(completion, name)
+        english = Button(area=button.raw_area['en'], color=button.raw_color['en'],
+                         button=button.raw_button['en'], file=button.raw_file['en'])
+        monkeypatch.setattr(completion, name, english)
+    GET_ITEMS_1 = completion.GET_ITEMS_1
+
+    image = np.asarray(Image.open(Path(__file__).parent / 'data/mission_item_found.png').convert('RGB')).copy()
+    assert GET_ITEMS_1.match(image, offset=(30, 30), similarity=.85)
+    helper = receipt_controller(monkeypatch, 6)
+    helper.appear = lambda button, **kwargs: button.match(image, similarity=.85, **kwargs)
+    helper._event_mission_receipt = EventCompletion._event_mission_receipt.__get__(helper)
+    assert helper._event_mission_receipt() is GET_ITEMS_1
+
+    def dismiss(button):
+        assert button is GET_ITEMS_1
+        # Model receipt dismissal while the mission-page detector remains true.
+        image[190:290, 500:790] = 0
+
+    helper.device.click.side_effect = dismiss
+    assert helper._event_mission_receive() is MISSION_UNFINISH
+    helper.device.click.assert_called_once_with(GET_ITEMS_1)
+    assert helper._reward_get_state.call_count == 3
+
+
+def test_receipt_persists_behind_empty_list_without_false_success(monkeypatch):
+    helper = receipt_controller(monkeypatch, 12)
+    helper._event_mission_receipt.return_value = completion.GET_ITEMS_1
+    monkeypatch.setattr(completion, 'MISSION_RECEIPTS_MAX', 2)
+    assert helper._event_mission_receive() == 'timeout'
+    assert helper.device.click.call_count == 2
+    helper._reward_get_state.assert_not_called()
+
+
+def test_empty_mission_state_requires_fresh_stable_frames(monkeypatch):
+    helper = receipt_controller(monkeypatch, 4)
+    helper._reward_get_state.side_effect = [MISSION_UNFINISH, MISSION_MULTI, MISSION_UNFINISH, MISSION_UNFINISH]
+    assert helper._event_mission_receive() == 'timeout'
+    helper.device.click.assert_not_called()
+
+
+def test_already_open_receipt_is_resumed_before_event_observers(monkeypatch):
+    helper = rewards_controller()
+    helper.device.screenshot = Mock()
+    helper._resume_event_mission_receipt = EventCompletion._resume_event_mission_receipt.__get__(helper)
+    helper._event_mission_receipt.return_value = completion.GET_ITEMS_1
+    helper._event_mission_receive = Mock(return_value=MISSION_UNFINISH)
+    order = []
+    helper._event_mission_receive.side_effect = lambda: order.append('receipt') or MISSION_UNFINISH
+    helper.observe_event_main.side_effect = lambda event: order.append('main') or dict(status='observed')
+    helper.run('event_20261022_cn')
+    assert order[:2] == ['receipt', 'main']
+    helper.device.screenshot.assert_called_once()
+
+
+def test_unresolved_open_receipt_stops_before_event_observers(monkeypatch):
+    helper = rewards_controller()
+    helper._resume_event_mission_receipt.return_value = False
+    with pytest.raises(GamePageUnknownError, match='receipt'):
+        helper.run('event_20261022_cn')
+    helper.observe_event_main.assert_not_called()
+    helper.collect_event_missions.assert_not_called()
 
 
 def rewards_controller():
