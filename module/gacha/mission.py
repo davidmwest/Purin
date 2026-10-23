@@ -64,7 +64,7 @@ def locate_build_mission(image):
     if not candidates:
         return None
     x, y = candidates[0]
-    row_top = y - 40
+    row_top = y - 38
     if row_top < 87 or row_top + 142 > 692:
         return None
     # The marker is 37 pixels above the observed text and remains bound to it.
@@ -75,7 +75,9 @@ def locate_build_mission(image):
         for asset in (DAILY_MISSION_MARKER, EVENT_MISSION_MARKER)]
     if max(matches) < .85:
         return None
-    counter_area = (610, y + 35, 663, y + 60)
+    # Keep only the text. Extra background above/below these short digits made
+    # a fresh 0/3 read as /3 when the animated port background changed.
+    counter_area = (616, y + 37, 660, y + 55)
     return dict(row_top=row_top,
                 title_area=(x, y, x + title.shape[1], y + title.shape[0]),
                 counter_area=counter_area)

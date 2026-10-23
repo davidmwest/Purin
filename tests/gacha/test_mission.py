@@ -246,7 +246,8 @@ def mission_image(name='main'):
     return np.asarray(Image.open(f'tests/gacha/data/build_three_{name}.png').convert('RGB')).copy()
 
 
-@pytest.mark.parametrize('name,current', [('main', 0), ('f2p', 0)])
+@pytest.mark.parametrize('name,current', [('main', 0), ('f2p', 0),
+                                         ('main_fresh', 0), ('f2p_fresh', 0)])
 def test_actual_account_build_three_rows_are_read_without_digitcounter_clamping(name, current):
     row = read_build_mission(mission_image(name))
     assert row['current'] == current and row['total'] == 3
