@@ -83,7 +83,8 @@ def test_known_identity_template_requires_visible_anchor_and_leaves_progress_unk
 
 
 @pytest.mark.parametrize('overlay', [p.IN_MAP, p.MAP_PREPARATION, p.FLEET_PREPARATION,
-                                     p.BATTLE_PREPARATION, p.GET_ITEMS_1, p.GET_SHIP])
+                                     p.BATTLE_PREPARATION, p.GET_ITEMS_1, p.GET_SHIP,
+                                     p.POPUP_CONFIRM, p.POPUP_CANCEL_WHITE])
 def test_list_header_beneath_overlay_does_not_authorize_inputs(owner, overlay):
     owner.appear = lambda button, **kwargs: button in (p.WAR_ARCHIVES_CHECK, overlay)
     assert not owner._list_page()
@@ -353,5 +354,189 @@ def test_goal_and_prize_unknowns_cannot_authorize_execution(owner):
         owner.proof_for_goal(StageGoal('war_archives_20190321_en', 'd3', 'normal'))
     prize = SimpleNamespace(clears=60)
     assert owner.claim_prize('war_archives_20190321_en', prize) == dict(
-        verified=False, count=None, total=60, claimed=None, reason='prize_reader_unverified')
+        verified=False, count=None, total=60, claimed=None, reason='prize_claim_unverified')
+    owner.device.click.assert_not_called()
+
+
+VISITORS = 'war_archives_20190321_en'
+
+
+def stage_goal(stage='a1', mode='normal'):
+    from module.campaign.campaign_stars import StageGoal
+    return StageGoal(VISITORS, stage, mode, 'archive_clear')
+
+
+def stage_screen(mode='normal', page=1, stage='a1', complete=False, raw_keys=80, key_capacity=300):
+    return dict(event=VISITORS, mode=mode, page=page,
+                stages={stage: dict(entrance_area=[427, 207, 442, 226], complete=complete)},
+                raw_keys=raw_keys, key_capacity=key_capacity)
+
+
+def stage_record():
+    return dict(navigation_inputs=[], diagnostics=[], verified_for_navigation=False,
+                verified_for_execution=False)
+
+
+def use_actual_en_page_detectors(owner):
+    # Read real page/overlay assets without relying on another test setting the
+    # process-global server cache before this module is imported.
+    clones = {}
+    def appear(button, offset=(20, 20), **kwargs):
+        if button not in clones:
+            en = lambda raw: raw.get('en') if isinstance(raw, dict) else raw
+            clones[button] = Button(area=en(button.raw_area), color=en(button.raw_color),
+                                    button=en(button.raw_button), file=en(button.raw_file))
+        return clones[button].match(owner.device.image, offset=offset)
+    owner.appear = appear
+
+
+@pytest.mark.parametrize('account,keys,complete,names', [
+    ('f2p', 80, False, {'a1'}), ('alas', 300, True, {'a1', 'a2'})])
+def test_actual_stage_pages_read_unlocked_entrances_and_clear_separately(owner, account, keys, complete, names):
+    from module.base.utils import load_image
+    owner.device.image = load_image(f'tests/war_archives/data/{account}_visitors_stages.png')
+    use_actual_en_page_detectors(owner)
+    assert owner._archive_stage_page()
+    result = owner._read_stage_screen(VISITORS)
+    assert result['event'] == VISITORS and result['mode'] == 'normal' and result['page'] == 1
+    assert set(result['stages']) == names
+    assert result['stages']['a1']['complete'] is complete
+    assert result['raw_keys'] == keys and result['key_capacity'] == 300
+    if account == 'alas':
+        assert result['stages']['a2']['complete'] is False
+    import json
+    assert json.loads(json.dumps(result)) == result
+    assert all(type(x) is int for stage in result['stages'].values() for x in stage['entrance_area'])
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('negative', ['title', 'overlay', 'no_stages', 'dimmed'])
+def test_actual_stage_page_missing_identity_or_overlay_cannot_authorize(owner, negative):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/f2p_visitors_stages.png')
+    owner._archive_stage_page = Mock(return_value=negative != 'overlay')
+    if negative == 'title':
+        owner.device.image[70:110, 210:530] = 0
+    elif negative == 'no_stages':
+        owner.device.image[117:636, 87:1151] = 0
+    elif negative == 'dimmed':
+        owner.device.image = (owner.device.image * .5).astype(np.uint8)
+    assert owner._read_stage_screen(VISITORS) is None
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('overlay', [p.GET_ITEMS_2, p.POPUP_CONFIRM, p.POPUP_CANCEL_WHITE])
+def test_stage_header_under_known_popup_never_authorizes_stage_navigation(owner, overlay):
+    owner._list_page = Mock(return_value=False)
+    owner.appear = lambda button, **kwargs: button in (p.WAR_ARCHIVES_CAMPAIGN_CHECK, overlay)
+    assert not owner._archive_stage_page()
+
+
+def test_actual_stage_controls_match_only_the_visible_known_next_and_hard(owner):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/f2p_visitors_stages.png')
+    hard = Button(area=p.SWITCH_1_HARD.raw_area['en'], color=(),
+                  button=p.SWITCH_1_HARD.raw_button['en'], file=p.SWITCH_1_HARD.raw_file['en'])
+    assert hard.match(owner.device.image, offset=(3, 3))
+    assert p.ARCHIVE_NEXT.match(owner.device.image, offset=(3, 3), similarity=.90)
+    owner.device.image[350:457, 1197:1264] = 0
+    assert not p.ARCHIVE_NEXT.match(owner.device.image, offset=(3, 3), similarity=.90)
+
+
+def test_mode_navigation_reserves_one_known_input_then_requires_fresh_target(owner):
+    normal, hard = stage_screen(), stage_screen('hard', stage='c1')
+    owner._read_stage_screen = Mock(side_effect=[normal, normal, hard, hard])
+    owner.appear.return_value = True
+    current, events = stage_record(), []
+    owner.device.click.side_effect = lambda button: events.append(('click', button.name, list(current['navigation_inputs'])))
+    owner._navigate_goal(stage_goal('c1', 'hard'), current,
+                         lambda: events.append(('save', list(current['navigation_inputs']))))
+    assert current['verified_for_navigation'] and current['verified_for_execution']
+    assert current['stage_complete'] is False and current['unlocked'] is True
+    assert events[0] == ('save', ['mode:normal:hard'])
+    assert events[1][0] == 'click' and events[1][2] == ['mode:normal:hard']
+    owner.device.click.assert_called_once_with(p.SWITCH_1_HARD)
+
+
+def test_stale_mode_after_click_never_replays_and_unknown_controls_never_click(owner):
+    owner._read_stage_screen = Mock(return_value=stage_screen())
+    owner.appear.return_value = True
+    current = stage_record()
+    owner._navigate_goal(stage_goal('c1', 'hard'), current, Mock())
+    assert not current['verified_for_navigation'] and current['reason'] == 'stage_navigation_unverified'
+    owner.device.click.assert_called_once()
+    owner.device.click.reset_mock()
+    current['navigation_inputs'] = []
+    owner.appear.return_value = False
+    owner._navigate_goal(stage_goal('c1', 'hard'), current, Mock())
+    owner.device.click.assert_not_called()
+
+
+def test_page_navigation_uses_known_next_once_and_does_not_skip_locked_same_page(owner):
+    first, second = stage_screen(), stage_screen(page=2, stage='b1')
+    owner._read_stage_screen = Mock(side_effect=[first, first, second, second])
+    owner.appear.return_value = True
+    current = stage_record()
+    owner._navigate_goal(stage_goal('b1'), current, Mock())
+    assert current['verified_for_navigation']
+    owner.device.click.assert_called_once_with(p.ARCHIVE_NEXT)
+    assert current['navigation_inputs'] == ['page:normal:1:2']
+    owner.device.click.reset_mock()
+    owner._read_stage_screen = Mock(return_value=first)
+    current = stage_record()
+    owner._navigate_goal(stage_goal('a2'), current, Mock())
+    assert current['reason'] == 'target_locked_or_unreadable'
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('raw,capacity', [(None, None), (4, 300), (60, 60), (True, 300)])
+def test_navigation_proof_never_invents_sufficient_current_keys(owner, raw, capacity):
+    owner._read_stage_screen = Mock(return_value=stage_screen(raw_keys=raw, key_capacity=capacity))
+    current = stage_record()
+    owner._navigate_goal(stage_goal(), current, Mock())
+    assert current['verified_for_navigation'] and not current['verified_for_execution']
+    owner.device.click.assert_not_called()
+
+
+def test_goal_request_rereads_after_restart_and_does_not_replay_reserved_input(owner, monkeypatch, tmp_path):
+    import json
+    owner._read_stage_screen = Mock(return_value=stage_screen())
+    owner.appear.return_value = True
+    owner._capture = Mock()
+    first = owner.proof_for_goal(stage_goal('c1', 'hard'), folder=tmp_path, request_id='restart')
+    assert not first['verified_for_navigation'] and owner.device.click.call_count == 1
+    state = json.loads((tmp_path / 'alas' / 'restart' / 'goal.json').read_text())
+    assert state['navigation_inputs'] == ['mode:normal:hard']
+    owner.device.click.reset_mock()
+    again = owner.proof_for_goal(stage_goal('c1', 'hard'), folder=tmp_path, request_id='restart')
+    assert not again['verified_for_navigation']
+    owner.device.click.assert_not_called()
+    owner._read_stage_screen.return_value = stage_screen('hard', stage='c1')
+    fresh = owner.proof_for_goal(stage_goal('c1', 'hard'), folder=tmp_path, request_id='restart')
+    assert fresh['verified_for_navigation'] and fresh['verified_for_execution']
+    assert not fresh['combat_attempted']
+    owner.device.click.assert_not_called()
+
+
+def test_prepare_sets_only_fresh_entrance_and_clears_a_cached_one_on_failure(owner):
+    campaign = SimpleNamespace(ENTRANCE=Button(area=(1, 2, 3, 4), color=(), button=(1, 2, 3, 4)))
+    owner.proof_for_goal = Mock(return_value=dict(verified_for_navigation=True, entrance_area=[427, 207, 442, 226]))
+    owner.prepare_goal(campaign, stage_goal())
+    assert campaign.ENTRANCE.button == (427, 207, 442, 226) and campaign.ENTRANCE.name == 'a1'
+    owner.proof_for_goal.return_value = dict(verified_for_navigation=False)
+    owner.prepare_goal(campaign, stage_goal())
+    assert campaign.ENTRANCE.button == ()
+
+
+@pytest.mark.parametrize('archive_object', [False, True])
+def test_prize_observer_delegates_request_without_adding_claim_inputs(owner, monkeypatch, tmp_path,
+                                                                    archive_object):
+    from module.war_archives import prize_progress
+    from module.war_archives.catalog import get_archive
+    adapter = Mock()
+    monkeypatch.setattr(prize_progress, 'ArchivePrizeProgress', Mock(return_value=adapter))
+    prize = SimpleNamespace(clears=60)
+    archive = get_archive(VISITORS) if archive_object else VISITORS
+    owner.observe_prize(archive, prize, folder=tmp_path, request_id='prize')
+    adapter.observe.assert_called_once_with(VISITORS, prize, folder=tmp_path, request_id='prize')
     owner.device.click.assert_not_called()

@@ -1,8 +1,7 @@
-"""Bounded War Archives list observations, without entering or claiming anything.
+"""Bounded War Archives list and stage navigation, without combat or claims.
 
-The old identity templates establish which archive is visible. They do not prove
-completion, unlocked stages or a guaranteed reward. Those fields deliberately
-remain unknown until captured UI supplies a tested reader.
+Fresh title, Clear/% stage and key witnesses can authorize the separate execution
+adapter. List completion never substitutes for a visible stage-clear witness.
 """
 import json
 import os
@@ -15,27 +14,34 @@ from uuid import uuid4
 from module.base.timer import Timer
 from module.base.button import Button
 from module.base.template import Template
-from module.base.utils import save_image
+from module.base.utils import save_image, rgb2gray, crop
+from module.campaign.assets import SWITCH_1_HARD, SWITCH_1_NORMAL, CHAPTER_PREV
 from module.campaign.campaign_ui import CampaignUI
 from module.combat.assets import BATTLE_PREPARATION, GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running
-from module.exception import ScriptError
+from module.exception import ScriptError, CampaignNameError
 from module.freebies.assets import OCR_DATA_KEY
-from module.handler.assets import IN_MAP
+from module.handler.assets import IN_MAP, POPUP_CANCEL, POPUP_CONFIRM
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_HARD
 from module.ocr.ocr import Ocr
 from module.ui.assets import WAR_ARCHIVES_CHECK
 from module.ui.page import page_archives, page_main
+from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 from module.ui.scroll import Scroll
 from module.war_archives.assets import (WAR_ARCHIVES_EX_ON, WAR_ARCHIVES_SCROLL, WAR_ARCHIVES_SP_ON,
                                       WAR_ARCHIVES_CAMPAIGN_CHECK)
 from module.war_archives.dictionary import dic_archives_template
+from module.war_archives.stage_assets import VISITORS_TITLE, ARCHIVE_NEXT, STAGE_CLEAR, STAGE_PERCENT
 
 ARCHIVE_KEYS = Ocr(OCR_DATA_KEY, letter=(255, 247, 247), threshold=64, alphabet='0123456789/')
 ARCHIVE_SCROLL = Scroll(WAR_ARCHIVES_SCROLL, color=(247, 211, 66), name='ARCHIVE_OBSERVE_SCROLL')
 CATEGORY_BUTTONS = {'ex': WAR_ARCHIVES_EX_ON, 'sp': WAR_ARCHIVES_SP_ON}
 OBSERVATION_VERSION = 1
 FILES_HEADER = Template('./assets/en/war_archives/ARCHIVE_FILES_HEADER_20261023.png')
+STAGE_KEYS = Ocr((1188, 107, 1272, 131), lang='cnocr', letter=(255, 255, 255),
+                 threshold=96, alphabet='0123456789/', name='ARCHIVE_STAGE_KEYS')
+STAGE_TITLE = Ocr((210, 70, 1100, 100), lang='cnocr', letter=(255, 255, 255),
+                  threshold=96, name='ARCHIVE_STAGE_TITLE')
 
 
 def parse_completion(text):
@@ -78,7 +84,8 @@ class ArchiveProgress(CampaignUI):
         return (self.appear(WAR_ARCHIVES_CHECK, offset=(5, 5))
                 and not any(self.appear(button, offset=(20, 30)) for button in (
                     IN_MAP, MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION,
-                    BATTLE_PREPARATION, GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP)))
+                    BATTLE_PREPARATION, GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP,
+                    POPUP_CANCEL, POPUP_CONFIRM, POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE)))
 
     def _category(self):
         # Selected and inactive tabs have identical lettering. Shape alone
@@ -240,7 +247,8 @@ class ArchiveProgress(CampaignUI):
                 and self.appear(WAR_ARCHIVES_CAMPAIGN_CHECK, offset=(20, 20))
                 and not any(self.appear(button, offset=(20, 30)) for button in (
                     IN_MAP, MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION,
-                    BATTLE_PREPARATION, GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP)))
+                    BATTLE_PREPARATION, GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP,
+                    POPUP_CANCEL, POPUP_CONFIRM, POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE)))
 
     def observe_archive(self, archive, folder='./log/war_archives', request_id=None):
         """Enter one positively identified archive and capture its stage/prize UI.
@@ -320,26 +328,193 @@ class ArchiveProgress(CampaignUI):
             persist()
 
     def proof_for_goal(self, goal, folder='./log/war_archives', request_id=None):
-        """Fresh target observation; execution remains closed until UI is proved."""
+        """Navigate known stage controls, then prove the visible entrance freshly.
+
+        This does not click a stage or spend keys. Persistent input reservations
+        stop a repeated request from replaying mode/page clicks after a crash.
+        """
         from module.war_archives.catalog import get_archive
         definition = get_archive(goal.event)
-        if definition is None or goal.stage.lower() not in definition.stages(goal.mode):
+        if (self.config.config_name not in {'alas', 'f2p'} or definition is None
+                or goal.mode not in {'normal', 'hard'}
+                or goal.stage.lower() not in definition.stages(goal.mode)):
             raise ScriptError('Unsupported archive stage goal')
-        result = self.observe_archive(goal.event, folder=folder, request_id=request_id)
-        return dict(result, stage=goal.stage, mode=goal.mode)
+        request_id = request_id or f'{datetime.now():%Y%m%dT%H%M%S%f}-{uuid4().hex[:12]}'
+        if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', request_id):
+            raise ScriptError('Invalid archive stage request')
+        directory = os.path.join(folder, self.config.config_name, request_id)
+        path = os.path.join(directory, 'goal.json')
+        record = dict(version=OBSERVATION_VERSION, account=self.config.config_name,
+                      request_id=request_id, event=goal.event, stage=goal.stage.lower(), mode=goal.mode,
+                      status='observing', diagnostics=[], navigation_inputs=[],
+                      verified_for_navigation=False, verified_for_execution=False,
+                      unlocked=None, stage_complete=None, raw_keys=None, key_capacity=None,
+                      key_cost=5, key_mode='per_entry', combat_attempted=False,
+                      journal=os.path.abspath(path))
+        if os.path.exists(path):
+            try:
+                with open(path, encoding='utf-8') as file:
+                    previous = json.load(file)
+            except (OSError, ValueError) as exc:
+                raise ScriptError('Cannot safely reuse archive stage request') from exc
+            if (not isinstance(previous, dict)
+                    or any(previous.get(key) != record[key] for key in
+                           ('version', 'account', 'request_id', 'event', 'stage', 'mode'))
+                    or not isinstance(previous.get('navigation_inputs'), list)
+                    or len(previous['navigation_inputs']) > 6
+                    or any(not isinstance(item, str) for item in previous['navigation_inputs'])):
+                raise ScriptError('Invalid archive stage request identity/budget')
+            record['navigation_inputs'] = previous['navigation_inputs']
+            record['diagnostics'] = previous.get('diagnostics', [])
+        persist = lambda: _save_record(path, record)
+        persist()
+        ensure_event_running(self)
+        try:
+            self.device.screenshot()
+            if self._read_stage_screen(goal.event) is None:
+                entered = self.observe_archive(goal.event, folder=folder, request_id=request_id)
+                record['diagnostics'].extend(entered.get('diagnostics', []))
+                if entered.get('status') != 'observed':
+                    record.update(status='blocked', reason=entered.get('reason', 'archive_entry_failed'))
+                    return record
+            self._navigate_goal(goal, record, persist)
+            self._capture(directory, 'goal_stage' if record['verified_for_navigation'] else 'goal_blocked', record)
+            return record
+        finally:
+            record['finished'] = datetime.now().isoformat(timespec='seconds')
+            persist()
 
     def prepare_goal(self, campaign, goal):
-        # Never set an entrance from an invented coordinate or an old screenshot.
-        # The initial capture establishes the next fixture-backed reader.
-        return self.proof_for_goal(goal)
+        # A failed fresh read must not leave a previous campaign's entrance usable.
+        campaign.ENTRANCE = Button(area=(), color=(), button=(), name='archive_unverified')
+        proof = self.proof_for_goal(goal)
+        if proof.get('verified_for_navigation'):
+            area = tuple(proof['entrance_area'])
+            campaign.ENTRANCE = Button(area=area, color=(), button=area, name=goal.stage.lower())
+        return proof
 
-    def observe_prize(self, archive, prize):
-        return dict(verified=False, count=None, total=prize.clears, claimed=None,
-                    reason='prize_reader_unverified')
+    def _archive_identity(self, archive):
+        """Require the exact known title, or an exact full catalog title OCR."""
+        from module.war_archives.catalog import get_archive
+        definition = get_archive(archive)
+        if definition is None or not self._archive_stage_page():
+            return False
+        if archive == 'war_archives_20190321_en':
+            if not VISITORS_TITLE.match(self.device.image, offset=(3, 3), similarity=.90):
+                return False
+            # A popup can leave a correlated but dimmed title beneath it.
+            actual = crop(self.device.image, VISITORS_TITLE.area)
+            return bool(abs(actual.mean(axis=(0, 1)) - VISITORS_TITLE.image.mean(axis=(0, 1))).max() <= 15)
+        normalize = lambda value: re.sub(r'[^a-z0-9]', '', str(value).lower())
+        actual = normalize(STAGE_TITLE.ocr(self.device.image))
+        expected = {normalize(name) + suffix for name in (definition.name, *definition.aliases)
+                    for suffix in ('', 'prequel', 'sequel')}
+        return actual in expected
+
+    def _read_stage_screen(self, archive):
+        """Read only unlocked Clear/% stage icons on the exact archive page."""
+        from module.war_archives.catalog import get_archive
+        definition = get_archive(archive)
+        if not self._archive_identity(archive):
+            return None
+        image = self.device.image
+        gray = rgb2gray(crop(image, self._stage_detect_area, copy=False))
+        # Use the existing icon/name geometry, with explicit EN templates. A
+        # locked node lacks either witness and cannot become an entrance.
+        clear = self.campaign_match_multi(STAGE_CLEAR, image, gray,
+                                          name_offset=(70, 12), name_size=(60, 14))
+        partial = self.campaign_match_multi(STAGE_PERCENT, image, gray,
+                                            name_offset=(45, 3), name_size=(60, 14))
+        buttons = clear + partial
+        if not buttons:
+            return None
+        names = Ocr(buttons, letter=(255, 255, 255), threshold=128,
+                    alphabet='0123456789ABCDEFGHIJKLMNPQRSTUVWXYZ-', name='ARCHIVE_STAGES').ocr(image)
+        if not isinstance(names, list):
+            names = [names]
+        stages = {}
+        for index, (name, button) in enumerate(zip(names, buttons)):
+            name = self._campaign_ocr_result_process(name)
+            area = [int(value) for value in button.button]
+            if (not name or name in stages or name not in definition.normal_stages + definition.hard_stages
+                    or not (87 <= area[0] < area[2] <= 1151 and 117 <= area[1] < area[3] <= 636)):
+                return None
+            stages[name] = dict(entrance_area=area, complete=index < len(clear))
+        modes = [mode for mode in ('normal', 'hard')
+                 if stages and set(stages).issubset(definition.stages(mode))]
+        if len(modes) != 1:
+            return None
+        try:
+            pages = {self._campaign_get_chapter_index(self._campaign_separate_name(name)[0]) for name in stages}
+        except (CampaignNameError, ValueError, IndexError):
+            return None
+        if len(pages) != 1:
+            return None
+        counter = parse_key_counter(STAGE_KEYS.ocr(image))
+        return dict(event=archive, mode=modes[0], page=pages.pop(), stages=stages,
+                    raw_keys=None if counter is None else counter['raw_keys'],
+                    key_capacity=None if counter is None else counter['key_capacity'])
+
+    def _navigate_goal(self, goal, record, persist):
+        target = goal.stage.lower()
+        desired_page = self._campaign_get_chapter_index(self._campaign_separate_name(target)[0])
+        previous = None
+        settled = Timer(1, count=2).start()
+        for _ in self.loop(skip_first=False, timeout=45):
+            screen = self._read_stage_screen(goal.event)
+            if screen is None:
+                previous = None
+                settled.reset()
+                continue
+            signature = json.dumps(screen, sort_keys=True)
+            if signature != previous:
+                previous = signature
+                settled.reset()
+                continue
+            if not settled.reached():
+                continue
+            self.device.stuck_record_clear()
+            if screen['mode'] == goal.mode and target in screen['stages']:
+                stage = screen['stages'][target]
+                record.update(status='observed', reason='fresh_stage_verified',
+                              verified_for_navigation=True, unlocked=True,
+                              stage_complete=stage['complete'], entrance_area=stage['entrance_area'],
+                              raw_keys=screen['raw_keys'], key_capacity=screen['key_capacity'],
+                              verified_for_execution=(screen['key_capacity'] == 300
+                                  and type(screen['raw_keys']) is int and screen['raw_keys'] >= 5))
+                return
+            if screen['mode'] != goal.mode:
+                # Labels indicate the destination, unlike legacy Switch state names.
+                action = SWITCH_1_HARD if goal.mode == 'hard' else SWITCH_1_NORMAL
+                transition = f'mode:{screen["mode"]}:{goal.mode}'
+            elif desired_page != screen['page']:
+                action = ARCHIVE_NEXT if desired_page > screen['page'] else CHAPTER_PREV
+                transition = f'page:{goal.mode}:{screen["page"]}:{desired_page}'
+            else:
+                record.update(status='blocked', reason='target_locked_or_unreadable', unlocked=None)
+                return
+            # A fresh known state may authorize one input, never a repeated click
+            # on a stale animation or recovery of an uncertain reserved input.
+            if (transition in record['navigation_inputs'] or len(record['navigation_inputs']) >= 6
+                    or not self.appear(action, offset=(3, 3))):
+                continue
+            record['navigation_inputs'].append(transition)
+            persist()
+            self.device.click(action)
+            previous = None
+            settled.reset()
+        record.update(status='blocked', reason='stage_navigation_unverified')
+
+    def observe_prize(self, archive, prize, folder='./log/war_archives', request_id=None):
+        from module.war_archives.catalog import Archive
+        from module.war_archives.prize_progress import ArchivePrizeProgress
+        archive_id = archive.id if isinstance(archive, Archive) else archive
+        return ArchivePrizeProgress(self).observe(archive_id, prize, folder=folder, request_id=request_id)
 
     def claim_prize(self, archive, prize):
-        # No claim inputs are supported by the list-screen fixture.
-        return self.observe_prize(archive, prize)
+        # A separate exact earned/claim fixture is required before a claim input.
+        return dict(verified=False, count=None, total=prize.clears, claimed=None,
+                    reason='prize_claim_unverified')
 
     def _observe_category(self, category, directory, record, persist, max_pages, deadline):
         if not self._select_category(category, record, persist):
