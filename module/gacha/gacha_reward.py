@@ -384,8 +384,16 @@ class RewardGacha(GachaUI, Retirement):
         if getattr(self.config, 'Gacha_MissionDriven', True):
             # Mission mode never reaches the fixed-count queue/submit path.
             # First collect exact mission and banner evidence through the job.
-            from module.gacha.mission import GachaMissionObserver
+            from module.exception import GamePageUnknownError
+            from module.gacha.banner import EventBannerObserver
+            from module.gacha.mission import GachaMissionObserver, GachaMissionOrderObserver
             GachaMissionObserver(config=self.config, device=self.device).run()
+            banner = EventBannerObserver(config=self.config, device=self.device).run()
+            if not banner.get('returned_main') and not banner.get('reused'):
+                raise GamePageUnknownError('Gacha RateInfo captured; unknown exit requires game restart')
+            order = GachaMissionOrderObserver(config=self.config, device=self.device).run()
+            if order.get('build_open_clicked') and not order.get('reused'):
+                raise GamePageUnknownError('Gacha order dialog captured; no submission authorized')
         else:
             self.gacha_run()
         self.config.task_delay(server_update=True)
