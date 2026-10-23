@@ -10,7 +10,8 @@ from module.campaign import event_extra
 from module.campaign.event_extra import (EventExtraRunner, EventExtraScout, load_extra_state,
                                          save_extra_state, valid_extra_fleet_options)
 from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
-                                               EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT)
+                                               EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT,
+                                               EX_MAP_COLUMNS_SHIFTED, EX_MAP_TERRAIN_SHIFTED)
 from module.config import server
 from module.exception import GameNotRunningError, ScriptError
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION
@@ -636,6 +637,35 @@ def test_actual_no_time_limit_ex_board_allows_one_settled_attack(monkeypatch, en
     helper.device.click.assert_called_once_with(EX_MAP_ATTACK)
 
 
+def test_actual_recovered_camera_allows_one_settled_attack(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    helper.device.image = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_shifted.png').convert('RGB')).copy()
+    immediate_timers(monkeypatch)
+    assert not helper.match_template_color(EX_MAP_COLUMNS, offset=(3, 3), similarity=.85)
+    assert helper._extra_map_appear()
+    reserve = Mock()
+    assert helper._launch_extra_map({}, reserve) is True
+    assert helper.device.screenshot.call_count == 4
+    reserve.assert_called_once_with()
+    helper.device.click.assert_called_once_with(EX_MAP_ATTACK)
+
+
+@pytest.mark.parametrize('missing', [EX_MAP_COLUMNS_SHIFTED, EX_MAP_TERRAIN_SHIFTED])
+def test_recovered_camera_requires_both_columns_and_rendered_terrain(monkeypatch, english_assets, missing):
+    helper = map_fixture_controller()
+    helper.device.image = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_shifted.png').convert('RGB')).copy()
+    immediate_timers(monkeypatch)
+    x1, y1, x2, y2 = missing.area
+    helper.device.image[y1:y2, x1:x2] = 0
+    assert helper._extra_map_appear() is False
+    reserve = Mock()
+    assert helper._launch_extra_map({}, reserve) is False
+    reserve.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
 def test_no_time_limit_title_alone_never_authorizes_attack(monkeypatch, english_assets):
     helper = map_fixture_controller()
     helper.device.image = np.asarray(Image.open(
@@ -774,8 +804,10 @@ def test_map_launch_that_stays_on_map_does_not_click_attack_again(monkeypatch):
     helper.device.click.assert_called_once_with(FLEET_PREPARATION)
 
 
-def test_actual_ex_map_withdrawal_is_bounded_and_returns_verified_event(monkeypatch, english_assets):
+@pytest.mark.parametrize('fixture', ['ex_tactical_map_settled.png', 'ex_tactical_map_shifted.png'])
+def test_actual_ex_map_withdrawal_is_bounded_and_returns_verified_event(monkeypatch, english_assets, fixture):
     helper = map_fixture_controller()
+    helper.device.image = np.asarray(Image.open(f'tests/campaign/data/{fixture}').convert('RGB')).copy()
     immediate_timers(monkeypatch)
     current = ['map']
     def frames(**kwargs):
@@ -788,6 +820,61 @@ def test_actual_ex_map_withdrawal_is_bounded_and_returns_verified_event(monkeypa
     assert helper._return_extra_event({}) is True
     helper.device.click.assert_called_once_with(event_extra.WITHDRAW)
     assert helper.handle_popup_confirm.call_count == 1
+
+
+def test_existing_map_is_durably_recovered_before_fresh_ex_inspection(tmp_path, english_assets):
+    helper = map_fixture_controller()
+    helper.device.image = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_shifted.png').convert('RGB')).copy()
+    helper._direct_extra_battle = Mock()
+    order = []
+
+    def recover(record):
+        order.append('recover')
+        saved = load_extra_state('f2p', tmp_path)[f'{EVENT}/combat']
+        assert saved['initial_map_recovery'] is True
+        assert saved['combat_attempted'] is False
+        assert saved['status'] == 'preparing'
+        return True
+
+    helper._return_extra_event = Mock(side_effect=recover)
+
+    def inspect(record):
+        order.append('inspect')
+        assert record['initial_map_recovered'] is True
+        helper.device.screenshot.assert_called_once_with()
+        return 'locked', 'required_stage_not_cleared'
+
+    helper._inspect_extra.side_effect = inspect
+    result = helper.run(EVENT, folder=tmp_path)
+    assert order == ['recover', 'inspect', 'recover']
+    assert result['status'] == 'locked'
+    assert result['initial_map_recovered'] is True
+    assert result['combat_attempted'] is False
+    helper._prepare_extra_fleet.assert_not_called()
+    helper._direct_extra_battle.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_failed_existing_map_recovery_blocks_fresh_entry_and_does_not_spend_combat(tmp_path, english_assets):
+    helper = map_fixture_controller()
+    helper.device.image = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_shifted.png').convert('RGB')).copy()
+    helper._return_extra_event = Mock(return_value=False)
+    helper._direct_extra_battle = Mock()
+    result = helper.run(EVENT, folder=tmp_path)
+    saved = load_extra_state('f2p', tmp_path)[f'{EVENT}/combat']
+    assert result == saved
+    assert result['status'] == 'blocked'
+    assert result['reason'] == 'initial_map_recovery_failed'
+    assert result['initial_map_recovered'] is False
+    assert result['combat_attempted'] is False
+    assert result['returned_event'] is False
+    helper._inspect_extra.assert_not_called()
+    helper._prepare_extra_fleet.assert_not_called()
+    helper._direct_extra_battle.assert_not_called()
+    helper.device.click.assert_not_called()
+    assert helper.config.override.call_args_list[-1].kwargs == {'STAGE_ENTRANCE': ['old']}
 
 
 def test_unknown_map_is_not_withdrawn_and_does_not_fall_into_generic_navigation(monkeypatch):

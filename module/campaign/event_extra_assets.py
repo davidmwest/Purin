@@ -28,6 +28,17 @@ EX_MAP_NO_TIME_LIMIT = Button(
 EX_MAP_COLUMNS = Button(
     area=(517, 132, 768, 153), color=(75, 95, 106), button=(517, 132, 768, 153),
     file=_EX_MAP, name='EX_MAP_COLUMNS')
+# The same settled EX board after game recovery has a second observed camera
+# position. Its columns also occur on the initial empty loading grid, so the
+# captured static lower island must be present before accepting this variant.
+EX_MAP_COLUMNS_SHIFTED = Button(
+    area=(437, 115, 688, 136), color=(61, 86, 99), button=(437, 115, 688, 136),
+    file='./assets/en/event_completion/TEMPESTA_EX_MAP_SHIFTED_20261023.png',
+    name='EX_MAP_COLUMNS_SHIFTED')
+EX_MAP_TERRAIN_SHIFTED = Button(
+    area=(579, 503, 776, 568), color=(92, 120, 145), button=(579, 503, 776, 568),
+    file='./assets/en/event_completion/TEMPESTA_EX_MAP_SHIFTED_20261023.png',
+    name='EX_MAP_TERRAIN_SHIFTED')
 EX_MAP_ATTACK = Button(
     area=(1147, 652, 1263, 701), color=(232, 182, 108), button=(1147, 652, 1263, 701),
     file=_EX_MAP, name='EX_MAP_ATTACK')

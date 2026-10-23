@@ -14,7 +14,8 @@ from module.campaign.event_completion import EventCompletion
 from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED
 from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
                                                EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT,
-                                               EX_MAP_NO_TIME_LIMIT)
+                                               EX_MAP_NO_TIME_LIMIT, EX_MAP_COLUMNS_SHIFTED,
+                                               EX_MAP_TERRAIN_SHIFTED)
 from module.combat.assets import AUTOMATION_ON, BATTLE_PREPARATION, DEFEAT_TIPS
 from module.combat.combat import Combat
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
@@ -295,7 +296,9 @@ class EventExtraRunner(EventExtraScout, Combat):
 
     def _extra_map_appear(self):
         return (self.appear(IN_MAP, offset=(5, 5))
-                and self.match_template_color(EX_MAP_COLUMNS, offset=(3, 3), similarity=.85)
+                and (self.match_template_color(EX_MAP_COLUMNS, offset=(3, 3), similarity=.85)
+                     or (self.match_template_color(EX_MAP_COLUMNS_SHIFTED, offset=(3, 3), similarity=.85)
+                         and self.match_template_color(EX_MAP_TERRAIN_SHIFTED, offset=(3, 3), similarity=.85)))
                 and any(self.match_template_color(button, offset=(3, 3), similarity=.85)
                         for button in (EX_MAP_TIME_LIMIT, EX_MAP_NO_TIME_LIMIT)))
 
@@ -476,6 +479,19 @@ class EventExtraRunner(EventExtraScout, Combat):
 
         try:
             self.config.override(STAGE_ENTRANCE=['half', '20240725'])
+            # A game restart can preserve the prior EX tactical board. Return
+            # through its exact bounded retreat before inspecting a fresh EX
+            # entrance; never launch the stale board as this attempt's combat.
+            self.device.screenshot()
+            if self._extra_map_appear():
+                record['initial_map_recovery'] = True
+                self._extra_capture(record, 'initial_map_recovery')
+                save_extra_state(account, state, folder=folder)
+                record['initial_map_recovered'] = self._return_extra_event(record)
+                if not record['initial_map_recovered']:
+                    record.update(status='blocked', reason='initial_map_recovery_failed', returned_event=False)
+                    self._extra_capture(record, 'initial_map_recovery_failed')
+                    return record
             status, reason = self._inspect_extra(record)
             if status == 'observed' and reason == 'fleet_preparation_requires_supported_runner':
                 prepared, reason = self._prepare_extra_fleet(record)
