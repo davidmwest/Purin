@@ -276,6 +276,10 @@ class StageStarsRunner(CampaignRun):
                 return 'blocked'
         if self.goal_complete:
             return 'already_complete'
+        if self.oil_deferred:
+            # Keep a reservation once map execution began; only a pre-sortie
+            # reserve check is refundable. Both outcomes preserve the oil delay.
+            return 'oil_exhausted' if self.attempt_started else 'deferred'
         next_run = getattr(self.config, 'Scheduler_NextRun', None)
         if self.scheduler_deferred or (not self.attempt_started and
                 isinstance(next_run, datetime) and next_run != next_run_before and next_run > datetime.now()):
@@ -360,7 +364,7 @@ class CampaignStars(CampaignRun):
             runner = StageStarsRunner(config=self.config, device=self.device)
             result = complete_stage(goal, progress, runner.run_goal, self.config.StarPass_MaxRunsPerStage)
             logger.attr('Star_pass_stage', f'{goal.key}: {result}')
-            if result == 'deferred':
+            if result in ('deferred', 'oil_exhausted'):
                 # The stage's own oil/morale handler already scheduled its retry
                 # and any DormRest work. Do not replace that time or dispatch farm.
                 return

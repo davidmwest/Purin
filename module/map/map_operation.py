@@ -1,7 +1,7 @@
 import cv2
 
 from module.base.timer import Timer
-from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
+from module.exception import CampaignEnd, GamePageUnknownError, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import FastForwardHandler
 from module.handler.mystery import MysteryHandler
 from module.logger import logger
@@ -128,6 +128,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                     skip_first_screenshot = False
                 else:
                     self.device.screenshot()
+
+                self.handle_oil_purchase()
 
                 # Check errors
                 if campaign_click > 5:
@@ -391,16 +393,12 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             self.map_clear_percentage_timer.reset()
             return None
 
-    def withdraw(self, skip_first_screenshot=True):
+    def withdraw(self, skip_first_screenshot=True, timeout=None):
         """
         Withdraw campaign.
         """
         logger.hr('Map withdraw')
-        while 1:
-            if skip_first_screenshot:
-                skip_first_screenshot = False
-            else:
-                self.device.screenshot()
+        for _ in self.loop(skip_first=skip_first_screenshot, timeout=timeout):
 
             if self.handle_popup_confirm('WITHDRAW'):
                 continue
@@ -420,6 +418,7 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             # End
             if self.handle_in_stage():
                 raise CampaignEnd('Withdraw')
+        raise GamePageUnknownError('Map withdrawal timed out')
 
     def handle_map_cat_attack(self):
         """

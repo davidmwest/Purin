@@ -167,6 +167,13 @@ class AzurLaneAutoScript:
             return True
         except TaskEnd:
             return True
+        except OilExhausted as error:
+            # A generic popup handler may encounter the same modal outside a
+            # CampaignRun. Cancellation was verified before this exception;
+            # recover the active map without deferring free Reward collection.
+            logger.warning(error)
+            self.config.task_call('Restart')
+            return False
         except UserPlaying as e:
             # Not a failure, the task runs again once nobody is playing
             logger.warning(e)

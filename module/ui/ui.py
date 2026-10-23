@@ -185,6 +185,10 @@ class UI(InfoHandler):
             else:
                 self.device.screenshot()
 
+            # A purchase overlay can leave a map/page check visible behind it.
+            # Cancel the exact oil offer before accepting that background page.
+            self.handle_oil_purchase()
+
             # End
             if timeout.reached():
                 break

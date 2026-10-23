@@ -4,8 +4,9 @@ from module.base.base import ModuleBase
 from module.base.button import Button
 from module.base.timer import Timer
 from module.base.utils import *
-from module.exception import GameLoggedOutError, GameNotRunningError
+from module.exception import GameLoggedOutError, GameNotRunningError, OilExhausted, ScriptError
 from module.handler.assets import *
+from module.handler.oil_assets import OIL_PURCHASE_CANCEL, OIL_PURCHASE_HISTORY, OIL_PURCHASE_TITLE
 from module.logger import logger
 from module.os_handler.assets import CLICK_SAFE_AREA as OS_CLICK_SAFE_AREA
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_SINGLE_WHITE
@@ -110,6 +111,9 @@ class InfoHandler(ModuleBase):
         return self.appear(button, offset=offset, interval=interval, similarity=similarity)
 
     def handle_popup_confirm(self, name='', offset=None, interval=2):
+        # This purchase reverses the normal Confirm/Cancel positions. Never let
+        # broad popup handlers buy oil, including outside campaign combat.
+        self.handle_oil_purchase()
         if offset is None:
             offset = self._popup_offset
         if self.appear(POPUP_CANCEL, offset=offset) \
@@ -125,7 +129,26 @@ class InfoHandler(ModuleBase):
             return True
         return False
 
+    def oil_purchase_appear(self):
+        return self.appear(OIL_PURCHASE_TITLE, offset=(3, 3)) and self.appear(
+            OIL_PURCHASE_HISTORY, offset=(3, 3))
+
+    def handle_oil_purchase(self):
+        """Cancel the observed gem purchase, then stop the current oil task."""
+        if not self.oil_purchase_appear():
+            return False
+        logger.warning('Insufficient oil: cancel gem purchase')
+        clicks = 0
+        for _ in self.loop(timeout=12):
+            if not self.oil_purchase_appear():
+                raise OilExhausted('Oil purchase cancelled; no gems spent')
+            if clicks < 3 and self.appear(OIL_PURCHASE_CANCEL, offset=(3, 3), interval=2):
+                self.device.click(OIL_PURCHASE_CANCEL)
+                clicks += 1
+        raise ScriptError('Oil purchase cancellation was not verified')
+
     def handle_popup_cancel(self, name='', offset=None, interval=2):
+        self.handle_oil_purchase()
         if offset is None:
             offset = self._popup_offset
         if self.appear(POPUP_CONFIRM, offset=offset) \

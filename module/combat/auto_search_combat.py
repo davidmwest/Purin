@@ -2,7 +2,7 @@ from module.base.timer import Timer
 from module.campaign.campaign_status import CampaignStatus
 from module.combat.assets import *
 from module.combat.combat import Combat
-from module.exception import CampaignEnd
+from module.exception import CampaignEnd, OilExhausted
 from module.handler.assets import AUTO_SEARCH_MAP_OPTION_ON
 from module.logger import logger
 from module.map.map_operation import MapOperation
@@ -39,7 +39,18 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             out: is_combat_loading
         """
         self.interval_reset(AUTO_SEARCH_MAP_OPTION_ON)
+        checked_oil = False
         for _ in self.loop():
+
+            self.handle_oil_purchase()
+            # Retirement may have already resumed a battle. Do not read the map
+            # oil crop on a loading/combat frame and mistake its zero for oil.
+            if self.is_combat_loading() or self.is_combat_executing():
+                break
+            if self.is_in_map():
+                checked_oil = self.auto_search_watch_oil(checked_oil)
+                if self.auto_search_oil_limit_triggered:
+                    raise OilExhausted('Auto search oil reserve reached')
 
             if self.handle_auto_search_map_option():
                 self.interval_reset(AUTO_SEARCH_MAP_OPTION_ON)
@@ -97,6 +108,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             oil = self._get_oil()
             if oil == 0:
                 logger.warning('Oil not found')
+                self.auto_search_oil_limit_triggered = True
             else:
                 if oil < max(500, self.config.StopCondition_OilLimit):
                     logger.info('Reach oil limit')
@@ -169,11 +181,17 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         checked_coin = False
         for _ in self.loop():
 
+            self.handle_oil_purchase()
+
             if self.is_auto_search_running():
                 checked_fleet = self.auto_search_watch_fleet(checked_fleet)
                 if not checked_oil or not checked_coin:
                     checked_oil = self.auto_search_watch_oil(checked_oil)
                     checked_coin = self.auto_search_watch_coin(checked_coin)
+                if self.auto_search_oil_limit_triggered:
+                    # Checking only after the boss lets auto search spend the
+                    # entire remaining tank while repeatedly logging the limit.
+                    raise OilExhausted('Auto search oil reserve reached')
             if self.handle_retirement():
                 self.map_offensive_auto_search()
                 # Map offensive ends at is_combat_loading

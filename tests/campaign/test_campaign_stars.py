@@ -830,3 +830,40 @@ def test_ordinary_event_lifecycle_only_runs_story_before_campaign(monkeypatch):
 def test_both_job_entrypoints_use_shared_runner():
     assert issubclass(EventStars, CampaignStars)
     assert EventStars.run is CampaignStars.run
+
+
+@pytest.mark.parametrize('entered,attempts,status', [(False, 0, 'deferred'), (True, 1, 'oil_exhausted')])
+def test_oil_stop_preserves_delay_and_only_refunds_pre_sortie_reservation(
+        monkeypatch, tmp_path, entered, attempts, status):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    runner.campaign = SimpleNamespace(run_lost=False)
+    recovered = datetime.now() + timedelta(hours=3)
+
+    def oil_stop(*args, **kwargs):
+        runner.run_count = 0
+        runner.attempt_started = entered
+        runner.oil_deferred = True
+        runner.config.Scheduler_NextRun = recovered
+
+    monkeypatch.setattr(runner, 'run', oil_stop)
+    goal = StageGoal('event_20261022_cn', 'SP', goal='clear')
+    progress = StarProgress('alas', 'EventStars', tmp_path)
+    assert complete_stage(goal, progress, runner.run_goal) == status
+    assert progress.record(goal) == dict(attempts=attempts, status=status)
+    assert runner.config.Scheduler_NextRun == recovered
+
+
+def test_mid_sortie_oil_stop_does_not_retry_or_overwrite_rest_delay(monkeypatch, tmp_path):
+    goal = StageGoal('event_20261022_cn', 'T1')
+    job, progress, runner, _ = make_job(monkeypatch, tmp_path, [goal], 'oil_exhausted')
+    recovered = datetime.now() + timedelta(hours=3)
+    job.config.Scheduler_NextRun = recovered
+    job.run()
+    assert progress.record(goal) == dict(attempts=1, status='oil_exhausted')
+    assert job.config.Scheduler_NextRun == recovered
+    runner.run_goal.assert_called_once_with(goal, inspect_only=False)
+    job.config.task_delay.assert_not_called()
+    job.config.task_call.assert_not_called()
+    job.collect.assert_called_once_with(before=True)
+    job.extra_objectives.assert_not_called()

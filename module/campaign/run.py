@@ -9,7 +9,7 @@ from module.campaign.campaign_ui import MODE_SWITCH_1
 from module.campaign.stage import StageNotFound, load_stage, stage_names
 from module.campaign.star_pass import STAR_RUNS_MAX, add_star_run, clear_star_runs, star_stage_key
 from module.config.config import AzurLaneConfig
-from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
+from module.exception import CampaignEnd, OilExhausted, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import to_map_file_name, to_map_input_name
 from module.leveling.readiness import BLOCKED, STALE, leveling_next_run, main_readiness
 from module.leveling.record import record_leveling_run
@@ -18,9 +18,9 @@ from module.notify import handle_notify
 from module.ui.page import page_campaign
 
 
-# Oil kept at least, whatever StopCondition.OilLimit says: a run started below it may stop in the middle of a map.
-# Upstream keeps 500. A young account has no reason to keep oil, its OilLimit may be set down to this.
-OIL_FLOOR = 100
+# Match the between-battle auto-search reserve. Starting below it can strand a
+# young account halfway through a sortie, even with OilLimit set to zero.
+OIL_FLOOR = 500
 
 class CampaignRun(CampaignEvent):
     folder: str
@@ -32,6 +32,13 @@ class CampaignRun(CampaignEvent):
     run_count: int
     run_limit: int
     is_stage_loop = False
+    oil_deferred = False
+
+    def defer_for_oil(self):
+        self.oil_deferred = True
+        self.config.task_delay(minute=(120, 240))
+        # This task only collects free supplies under the user's reward settings.
+        self.config.task_call('Reward', force_call=False)
 
     def load_campaign(self, name, folder='campaign_main'):
         """
@@ -103,12 +110,15 @@ class CampaignRun(CampaignEvent):
         if oil_check:
             if self.get_oil() < max(OIL_FLOOR, self.config.StopCondition_OilLimit):
                 logger.hr('Triggered stop condition: Oil limit')
-                self.config.task_delay(minute=(120, 240))
+                self.defer_for_oil()
                 return True
+            # A new run with verified replenished oil must not retain the old
+            # auto-search stop flag and defer forever.
+            self.campaign.auto_search_oil_limit_triggered = False
         # Auto search oil limit
         if self.campaign.auto_search_oil_limit_triggered:
             logger.hr('Triggered stop condition: Auto search oil limit')
-            self.config.task_delay(minute=(120, 240))
+            self.defer_for_oil()
             return True
         # If Get a New Ship
         if self.config.StopCondition_GetNewShip and self.campaign.config.GET_SHIP_TRIGGERED:
@@ -479,6 +489,22 @@ class CampaignRun(CampaignEvent):
         self.config.task_stop(f'Main waits for Leveling: {reason}')
 
     def run(self, name, folder='campaign_main', mode='normal', total=0):
+        self.oil_deferred = False
+        self.run_count = 0
+        try:
+            return self._run(name, folder=folder, mode=mode, total=total)
+        except OilExhausted as error:
+            logger.warning(error)
+            self.defer_for_oil()
+            campaign = getattr(self, 'campaign', None)
+            if campaign is not None:
+                campaign.auto_search_oil_limit_triggered = True
+                try:
+                    campaign.withdraw(timeout=20)
+                except CampaignEnd:
+                    pass
+
+    def _run(self, name, folder='campaign_main', mode='normal', total=0):
         """
         Args:
             name (str): Name of .py file.
@@ -548,7 +574,7 @@ class CampaignRun(CampaignEvent):
                     break
 
             # End
-            if self.triggered_stop_condition(oil_check=not self.campaign.is_in_auto_search_menu()):
+            if self.triggered_stop_condition(oil_check=True):
                 break
 
             # Run
