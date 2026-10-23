@@ -132,7 +132,7 @@
     },
     "WarArchivesPrize": {
       "name": "War Archives: get a prize",
-      "help": "Select an archive and guaranteed prize. Runs its required stage only until the prize is verified and claimed. Shares the completion job’s daily entry budget."
+      "help": "Select an archive and guaranteed prize. First completes the selected archive campaign if needed, then farms and claims the selected guaranteed prize. Shares the completion job’s daily entry budget."
     },
     "EventA": {
       "name": "Event Daily A",
