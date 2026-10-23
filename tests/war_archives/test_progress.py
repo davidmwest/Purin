@@ -209,12 +209,139 @@ def test_unknown_identity_bottom_can_reset_to_top_without_authorizing_an_entranc
     bottom = dict(top=454, bottom=565, position=1)
     top = dict(top=0, bottom=111, position=0)
     owner._select_category = Mock(return_value=True)
+    owner._category = Mock(return_value='sp')
     owner._settled_list = Mock(side_effect=[([], bottom), ([full_card()], top)])
     owner._drag_scroll = Mock(return_value=True)
     current, persist = record(), Mock()
     assert owner._find_archive(VISITORS, 'sp', current, persist, float('inf')) == full_card()
-    owner._drag_scroll.assert_called_once_with(bottom, True, current, persist)
+    owner._drag_scroll.assert_called_once_with(bottom, True, current, persist,
+                                               expected_category='sp', deadline=float('inf'))
     owner.device.click.assert_not_called()
+
+
+def test_identity_search_finishes_shortened_top_reset_before_accepting_card(owner):
+    bottom = dict(top=454, bottom=565)
+    short = dict(top=16, bottom=126)
+    top = dict(top=0, bottom=111)
+    owner._select_category = Mock(return_value=True)
+    owner._category = Mock(return_value='sp')
+    owner._settled_list = Mock(side_effect=[([], bottom), ([full_card()], short), ([full_card()], top)])
+    owner._drag_scroll = Mock(return_value=True)
+    current, persist = record(), Mock()
+    assert owner._find_archive(VISITORS, 'sp', current, persist, float('inf')) == full_card()
+    assert [call.args[0] for call in owner._drag_scroll.call_args_list] == [bottom, short]
+    assert all(call.args[1] is True for call in owner._drag_scroll.call_args_list)
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('after', [dict(top=16, bottom=126), dict(top=20, bottom=130),
+                                 dict(top=0, bottom=180), None])
+def test_top_reset_rejects_stagnant_reverse_changed_thumb_or_unknown_scroll(owner, after):
+    before = dict(top=16, bottom=126)
+    owner._category = Mock(return_value='sp')
+    owner._drag_scroll = Mock(return_value=True)
+    owner._settled_list = Mock(return_value=([], after))
+    result, reason = owner._reset_scroll_top('sp', ([], before), record(), Mock(), float('inf'))
+    assert result is None
+    assert reason == ('scroll_top_unrecognized' if after is None else 'scroll_top_not_reached')
+    owner._drag_scroll.assert_called_once()
+
+
+def test_top_reset_has_three_input_cap_even_while_progressing(owner):
+    owner._category = Mock(return_value='sp')
+    owner._drag_scroll = Mock(return_value=True)
+    owner._settled_list = Mock(side_effect=[([], dict(top=top, bottom=top + 110))
+                                           for top in (300, 200, 100)])
+    result, reason = owner._reset_scroll_top('sp', ([], dict(top=454, bottom=564)),
+                                           record(), Mock(), float('inf'))
+    assert result is None and reason == 'scroll_top_not_reached'
+    assert owner._drag_scroll.call_count == 3
+
+
+@pytest.mark.parametrize('category', [None, 'ex'])
+def test_top_reset_never_drags_different_or_unknown_category(owner, category):
+    owner._category = Mock(return_value=category)
+    owner._drag_scroll = Mock(return_value=True)
+    result, reason = owner._reset_scroll_top('sp', ([], dict(top=16, bottom=126)),
+                                           record(), Mock(), float('inf'))
+    assert result is None and reason == 'scroll_top_unverified'
+    owner._drag_scroll.assert_not_called()
+
+
+def test_top_reset_preserves_shared_deadline_and_stops_before_second_input(owner, monkeypatch):
+    clock = [170.0]
+    monkeypatch.setattr(p, 'monotonic', lambda: clock[0])
+    owner._category = Mock(return_value='sp')
+    owner._drag_scroll = Mock(return_value=True)
+    def settled(category, timeout):
+        assert category == 'sp' and timeout == 8
+        clock[0] = 181
+        return [], dict(top=16, bottom=126)
+    owner._settled_list = Mock(side_effect=settled)
+    result, reason = owner._reset_scroll_top('sp', ([], dict(top=454, bottom=565)),
+                                           record(), Mock(), 180)
+    assert result is None and reason == 'observation_deadline'
+    owner._drag_scroll.assert_called_once()
+    assert owner._archive_scroll_pending is None
+
+
+def test_top_reset_bounds_settling_by_remaining_shared_deadline(owner, monkeypatch):
+    monkeypatch.setattr(p, 'monotonic', lambda: 178)
+    owner._category = Mock(return_value='sp')
+    owner._drag_scroll = Mock(return_value=True)
+    owner._settled_list = Mock(return_value=([], dict(top=0, bottom=110)))
+    result, reason = owner._reset_scroll_top('sp', ([], dict(top=16, bottom=126)),
+                                           record(), Mock(), 180)
+    assert result == ([], dict(top=0, bottom=110)) and reason is None
+    owner._settled_list.assert_called_once_with('sp', timeout=2)
+
+
+def test_top_reset_fresh_progress_retries_preserve_pending_swipe_proof_and_journal(owner):
+    state = dict(top=454, bottom=565)
+    owner._list_page = Mock(return_value=True)
+    owner._category = Mock(return_value='sp')
+    owner._list_geometry = Mock(return_value=((88, 156, 148, 175),))
+    owner._scroll_info = lambda: dict(state)
+    owner.read_cards = Mock(return_value=[])
+    current, snapshots = record(), []
+    def swipe(*args, **kwargs):
+        snapshots.append(('swiped', current['scroll_drags']))
+        state.update(top=16 if current['scroll_drags'] == 1 else 0,
+                     bottom=126 if current['scroll_drags'] == 1 else 110)
+    owner.device.swipe.side_effect = swipe
+    result, reason = owner._reset_scroll_top('sp', ([], dict(state)), current,
+                                            lambda: snapshots.append(current['scroll_drags']), float('inf'))
+    assert result == ([], dict(top=0, bottom=110)) and reason is None
+    assert snapshots == [1, ('swiped', 1), 2, ('swiped', 2)]
+    assert owner.device.click_record_remove.call_count == 2
+    assert all(call.args == ('ARCHIVE_OBSERVE_SCROLL',)
+               for call in owner.device.click_record_remove.call_args_list)
+    assert owner._archive_scroll_pending is None
+    owner.device.click.assert_not_called()
+
+
+def test_top_reset_rechecks_category_and_deadline_immediately_before_input(owner, monkeypatch):
+    clock = [170]
+    monkeypatch.setattr(p, 'monotonic', lambda: clock[0])
+    before = dict(top=16, bottom=126)
+    owner._list_page = Mock(return_value=True)
+    owner._scroll_info = Mock(return_value=before)
+    owner._category = Mock(side_effect=['sp', 'ex'])
+    current, persist = record(), Mock()
+    result, reason = owner._reset_scroll_top('sp', ([], before), current, persist, 180)
+    assert result is None and reason == 'scroll_top_unverified'
+    owner.device.swipe.assert_not_called()
+    persist.assert_not_called()
+    def slow_category():
+        clock[0] = 181
+        return 'sp'
+    clock[0] = 170
+    # Recognition inside _drag_scroll may itself consume the remaining time.
+    owner._category = Mock(side_effect=lambda: slow_category() if owner._category.call_count == 2 else 'sp')
+    result, reason = owner._reset_scroll_top('sp', ([], before), current, persist, 180)
+    assert result is None and reason == 'observation_deadline'
+    owner.device.swipe.assert_not_called()
+    persist.assert_not_called()
 
 
 def test_progressive_census_exceeding_twelve_swipes_removes_only_own_verified_history(owner,
@@ -398,15 +525,35 @@ def test_census_reaches_actual_bottom_instead_of_stopping_five_percent_early(own
 
 def test_census_first_returns_to_actual_top_when_within_five_percent(owner, monkeypatch, tmp_path):
     owner._select_category = Mock(return_value=True)
+    owner._category = Mock(return_value='ex')
     almost_top = dict(top=20, bottom=120, position=.043)
-    owner._settled_list = Mock(side_effect=[([card()], almost_top), ([card('first')], None)])
+    owner._settled_list = Mock(side_effect=[([card()], almost_top),
+                                          ([card('first')], dict(top=0, bottom=100, position=0))])
     owner._drag_scroll = Mock(return_value=True)
     owner._capture = Mock(return_value='list.png')
     monkeypatch.setattr(p.ARCHIVE_KEYS, 'ocr', Mock(return_value='80/300'))
     current, persist = record(), Mock()
-    assert owner._observe_category('ex', tmp_path, current, persist, 20, float('inf')) == 'scroll_not_visible'
-    owner._drag_scroll.assert_called_once_with(almost_top, True, current, persist)
+    assert owner._observe_category('ex', tmp_path, current, persist, 1, float('inf')) == 'page_limit'
+    owner._drag_scroll.assert_called_once_with(almost_top, True, current, persist,
+                                               expected_category='ex', deadline=float('inf'))
     assert current['pages'][0]['cards'][0]['archive'] == 'first'
+
+
+def test_census_finishes_shortened_top_reset_before_capturing_first_page(owner, monkeypatch, tmp_path):
+    owner._select_category = Mock(return_value=True)
+    owner._category = Mock(return_value='sp')
+    owner._settled_list = Mock(side_effect=[
+        ([], dict(top=454, bottom=565)), ([card('short')], dict(top=16, bottom=126)),
+        ([card('first')], dict(top=0, bottom=110)),
+    ])
+    owner._drag_scroll = Mock(return_value=True)
+    owner._capture = Mock(return_value='top.png')
+    monkeypatch.setattr(p.ARCHIVE_KEYS, 'ocr', Mock(return_value='80/300'))
+    current = record()
+    assert owner._observe_category('sp', tmp_path, current, Mock(), 1, float('inf')) == 'page_limit'
+    assert owner._drag_scroll.call_count == 2
+    assert current['pages'][0]['cards'][0]['archive'] == 'first'
+    assert current['pages'][0]['scroll']['top'] == 0
 
 
 def test_full_catalog_half_steps_cover_every_whole_card_within_shared_deadline(owner, monkeypatch, tmp_path):
@@ -524,10 +671,7 @@ def use_en_identities(monkeypatch):
         name: Template(original.raw_file['en']) for name, original in p.dic_archives_template.items()})
 
 
-def test_actual_sp_bottom_with_only_unsupported_cards_is_scrollable_but_not_identified(owner, monkeypatch):
-    from module.base.utils import load_image
-    owner.device.image = load_image('tests/war_archives/data/f2p_archive_sp_bottom.png')
-    use_en_identities(monkeypatch)
+def use_en_buttons(owner):
     clones = {}
     def en_button(original):
         if id(original) not in clones:
@@ -540,6 +684,28 @@ def test_actual_sp_bottom_with_only_unsupported_cards_is_scrollable_but_not_iden
     owner.appear = lambda button, **kwargs: en_button(button).match(owner.device.image, **kwargs)
     owner.match_template_color = lambda button, **kwargs: en_button(button).match_template_color(
         owner.device.image, **kwargs)
+
+
+def test_actual_sp_short_reset_still_requires_another_drag_to_physical_top(owner):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/f2p_archive_sp_short_reset.png')
+    use_en_buttons(owner)
+    assert owner._list_page() and owner._category() == 'sp'
+    assert owner._list_geometry()
+    info = owner._scroll_info()
+    assert info == dict(top=16, bottom=126, position=.035)
+    assert not owner._scroll_at_top(info)
+    current = record()
+    assert owner._drag_scroll(info, True, current, Mock(), expected_category='sp')
+    assert current['scroll_drags'] == 1
+    owner.device.click.assert_not_called()
+
+
+def test_actual_sp_bottom_with_only_unsupported_cards_is_scrollable_but_not_identified(owner, monkeypatch):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/f2p_archive_sp_bottom.png')
+    use_en_identities(monkeypatch)
+    use_en_buttons(owner)
     assert owner._list_page() and owner._category() == 'sp'
     assert owner._list_geometry() == ((88, 156, 148, 175), (722, 156, 782, 175))
     cards, scroll = owner._settled_list('sp')

@@ -238,11 +238,14 @@ class ArchiveProgress(CampaignUI):
             settled.reset()
         return False
 
-    def _drag_scroll(self, info, to_top, record, persist):
+    def _drag_scroll(self, info, to_top, record, persist, expected_category=None, deadline=None):
         self._archive_scroll_pending = None
         if not self._list_page() or self._scroll_info() != info:
             return False
         category = self._category()
+        if ((expected_category is not None and category != expected_category)
+                or (deadline is not None and monotonic() >= deadline)):
+            return False
         left, top, right, bottom = ARCHIVE_SCROLL.area
         middle = (info['top'] + info['bottom']) / 2
         half = (info['bottom'] - info['top']) / 2
@@ -266,6 +269,40 @@ class ArchiveProgress(CampaignUI):
         record['diagnostics'].append(path)
         return path
 
+    def _reset_scroll_top(self, category, result, record, persist, deadline):
+        """Finish a shortened drag only after fresh, same-list upward progress."""
+        for _ in range(3):
+            _, before = result
+            if self._scroll_at_top(before):
+                return result, None
+            if monotonic() >= deadline:
+                return None, 'observation_deadline'
+            if self._category() != category:
+                return None, 'scroll_top_unverified'
+            if monotonic() >= deadline:
+                return None, 'observation_deadline'
+            if not self._drag_scroll(before, True, record, persist,
+                                     expected_category=category, deadline=deadline):
+                return None, ('observation_deadline' if monotonic() >= deadline
+                              else 'scroll_top_unverified')
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                self._archive_scroll_pending = None
+                return None, 'observation_deadline'
+            result = self._settled_list(category, timeout=min(8, remaining))
+            if monotonic() >= deadline:
+                self._archive_scroll_pending = None
+                return None, 'observation_deadline'
+            if result is None or result[1] is None:
+                return None, 'scroll_top_unrecognized'
+            _, after = result
+            same_thumb = abs((after['bottom'] - after['top']) - (before['bottom'] - before['top'])) <= 2
+            if not same_thumb or after['top'] >= before['top']:
+                return None, 'scroll_top_not_reached'
+        if self._scroll_at_top(result[1]):
+            return result, None
+        return None, 'scroll_top_not_reached'
+
     def _find_archive(self, archive, category, record, persist, deadline):
         """Search known list pages; never use legacy Scroll.set/search loops."""
         if monotonic() >= deadline:
@@ -277,14 +314,10 @@ class ArchiveProgress(CampaignUI):
             return None
         cards, scroll = result
         if scroll and not self._scroll_at_top(scroll):
-            if not self._drag_scroll(scroll, True, record, persist):
-                return None
-            result = self._settled_list(category)
-            if result is None:
+            result, reason = self._reset_scroll_top(category, result, record, persist, deadline)
+            if reason is not None:
                 return None
             cards, scroll = result
-            if scroll and not self._scroll_at_top(scroll):
-                return None
         seen = set()
         for index in range(20):
             if monotonic() >= deadline:
@@ -600,14 +633,10 @@ class ArchiveProgress(CampaignUI):
             return 'list_unrecognized'
         cards, scroll = result
         if scroll and not self._scroll_at_top(scroll):
-            if not self._drag_scroll(scroll, True, record, persist):
-                return 'scroll_top_unverified'
-            result = self._settled_list(category)
-            if result is None:
-                return 'scroll_top_unrecognized'
+            result, reason = self._reset_scroll_top(category, result, record, persist, deadline)
+            if reason is not None:
+                return reason
             cards, scroll = result
-            if scroll and not self._scroll_at_top(scroll):
-                return 'scroll_top_not_reached'
         seen = set()
         for index in range(max_pages):
             if monotonic() >= deadline:
