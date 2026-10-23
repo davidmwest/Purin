@@ -486,6 +486,19 @@ def test_page_navigation_uses_known_next_once_and_does_not_skip_locked_same_page
     current = stage_record()
     owner._navigate_goal(stage_goal('a2'), current, Mock())
     assert current['reason'] == 'target_locked_or_unreadable'
+    assert current['safe_target_return'] == dict(
+        verified=True, proof_kind='fresh_exact_archive_stage', account='alas',
+        event=VISITORS, stage='a2', mode='normal', page=1)
+    assert not current['verified_for_navigation'] and not current['verified_for_execution']
+    owner.device.click.assert_not_called()
+
+
+def test_unknown_stage_page_has_no_safe_return_proof(owner):
+    owner._read_stage_screen = Mock(return_value=None)
+    current = stage_record()
+    owner._navigate_goal(stage_goal('a2'), current, Mock())
+    assert current['reason'] == 'stage_navigation_unverified'
+    assert 'safe_target_return' not in current
     owner.device.click.assert_not_called()
 
 
@@ -526,6 +539,29 @@ def test_prepare_sets_only_fresh_entrance_and_clears_a_cached_one_on_failure(own
     owner.proof_for_goal.return_value = dict(verified_for_navigation=False)
     owner.prepare_goal(campaign, stage_goal())
     assert campaign.ENTRANCE.button == ()
+
+
+@pytest.mark.parametrize('account', ['alas', 'f2p'])
+def test_prepared_actual_entrance_supports_real_enter_map_color_check(owner, account):
+    from module.base.base import ModuleBase
+    from module.base.utils import load_image
+    owner.device.image = load_image(f'tests/war_archives/data/{account}_visitors_stages.png')
+    use_actual_en_page_detectors(owner)
+    observed = owner._read_stage_screen(VISITORS)
+    entrance = observed['stages']['a1']['entrance_area']
+    owner.proof_for_goal = Mock(return_value=dict(verified_for_navigation=True, entrance_area=entrance))
+    campaign = ModuleBase.__new__(ModuleBase)
+    campaign.device = owner.device
+    campaign.device.stuck_record_add = Mock()
+    owner.prepare_goal(campaign, stage_goal())
+    assert len(campaign.ENTRANCE.color) == 3
+    assert campaign.appear_then_click(campaign.ENTRANCE)
+    campaign.device.click.assert_called_once_with(campaign.ENTRANCE)
+    campaign.device.click.reset_mock()
+    left, top, right, bottom = entrance
+    campaign.device.image[top:bottom, left:right] = 0
+    assert not campaign.appear_then_click(campaign.ENTRANCE)
+    campaign.device.click.assert_not_called()
 
 
 @pytest.mark.parametrize('archive_object', [False, True])

@@ -391,6 +391,9 @@ class ArchiveProgress(CampaignUI):
         if proof.get('verified_for_navigation'):
             area = tuple(proof['entrance_area'])
             campaign.ENTRANCE = Button(area=area, color=(), button=area, name=goal.stage.lower())
+            # enter_map uses appear_then_click without a template offset, just
+            # like normal campaign OCR entrances: retain this fresh icon color.
+            campaign.ENTRANCE.load_color(self.device.image)
         return proof
 
     def _archive_identity(self, archive):
@@ -491,7 +494,11 @@ class ArchiveProgress(CampaignUI):
                 action = ARCHIVE_NEXT if desired_page > screen['page'] else CHAPTER_PREV
                 transition = f'page:{goal.mode}:{screen["page"]}:{desired_page}'
             else:
-                record.update(status='blocked', reason='target_locked_or_unreadable', unlocked=None)
+                record.update(status='blocked', reason='target_locked_or_unreadable', unlocked=None,
+                              safe_target_return=dict(
+                                  verified=True, proof_kind='fresh_exact_archive_stage',
+                                  account=self.config.config_name, event=goal.event,
+                                  mode=goal.mode, stage=target, page=screen['page']))
                 return
             # A fresh known state may authorize one input, never a repeated click
             # on a stale animation or recovery of an uncertain reserved input.
