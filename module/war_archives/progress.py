@@ -41,6 +41,11 @@ FILES_HEADER = Template('./assets/en/war_archives/ARCHIVE_FILES_HEADER_20261023.
 # The old Prelude portrait crop predates the current Moonlit Overture card.
 # Use its existing current-art crop without relaxing the identity threshold.
 CARD_IDENTITY_OVERRIDES = {'war_archives_20190314_en': TEMPLATE_MOONLIT_OVERTURE}
+TEMPESTA_SPLIT_PAGE_ARCHIVES = frozenset({
+    'war_archives_20231026_cn',
+    'war_archives_20241024_cn',
+    'war_archives_20251023_cn',
+})
 STAGE_KEYS = Ocr((1188, 107, 1272, 131), lang='cnocr', letter=(255, 255, 255),
                  threshold=96, alphabet='0123456789/', name='ARCHIVE_STAGE_KEYS')
 STAGE_TITLE = Ocr((210, 70, 1100, 100), lang='cnocr', letter=(255, 255, 255),
@@ -543,6 +548,13 @@ class ArchiveProgress(CampaignUI):
                     for suffix in ('', 'prequel', 'sequel')}
         return actual in expected
 
+    def _archive_stage_page_index(self, archive, stage):
+        # These archives keep the T prefix on both chapter pages. Generic
+        # campaign indexing treats every T stage as page 1.
+        if archive in TEMPESTA_SPLIT_PAGE_ARCHIVES and re.fullmatch(r't[1-6]', stage):
+            return 1 if int(stage[1:]) <= 3 else 2
+        return self._campaign_get_chapter_index(self._campaign_separate_name(stage)[0])
+
     def _read_stage_screen(self, archive):
         """Read only unlocked Clear/% stage icons on the exact archive page."""
         from module.war_archives.catalog import get_archive
@@ -577,7 +589,7 @@ class ArchiveProgress(CampaignUI):
         if len(modes) != 1:
             return None
         try:
-            pages = {self._campaign_get_chapter_index(self._campaign_separate_name(name)[0]) for name in stages}
+            pages = {self._archive_stage_page_index(archive, name) for name in stages}
         except (CampaignNameError, ValueError, IndexError):
             return None
         if len(pages) != 1:
@@ -589,7 +601,7 @@ class ArchiveProgress(CampaignUI):
 
     def _navigate_goal(self, goal, record, persist):
         target = goal.stage.lower()
-        desired_page = self._campaign_get_chapter_index(self._campaign_separate_name(target)[0])
+        desired_page = self._archive_stage_page_index(goal.event, target)
         previous = None
         settled = Timer(1, count=2).start()
         for _ in self.loop(skip_first=False, timeout=45):

@@ -897,6 +897,84 @@ def stage_record():
                 verified_for_execution=False)
 
 
+TEMPESTA_ARCHIVES = ('war_archives_20231026_cn', 'war_archives_20241024_cn',
+                     'war_archives_20251023_cn')
+
+
+@pytest.mark.parametrize('archive', TEMPESTA_ARCHIVES)
+@pytest.mark.parametrize('stage,page', [('t1', 1), ('t2', 1), ('t3', 1),
+                                       ('t4', 2), ('t5', 2), ('t6', 2)])
+def test_tempesta_stage_pages_keep_t_prefix_across_two_pages(owner, archive, stage, page):
+    assert owner._archive_stage_page_index(archive, stage) == page
+
+
+@pytest.mark.parametrize('archive,stage,page', [
+    (VISITORS, 'a1', 1), (VISITORS, 'b1', 2), (VISITORS, 'c1', 1), (VISITORS, 'd1', 2),
+    ('war_archives_20230525_cn', 't4', 1), ('war_archives_20230525_cn', 'ht4', 1),
+    ('war_archives_20240725_cn', 't3', 1), ('war_archives_20240725_cn', 'ht3', 1),
+    ('war_archives_20231026_cn', 'ht4', 1), ('event_20241024_cn', 't4', 1),
+])
+def test_archive_page_override_preserves_other_stage_mappings(owner, archive, stage, page):
+    assert owner._archive_stage_page_index(archive, stage) == page
+
+
+@pytest.mark.parametrize('archive', TEMPESTA_ARCHIVES)
+@pytest.mark.parametrize('names,page', [(['T1', 'T3'], 1), (['T4', 'T6'], 2), (['T3', 'T4'], None)])
+def test_tempesta_stage_reader_uses_archive_page_and_rejects_mixed_pages(owner, monkeypatch, archive, names, page):
+    from module.war_archives import catalog
+    definition = SimpleNamespace(normal_stages=('t1', 't2', 't3', 't4', 't5', 't6'), hard_stages=())
+    definition.stages = lambda mode: definition.normal_stages if mode == 'normal' else ()
+    monkeypatch.setattr(catalog, 'get_archive', lambda identity: definition if identity == archive else None)
+    owner._archive_identity = Mock(return_value=True)
+    buttons = [Button(area=(200 + i * 100, 200, 220 + i * 100, 220), color=(),
+                      button=(200 + i * 100, 200, 220 + i * 100, 220)) for i in range(len(names))]
+    owner.campaign_match_multi = Mock(side_effect=[buttons, []])
+    monkeypatch.setattr(p, 'Ocr', lambda *args, **kwargs: SimpleNamespace(ocr=lambda image: names))
+    monkeypatch.setattr(p.STAGE_KEYS, 'ocr', Mock(return_value='300/300'))
+    result = owner._read_stage_screen(archive)
+    if page is None:
+        assert result is None
+    else:
+        assert result['page'] == page and result['event'] == archive
+        assert result['mode'] == 'normal' and set(result['stages']) == {name.lower() for name in names}
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('archive', TEMPESTA_ARCHIVES)
+@pytest.mark.parametrize('origin,target,first_page,target_page,action', [
+    ('t3', 't4', 1, 2, p.ARCHIVE_NEXT), ('t6', 't1', 2, 1, p.CHAPTER_PREV),
+])
+def test_tempesta_navigation_moves_once_between_pages_then_requires_fresh_target(
+        owner, archive, origin, target, first_page, target_page, action):
+    from module.campaign.campaign_stars import StageGoal
+    first = dict(stage_screen(stage=origin, page=first_page), event=archive)
+    second = dict(stage_screen(stage=target, page=target_page), event=archive)
+    owner._read_stage_screen = Mock(side_effect=[first, first, second, second])
+    owner.appear.return_value = True
+    current, saved = stage_record(), []
+    owner.device.click.side_effect = lambda button: saved.append(('click', list(current['navigation_inputs'])))
+    owner._navigate_goal(StageGoal(archive, target, 'normal', 'archive_clear'), current,
+                         lambda: saved.append(('save', list(current['navigation_inputs']))))
+    transition = f'page:normal:{first_page}:{target_page}'
+    assert saved == [('save', [transition]), ('click', [transition])]
+    owner.device.click.assert_called_once_with(action)
+    assert current['verified_for_navigation'] and current['verified_for_execution']
+    assert current['navigation_inputs'] == [transition]
+
+
+@pytest.mark.parametrize('archive', TEMPESTA_ARCHIVES)
+def test_tempesta_missing_target_on_current_second_page_does_not_click_next(owner, archive):
+    from module.campaign.campaign_stars import StageGoal
+    owner._read_stage_screen = Mock(return_value=dict(stage_screen(stage='t4', page=2), event=archive))
+    owner.appear.return_value = True
+    current = stage_record()
+    owner._navigate_goal(StageGoal(archive, 't5', 'normal', 'archive_clear'), current, Mock())
+    assert current['reason'] == 'target_locked_or_unreadable'
+    assert current['safe_target_return']['page'] == 2
+    assert not current['verified_for_navigation']
+    owner.device.click.assert_not_called()
+
+
 def use_actual_en_page_detectors(owner):
     # Read real page/overlay assets without relying on another test setting the
     # process-global server cache before this module is imported.
