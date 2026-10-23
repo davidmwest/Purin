@@ -11,6 +11,7 @@ from module.campaign.campaign_stars import (CampaignStars, EventExtra, EventStar
 from module.campaign.run import CampaignRun
 from module.config.config import TaskEnd
 from module.exception import CampaignEnd, GameNotRunningError, ScriptEnd
+from module.handler.fast_forward import FastForwardHandler
 
 
 def test_main_plan_is_ordered_and_has_an_explicit_upper_bound():
@@ -276,6 +277,34 @@ def test_one_clear_goal_rejects_early_emotion_withdrawal(monkeypatch, boss_clear
     runner.run_count = 1
     monkeypatch.setattr(runner, 'run', lambda *args, **kwargs: setattr(runner, 'boss_cleared', boss_cleared))
     assert runner.run_goal(StageGoal('event_test', 'SP', goal='clear')) == result
+
+
+@pytest.mark.parametrize('boss_cleared,result', [(False, 'blocked'), (True, 'complete')])
+def test_sp_full_preparation_bar_without_stars_never_substitutes_for_boss_victory(
+        monkeypatch, boss_cleared, result):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    campaign = SimpleNamespace(
+        config=runner.config, map_is_100_percent_clear=True, map_is_3_stars=False,
+        handle_chapter_additional=Mock(), ensure_campaign_ui=Mock(), combat_status=Mock(), run_lost=False)
+    campaign.triggered_map_stop = lambda: FastForwardHandler.triggered_map_stop(campaign)
+    monkeypatch.setattr(CampaignRun, 'load_campaign',
+                        lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+
+    def run(*args, **kwargs):
+        runner.load_campaign('sp', 'event_20261022_cn')
+        # SP exposes the preparation button before its percentage animation
+        # settles. Even this full bar must allow the one authorized boss sortie.
+        assert runner.config.StopCondition_MapAchievement == 'non_stop'
+        assert not campaign.triggered_map_stop()
+        runner.run_count = 1
+        runner.boss_cleared = boss_cleared
+
+    monkeypatch.setattr(runner, 'run', run)
+    goal = event_plan('event_20261022_cn')[-1]
+    assert goal.stage == 'SP' and goal.goal == 'clear'
+    assert runner.run_goal(goal) == result
+    assert not runner.goal_complete
 
 
 @pytest.mark.parametrize('expected_end,won,lost,complete', [

@@ -107,7 +107,10 @@ def stage_overrides(config, goal):
     values = dict(Campaign_Name=goal.stage, Campaign_Event=goal.event, Campaign_Mode=goal.mode,
                   Campaign_UseClearMode=False, Campaign_UseAutoSearch=False, Campaign_Use2xBook=False,
                   ShipRotation_Enable=False, StopCondition_MapAchievement=(
-                      'map_3_stars' if goal.goal == 'three_stars' else '100_percent_clear'),
+                      # One-time SP preparation skips percentage stabilization;
+                      # its initial full bar cannot prove a previous boss clear.
+                      # Clear goals are certified by boss-victory evidence below.
+                      'map_3_stars' if goal.goal == 'three_stars' else 'non_stop'),
                   StopCondition_RunCount=0, StopCondition_StageIncrease=False,
                   StopCondition_StageRetreat=0, StopCondition_RetreatRemain=0,
                   StopCondition_EndOnLoss=False, StopCondition_GetNewShip=False,

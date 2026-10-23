@@ -1,7 +1,13 @@
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+import cv2
 import pytest
 
+import module.config.server as server
+import module.handler.fast_forward as fast_forward
+from module.exception import ScriptError
 from module.handler.fast_forward import FastForwardHandler
 
 
@@ -132,6 +138,7 @@ def test_a_stage_with_stars_to_get_is_played_out_of_clear_mode(monkeypatch):
     switch.set = lambda state, main: switch.calls.append(state) or False
     monkeypatch.setattr('module.handler.fast_forward.CLEAR_MODE', switch)
     handler = star_handler((1, 3), clear_all=True)
+    handler._map_switch_set = lambda switch, state: switch.set(state, main=handler)
 
     FastForwardHandler.handle_fast_forward(handler)
 
@@ -145,12 +152,101 @@ def test_a_stage_with_every_star_keeps_clear_mode(monkeypatch):
     switch.set = lambda state, main: switch.calls.append(state) or False
     monkeypatch.setattr('module.handler.fast_forward.CLEAR_MODE', switch)
     handler = star_handler((1, 2, 3))
+    handler._map_switch_set = lambda switch, state: switch.set(state, main=handler)
 
     FastForwardHandler.handle_fast_forward(handler)
 
     assert switch.calls == ['on']
     assert handler.map_is_clear_mode is True
     assert handler.map_is_auto_search is True
+
+
+def test_disabling_clear_mode_never_waits_for_or_taps_its_hidden_auto_search(monkeypatch):
+    handler = star_handler((1, 3), clear_all=True)
+    handler._map_switch_set = Mock(return_value=True)
+    handler.map_wait_auto_search = Mock(side_effect=AssertionError('Auto Search becomes hidden'))
+    auto_search = SimpleNamespace(get=Mock(side_effect=AssertionError('stale checkbox must not be read')))
+    monkeypatch.setattr(fast_forward, 'AUTO_SEARCH', auto_search)
+
+    assert handler.handle_fast_forward() is True
+    assert handler.handle_auto_search() is False
+
+    handler._map_switch_set.assert_called_once_with(fast_forward.CLEAR_MODE, 'off')
+    assert handler.map_is_auto_search is False
+
+
+def map_switch_handler(reads, monkeypatch):
+    handler = FastForwardHandler.__new__(FastForwardHandler)
+    handler.device = SimpleNamespace(image=None, screenshot=Mock())
+    loop_calls = []
+    handler.loop = lambda **kwargs: loop_calls.append(kwargs) or iter(range(len(reads)))
+    switch = SimpleNamespace(name='Test_Map_Switch', get=Mock(side_effect=reads), click=Mock())
+    monkeypatch.setattr(fast_forward, 'Timer', lambda *a, **k: SimpleNamespace(
+        reached=lambda: True, reset=lambda: None))
+    return handler, switch, loop_calls
+
+
+def test_map_toggle_rechecks_fresh_frames_after_a_known_click(monkeypatch):
+    handler, switch, loop_calls = map_switch_handler(['on', 'unknown', 'off'], monkeypatch)
+
+    assert handler._map_switch_set(switch, 'off') is True
+
+    switch.click.assert_called_once_with('off', main=handler)
+    assert loop_calls == [{'skip_first': False, 'timeout': 5}]
+
+
+def test_map_toggle_never_clicks_an_unknown_state(monkeypatch):
+    handler, switch, _ = map_switch_handler(['unknown'] * 6, monkeypatch)
+
+    with pytest.raises(ScriptError, match='did not reach off'):
+        handler._map_switch_set(switch, 'off')
+
+    switch.click.assert_not_called()
+
+
+def test_map_toggle_stops_after_three_rejected_known_clicks(monkeypatch):
+    handler, switch, _ = map_switch_handler(['on'] * 8, monkeypatch)
+
+    with pytest.raises(ScriptError, match='did not reach off'):
+        handler._map_switch_set(switch, 'off')
+
+    assert switch.click.call_count == 3
+
+
+def test_auto_search_refreshes_before_treating_the_control_as_absent(monkeypatch):
+    handler = star_handler((1, 2, 3))
+    handler.map_is_clear_mode = True
+    handler.map_is_auto_search = True
+    handler.device = SimpleNamespace(screenshot=Mock())
+    handler._map_switch_set = Mock()
+    monkeypatch.setattr(fast_forward, 'AUTO_SEARCH', SimpleNamespace(get=lambda main: 'unknown'))
+
+    assert handler.handle_auto_search() is False
+
+    handler.device.screenshot.assert_called_once()
+    handler._map_switch_set.assert_not_called()
+    assert handler.map_is_auto_search is False
+
+
+def test_captured_t4_clearing_mode_off_hides_auto_search():
+    previous = server.server
+    server.set_server('en')
+    try:
+        handler = FastForwardHandler.__new__(FastForwardHandler)
+        path = Path(__file__).parent / 'data' / 'clear_mode_off_t4.png'
+        handler.device = SimpleNamespace(
+            image=cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB), stuck_record_add=Mock())
+
+        assert fast_forward.CLEAR_MODE.get(main=handler) == 'off'
+        assert fast_forward.AUTO_SEARCH.get(main=handler) == 'unknown'
+
+        handler.map_is_clear_mode = False
+        handler.map_is_auto_search = True
+        handler._map_switch_set = Mock()
+        assert handler.handle_auto_search() is False
+        handler._map_switch_set.assert_not_called()
+    finally:
+        server.set_server(previous)
 
 
 def settled(reads):

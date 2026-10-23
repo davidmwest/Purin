@@ -4,6 +4,7 @@ from module.base.timer import Timer
 from module.base.utils import color_bar_percentage
 from module.campaign.stage import stage_names
 from module.campaign.star_pass import clear_star_runs, star_stage_key
+from module.exception import ScriptError
 from module.handler.assets import *
 from module.handler.auto_search import AutoSearchHandler
 from module.logger import logger
@@ -237,10 +238,31 @@ class FastForwardHandler(AutoSearchHandler):
             pass
 
         state = 'on' if use_clear_mode else 'off'
-        changed = CLEAR_MODE.set(state, main=self)
-        if changed:
+        changed = self._map_switch_set(CLEAR_MODE, state)
+        if changed and use_clear_mode:
             self.map_wait_auto_search()
         return changed
+
+    def _map_switch_set(self, switch, state, timeout=5, max_clicks=3):
+        """Set a map toggle from fresh, recognized states, with a finite retry budget."""
+        changed = False
+        clicks = 0
+        click_timer = Timer(1, count=2)
+        for _ in self.loop(skip_first=False, timeout=timeout):
+            current = switch.get(main=self)
+            logger.attr(switch.name, current)
+            if current == state:
+                return changed
+            if current == 'unknown':
+                continue
+            if click_timer.reached():
+                if clicks >= max_clicks:
+                    break
+                switch.click(state, main=self)
+                clicks += 1
+                changed = True
+                click_timer.reset()
+        raise ScriptError(f'Map switch {switch.name} did not reach {state} from a recognized state')
 
     def _is_map_star_active(self, button):
         return self.image_color_count(button, color=(250, 232, 140), threshold=75, count=35)
@@ -324,16 +346,20 @@ class FastForwardHandler(AutoSearchHandler):
         Pages:
             in: MAP_PREPARATION
         """
-        # if not self.map_is_clear_mode:
-        #     return False
+        if not self.map_is_clear_mode:
+            # Clearing Mode hides Auto Search when switched off. The previous
+            # screenshot can still contain its old checkbox and click offset.
+            self.map_is_auto_search = False
+            return False
 
-        if not AUTO_SEARCH.appear(main=self):
+        self.device.screenshot()
+        if AUTO_SEARCH.get(main=self) == 'unknown':
             logger.info('No auto search option.')
             self.map_is_auto_search = False
             return False
 
         state = 'on' if self.map_is_auto_search else 'off'
-        changed = AUTO_SEARCH.set(state, main=self)
+        changed = self._map_switch_set(AUTO_SEARCH, state)
 
         return changed
 
