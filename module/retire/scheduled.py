@@ -12,6 +12,7 @@ from module.exception import GameStuckError
 from module.gacha.ui import GachaUI
 from module.logger import logger
 from module.retire.assets import IN_RETIREMENT_CHECK, RETIRE_SETTING_QUIT
+from module.retire.common import CommonDuplicates
 from module.retire.retirement import Retirement
 from module.ui.page import page_build, page_dock
 
@@ -30,7 +31,7 @@ class EnhanceShips(Retirement):
         self.config.task_delay(server_update=True)
 
 
-class RetireShips(Retirement, GachaUI):
+class RetireShips(CommonDuplicates, Retirement, GachaUI):
     def retire_page_enter(self):
         """
         The last option of the side menu of the build page.
@@ -80,6 +81,8 @@ class RetireShips(Retirement, GachaUI):
             self.quick_retire_setting_set(filter_5='keep_limit_break')
             self.retire_ships_one_click()
             self._retirement_quit()
+            if getattr(self.config, 'Retirement_CommonDuplicates', False):
+                self.retire_common_duplicates()
             self.config.task_delay(server_update=True)
             return
         if mode == 'old_retire':
@@ -93,4 +96,6 @@ class RetireShips(Retirement, GachaUI):
         else:
             logger.info('Nothing to retire')
         self._retirement_quit()
+        if getattr(self.config, 'Retirement_CommonDuplicates', False):
+            self.retire_common_duplicates()
         self.config.task_delay(server_update=True)

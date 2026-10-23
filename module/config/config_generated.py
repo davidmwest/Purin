@@ -59,6 +59,7 @@ class GeneratedConfig:
 
     # Group `Retirement`
     Retirement_DryRun = False
+    Retirement_CommonDuplicates = False
     Retirement_RetireMode = 'one_click_retire'  # one_click_retire, enhance, old_retire, do_not_retire
 
     # Group `OneClickRetire`
@@ -85,6 +86,18 @@ class GeneratedConfig:
     Campaign_UseAutoSearch = True
     Campaign_Use2xBook = False
     Campaign_AmbushEvade = True
+
+    # Group `StarPass`
+    StarPass_EndStage = '16-4'
+    StarPass_MaxRunsPerStage = 6
+    StarPass_StagesPerRun = 4
+    StarPass_CollectRewards = True
+    StarPass_CompleteStory = False
+    StarPass_TryEx = True
+
+    # Group `EventCompletion`
+    EventCompletion_CollectRewards = True
+    EventCompletion_CompleteStory = False
 
     # Group `StopCondition`
     StopCondition_OilLimit = 1000

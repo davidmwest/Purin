@@ -62,6 +62,10 @@
       "name": "Main-3",
       "help": ""
     },
+    "CampaignStars": {
+      "name": "Campaign Stars",
+      "help": "Collect normal-campaign three-star mission gems. Completed stages and bounded attempts are saved separately for this account and job. The pass holds at a locked stage, loss or attempt limit."
+    },
     "Formation": {
       "name": "Formation",
       "help": "Fills the empty slots of the fleets that the task Main uses with the best free ships of the dock, by level and rarity: vanguard ships in the vanguard, main fleet ships in the main fleet. A new account starts with a few ships, and the game does not add the ships that drop or are built. Ships already in a fleet stay. Runs every hour"
@@ -89,6 +93,14 @@
     "Event": {
       "name": "Event",
       "help": ""
+    },
+    "EventStars": {
+      "name": "Event Stars",
+      "help": "Complete every implemented combat stage of the selected event: three stars for regular maps, one successful clear for SP/EX. Unsupported EX maps are reported without entering them."
+    },
+    "EventExtra": {
+      "name": "Event EX Inspection",
+      "help": "Inspect the current event EX entrance once and save recognized preparation screens. This task does not start combat. It disables itself after inspection and resumes Then Task."
     },
     "Event2": {
       "name": "Event-2",
@@ -700,6 +712,10 @@
       "name": "Preview Only",
       "help": "Blocks all retirement confirmations. Scheduled RetireShips records the Quick Retire selection with R/E/N priorities and Keep Enough to Max LB, then cancels it. A full dock stops for review."
     },
+    "CommonDuplicates": {
+      "name": "Retire common duplicates",
+      "help": "Only idle unlocked Lv1 Normal ships with a freshly verified locked copy of the same exact name. Dry Run still requires a preview before retirement."
+    },
     "RetireMode": {
       "name": "Retirement Mode",
       "help": "If mode is one click retire, in game retire settings are enforced\nIf mode is enhance but unable to do so, will fallback to one click retire as default\nIf mode is do not retire, Alas stops and asks for you when the dock is full",
@@ -962,6 +978,50 @@
     "AmbushEvade": {
       "name": "Evade Ambush(es)",
       "help": ""
+    }
+  },
+  "StarPass": {
+    "_info": {
+      "name": "Star collection",
+      "help": "Uses the standard map star reader and clears all enemies whenever a missing star requires it."
+    },
+    "EndStage": {
+      "name": "Last campaign stage",
+      "help": "Normal campaign upper bound, from 1-1 through 16-4. The pass stops earlier if a stage is locked."
+    },
+    "MaxRunsPerStage": {
+      "name": "Maximum attempts per stage",
+      "help": "Persistent combat attempt budget per stage (1–12). SP/EX are limited to one attempt. A final inspection may verify completion without starting combat."
+    },
+    "StagesPerRun": {
+      "name": "Stages per scheduler run",
+      "help": "Maximum number of pending stages processed before yielding to other tasks."
+    },
+    "CollectRewards": {
+      "name": "Collect mission rewards",
+      "help": "Claim available stage-clear and three-star mission rewards before and after the pass. Does not buy items or claim unsupported event point ladders."
+    },
+    "CompleteStory": {
+      "name": "Complete event story",
+      "help": "Optional event story job before combat. Supported event story navigation only; disabled by default."
+    },
+    "TryEx": {
+      "name": "Try supported EX or scout entrance",
+      "help": "Clear an implemented EX map once. If the map is unsupported, inspect only the known EX entrance once per account/event and save diagnostics; no unsupported battle is started."
+    }
+  },
+  "EventCompletion": {
+    "_info": {
+      "name": "Event completion",
+      "help": "Bounded optional event story and ordinary mission reward collection."
+    },
+    "CollectRewards": {
+      "name": "Collect mission rewards",
+      "help": "Claim available clear and star mission rewards before and after event farming."
+    },
+    "CompleteStory": {
+      "name": "Complete event story",
+      "help": "Finish supported event story before farming. Disabled by default."
     }
   },
   "StopCondition": {

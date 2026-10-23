@@ -62,6 +62,10 @@
       "name": "主线图-3",
       "help": ""
     },
+    "CampaignStars": {
+      "name": "Task.CampaignStars.name",
+      "help": "Task.CampaignStars.help"
+    },
     "Formation": {
       "name": "自动编队",
       "help": "用船坞中空闲的最佳舰船（按等级和稀有度）补满主线任务所用舰队的空位：前排舰船进前排，后排舰船进后排。新账号开始只有几艘舰船，游戏不会把掉落或建造的舰船加入舰队。已在舰队中的舰船保持不变。每小时运行一次"
@@ -89,6 +93,14 @@
     "Event": {
       "name": "活动图",
       "help": ""
+    },
+    "EventStars": {
+      "name": "Task.EventStars.name",
+      "help": "Task.EventStars.help"
+    },
+    "EventExtra": {
+      "name": "Task.EventExtra.name",
+      "help": "Task.EventExtra.help"
     },
     "Event2": {
       "name": "活动图-2",
@@ -700,6 +712,10 @@
       "name": "Preview Only",
       "help": "Blocks all retirement confirmations. Scheduled RetireShips records the Quick Retire selection with R/E/N priorities and Keep Enough to Max LB, then cancels it. A full dock stops for review."
     },
+    "CommonDuplicates": {
+      "name": "Retirement.CommonDuplicates.name",
+      "help": "Retirement.CommonDuplicates.help"
+    },
     "RetireMode": {
       "name": "退役模式",
       "help": "若选择强化，强化材料不足时回退到一键退役",
@@ -962,6 +978,50 @@
     "AmbushEvade": {
       "name": "规避伏击",
       "help": ""
+    }
+  },
+  "StarPass": {
+    "_info": {
+      "name": "StarPass._info.name",
+      "help": "StarPass._info.help"
+    },
+    "EndStage": {
+      "name": "StarPass.EndStage.name",
+      "help": "StarPass.EndStage.help"
+    },
+    "MaxRunsPerStage": {
+      "name": "StarPass.MaxRunsPerStage.name",
+      "help": "StarPass.MaxRunsPerStage.help"
+    },
+    "StagesPerRun": {
+      "name": "StarPass.StagesPerRun.name",
+      "help": "StarPass.StagesPerRun.help"
+    },
+    "CollectRewards": {
+      "name": "StarPass.CollectRewards.name",
+      "help": "StarPass.CollectRewards.help"
+    },
+    "CompleteStory": {
+      "name": "StarPass.CompleteStory.name",
+      "help": "StarPass.CompleteStory.help"
+    },
+    "TryEx": {
+      "name": "StarPass.TryEx.name",
+      "help": "StarPass.TryEx.help"
+    }
+  },
+  "EventCompletion": {
+    "_info": {
+      "name": "EventCompletion._info.name",
+      "help": "EventCompletion._info.help"
+    },
+    "CollectRewards": {
+      "name": "EventCompletion.CollectRewards.name",
+      "help": "EventCompletion.CollectRewards.help"
+    },
+    "CompleteStory": {
+      "name": "EventCompletion.CompleteStory.name",
+      "help": "EventCompletion.CompleteStory.help"
     }
   },
   "StopCondition": {

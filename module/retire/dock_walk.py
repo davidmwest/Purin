@@ -8,6 +8,7 @@ signature, the strip of its card heads, so no card is counted twice.
 import cv2
 
 from module.base.utils import crop
+from module.exception import RequestHumanTakeover
 from module.inventory.inventory import (DRAG_SPEED, DRAG_X, LIST_BOTTOM, LIST_TOP, ROW_AFTER_DRAG, ROW_DELTA,
                                         CARD_LEFTS, DockReader, find_row, gap_ends)
 from module.logger import logger
@@ -21,16 +22,18 @@ END_DRAGS = 3
 
 
 class DockWalker:
-    def __init__(self, main, list_bottom=LIST_BOTTOM, card_read_bottom=CARD_READ_BOTTOM):
+    def __init__(self, main, list_bottom=LIST_BOTTOM, card_read_bottom=CARD_READ_BOTTOM, max_screens=None):
         """
         Args:
             main (ModuleBase): With its device on page_dock
             list_bottom (int): Bottom of the visible card list, above a picker's Confirm bar
             card_read_bottom (int): Height of a card that must be visible before yielding it
+            max_screens (int | None): Optional loop budget, including screens that yield no cards
         """
         self.main = main
         self.list_bottom = list_bottom
         self.card_read_bottom = card_read_bottom
+        self.max_screens = max_screens
         self.reader = DockReader()
         self.fleet_scanner = FleetScanner()
 
@@ -90,7 +93,11 @@ class DockWalker:
         self.list_top()
         last = None
         lost = 0
+        screens = 0
         while 1:
+            if self.max_screens is not None and screens >= self.max_screens:
+                raise RequestHumanTakeover('Dock walk exceeded its screenshot budget')
+            screens += 1
             self.device.screenshot()
             image = self.device.image
             rows = [row for row in self.reader.rows(image)

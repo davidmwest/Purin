@@ -125,6 +125,7 @@ DropRecord:
     option: [ do_not, save, upload, save_and_upload ]
 Retirement:
   DryRun: false
+  CommonDuplicates: false
   RetireMode:
     value: one_click_retire
     option: [ one_click_retire, enhance, old_retire, do_not_retire ]
@@ -162,6 +163,16 @@ Campaign:
   UseAutoSearch: true
   Use2xBook: false
   AmbushEvade: true
+StarPass:
+  EndStage: 16-4
+  MaxRunsPerStage: 6
+  StagesPerRun: 4
+  CollectRewards: true
+  CompleteStory: false
+  TryEx: true
+EventCompletion:
+  CollectRewards: true
+  CompleteStory: false
 StopCondition:
   OilLimit: 1000
   RunCount: 0

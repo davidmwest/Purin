@@ -26,6 +26,34 @@ Main2:
 Main3:
   Campaign:
     Event: campaign_main
+CampaignStars:
+  Campaign:
+    Name:
+      value: 1-1
+      display: display
+    Event: campaign_main
+    Mode: normal
+    UseClearMode: false
+    UseAutoSearch: false
+    Use2xBook: false
+  StarPass:
+    CompleteStory: false
+EventStars:
+  Campaign:
+    Name: T1
+    Mode: normal
+    UseClearMode: false
+    UseAutoSearch: false
+    Use2xBook: false
+  StarPass:
+    EndStage: 16-4
+EventExtra:
+  Campaign:
+    Name: EX
+    Mode: normal
+    UseClearMode: false
+    UseAutoSearch: false
+    Use2xBook: false
 GemsFarming:
   Campaign:
     Mode: normal

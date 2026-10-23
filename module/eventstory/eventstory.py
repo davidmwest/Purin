@@ -1,36 +1,122 @@
+import os
+from datetime import datetime
+from time import monotonic
+
 from module.base.timer import Timer
-from module.base.utils import rgb2gray
-from module.campaign.campaign_ui import CampaignUI
+from module.base.utils import rgb2gray, save_image
+from module.campaign.campaign_ui import CampaignUI, MODE_SWITCH_20241219
 from module.combat.combat import Combat
 from module.eventstory.assets import *
 from module.handler.login import LoginHandler
 from module.logger import logger
-from module.ui.page import page_event, page_sp
+from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_CANCEL, MAP_PREPARATION_HARD
+from module.ui.assets import GOTO_MAIN
+from module.ui.page import Page, page_event, page_main, page_sp
+
+STORY_TIMEOUT = 90
+STORY_PASS_TIMEOUT = 600
+STORY_TRANSITIONS_MAX = 64
+STORY_BATTLES_MAX = 8
+EVENT_DIAGNOSTIC_DIR = './log/event_completion'
+EVENT_DIAGNOSTIC_KEEP = 40
+
+
+def ensure_event_page(main, destination, timeout=30, max_clicks=12):
+    """Use the normal page graph with a finite budget and recognized screens only."""
+    Page.init_connection(destination)
+    main.interval_clear(list(Page.iter_check_buttons()))
+    clicks = 0
+    try:
+        for _ in main.loop(timeout=timeout):
+            GOTO_MAIN.clear_offset()
+            if main.ui_page_appear(destination):
+                main.ui_current = destination
+                return True
+            if clicks >= max_clicks:
+                break
+            for page in Page.iter_pages():
+                if page.parent is None or page.check_button is None:
+                    continue
+                if main.appear(page.check_button, offset=(30, 30), interval=3):
+                    button = page.links[page.parent]
+                    main.device.click(button)
+                    main.ui_button_interval_reset(button)
+                    clicks += 1
+                    break
+            else:
+                # The common campaign runner may leave a recognized preparation screen.
+                if any(main.appear(button, offset=(20, 50), interval=3) for button in (
+                        MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION)):
+                    main.device.click(MAP_PREPARATION_CANCEL)
+                    clicks += 1
+        return False
+    finally:
+        Page.clear_connection()
+
+
+def ensure_event_switch(main, switch, state, timeout=10, max_clicks=3):
+    """Switch a recognized event selector; unknown screens never authorize a click."""
+    clicks = 0
+    click_timer = Timer(1, count=2)
+    for _ in main.loop(timeout=timeout):
+        current = switch.get(main=main)
+        if current == state:
+            return True
+        if current == 'unknown':
+            continue
+        if click_timer.reached():
+            if clicks >= max_clicks:
+                return False
+            switch.click(state, main=main)
+            clicks += 1
+            click_timer.reset()
+    return False
+
+
+def save_event_diagnostic(device, tag):
+    """Keep the screen that stopped a bounded event action, without masking its result."""
+    try:
+        os.makedirs(EVENT_DIAGNOSTIC_DIR, exist_ok=True)
+        tag = ''.join(c if c.isalnum() or c in '-_' else '_' for c in tag)
+        file = os.path.abspath(os.path.join(
+            EVENT_DIAGNOSTIC_DIR, f'{datetime.now():%Y-%m-%d_%H-%M-%S_%f}_{tag}.png'))
+        save_image(device.image, file)
+        logger.info(f'Event screen saved: {file}')
+        for old in sorted(name for name in os.listdir(EVENT_DIAGNOSTIC_DIR) if name.endswith('.png'))[:-EVENT_DIAGNOSTIC_KEEP]:
+            os.remove(os.path.join(EVENT_DIAGNOSTIC_DIR, old))
+        return file
+    except Exception as exc:
+        logger.warning(f'Event screen not saved: {exc}')
+        return None
 
 
 class EventStory(CampaignUI, Combat, LoginHandler):
-    def ui_goto_event_story(self):
+    def ui_goto_event_story(self, event=None):
         """
         Returns:
             str: 'finish', 'story', 'unknown'
         """
-        event = self.config.cross_get('Event.Campaign.Event', '')
+        if event is None:
+            event = self.config.cross_get('Event.Campaign.Event', '')
         if event in [
             'event_20251023_cn',
             'event_20261022_cn',
         ]:
             # SP event
-            self.ui_ensure(page_sp)
+            destination = page_sp
         else:
             # most events show as page_event
-            self.ui_ensure(page_event)
-        self.campaign_ensure_mode_20241219('story')
+            destination = page_event
+        if not ensure_event_page(self, destination):
+            return 'unknown'
+        if not ensure_event_switch(self, MODE_SWITCH_20241219, 'story'):
+            return 'unknown'
 
         state = 'unknown'
         for _ in range(3):
             # wait any story state
             timeout = Timer(2, count=6).start()
-            for _ in self.loop():
+            for _ in self.loop(timeout=8):
                 state = self.get_event_story_state()
                 logger.attr('EventStoryState', state)
                 if state != 'unknown':
@@ -41,8 +127,10 @@ class EventStory(CampaignUI, Combat, LoginHandler):
             if state == 'unknown':
                 # Story page get swiped, can't find story entrance
                 # Reset mode to reset swipe
-                self.campaign_ensure_mode_20241219('combat')
-                self.campaign_ensure_mode_20241219('story')
+                if not ensure_event_switch(self, MODE_SWITCH_20241219, 'combat'):
+                    return 'unknown'
+                if not ensure_event_switch(self, MODE_SWITCH_20241219, 'story'):
+                    return 'unknown'
                 continue
             else:
                 break
@@ -98,11 +186,7 @@ class EventStory(CampaignUI, Combat, LoginHandler):
             str: 'battle' or 'finish'
         """
         logger.hr('Event story', level=1)
-        while 1:
-            if skip_first_screenshot:
-                skip_first_screenshot = False
-            else:
-                self.device.screenshot()
+        for _ in self.loop(skip_first=skip_first_screenshot, timeout=STORY_TIMEOUT):
 
             # End
             if self.is_combat_executing() or self.is_combat_loading():
@@ -154,20 +238,39 @@ class EventStory(CampaignUI, Combat, LoginHandler):
             if self.appear_then_click(POPUP_RPG_STATUS, offset=(20, 20), interval=3):
                 continue
 
-    def run_event_story(self):
+        logger.warning('Event story timed out without a recognized end state')
+        save_event_diagnostic(self.device, 'story_timeout')
+        return 'unknown'
+
+    def run_event_story(self, event=None, skip_battle=False):
         """
         Loop until event story finished
         Handle story battles
         """
-        while 1:
-            state = self.ui_goto_event_story()
-            if state == 'finish':
+        deadline = monotonic() + STORY_PASS_TIMEOUT
+        battles = 0
+        for _ in range(STORY_TRANSITIONS_MAX):
+            if monotonic() >= deadline:
                 break
+            state = self.ui_goto_event_story(event=event)
+            if state == 'finish':
+                logger.info('Event story completion verified')
+                return True
+            if state not in ('story', 'story_alchemist'):
+                logger.warning(f'Event story stopped at unrecognized state: {state}')
+                save_event_diagnostic(self.device, 'story_unknown')
+                return False
             result = self.event_story()
             if result == 'battle':
+                if not skip_battle or battles >= STORY_BATTLES_MAX:
+                    logger.warning('Event story battle stopped: skip disabled or restart limit reached')
+                    save_event_diagnostic(self.device, 'story_battle_blocked')
+                    return False
                 # Kill game is considered cleared battles
                 # It's much faster than waiting event battles
                 logger.hr('Event Story Battle', level=2)
+                battles += 1
+                logger.info(f'Skipping story battle by game restart ({battles}/{STORY_BATTLES_MAX})')
                 self.config.override(Error_HandleError=True)
                 self.app_stop()
                 self.app_start()
@@ -175,8 +278,16 @@ class EventStory(CampaignUI, Combat, LoginHandler):
             if result == 'finish':
                 # Run after finished event story, in order to close GET_ITEMS
                 logger.hr('Event story finish', level=2)
-                self.ui_goto_main()
-                self.ui_goto_event_story()
+                if not ensure_event_page(self, page_main):
+                    save_event_diagnostic(self.device, 'story_return_blocked')
+                    return False
+                continue
+            logger.warning(f'Event story stopped without completion: {result}')
+            return False
+
+        logger.warning('Event story pass reached its time or transition limit')
+        save_event_diagnostic(self.device, 'story_pass_limit')
+        return False
 
     def get_event_story_state(self):
         """
@@ -201,20 +312,23 @@ class EventStory(CampaignUI, Combat, LoginHandler):
 
         return 'unknown'
 
-    def run(self):
-        event = self.config.cross_get('Event.Campaign.Event', '')
+    def run(self, event=None, skip_battle=None):
+        if event is None:
+            event = self.config.cross_get('Event.Campaign.Event', '')
+        if skip_battle is None:
+            skip_battle = getattr(self.config, 'EventStory_SkipBattle', False)
         if event in [
             # event story is in event minigame
             'event_20260226_cn',
         ]:
             logger.info(f'Current event ({event}) does not have event story, stopped')
-            return
+            return False
 
         if not self.device.app_is_running():
             logger.warning('Game is not running, start it')
             self.app_start()
 
-        self.run_event_story()
+        return self.run_event_story(event=event, skip_battle=skip_battle)
 
         # Scheduler
         pass

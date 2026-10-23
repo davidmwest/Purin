@@ -486,6 +486,10 @@ class CampaignRun(CampaignEvent):
             mode (str): `normal` or `hard`
             total (int):
         """
+        ordinary_event = folder.startswith('event_') and self.config.task.command in ('Event', 'Event2')
+        if ordinary_event and not self.event_completion(folder, before=True):
+            self.config.task_delay(success=False)
+            return
         name, folder = self.handle_stage_name(name, folder, mode=mode)
         self.config.override(Campaign_Name=name, Campaign_Event=folder)
         self.load_campaign(name, folder=folder)
@@ -591,3 +595,14 @@ class CampaignRun(CampaignEvent):
                 self.config.task_stop()
 
         self.campaign.ensure_auto_search_exit()
+        if ordinary_event:
+            self.event_completion(folder)
+
+    def event_completion(self, event, before=False):
+        """Optional bounded story/mission work also belongs to ordinary event jobs."""
+        from module.campaign.event_completion import EventCompletion
+        result = EventCompletion(config=self.config, device=self.device).run(
+            event=event,
+            collect_rewards=self.config.EventCompletion_CollectRewards,
+            complete_story=bool(before and self.config.EventCompletion_CompleteStory))
+        return result.get('story') not in ('blocked', 'failed')

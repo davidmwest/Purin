@@ -546,6 +546,18 @@ class AzurLaneAutoScript:
         from module.campaign.os_run import OSCampaignRun
         OSCampaignRun(config=self.config, device=self.device).opsi_cross_month()
 
+    def campaign_stars(self):
+        from module.campaign.campaign_stars import CampaignStars
+        CampaignStars(config=self.config, device=self.device).run()
+
+    def event_stars(self):
+        from module.campaign.campaign_stars import EventStars
+        EventStars(config=self.config, device=self.device).run()
+
+    def event_extra(self):
+        from module.campaign.campaign_stars import EventExtra
+        EventExtra(config=self.config, device=self.device).run()
+
     def main(self):
         from module.campaign.run import CampaignRun
         CampaignRun(config=self.config, device=self.device).run(
