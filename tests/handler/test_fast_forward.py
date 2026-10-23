@@ -47,6 +47,7 @@ def stopped_on(stage, event='event_20261022_cn', one_time=False):
     handler.campaign_name_increase = lambda name: FastForwardHandler.campaign_name_increase(handler, name)
     handler.campaign_name_last = lambda name: FastForwardHandler.campaign_name_last(handler, name)
     handler.call_then_task = lambda: FastForwardHandler.call_then_task(handler)
+    handler.star_runs_clear = lambda: FastForwardHandler.star_runs_clear(handler)
     FastForwardHandler.handle_map_stop(handler)
     return config
 
@@ -90,6 +91,7 @@ def test_a_pass_that_stops_enables_the_task_it_held():
     handler.campaign_name_increase = lambda name: FastForwardHandler.campaign_name_increase(handler, name)
     handler.campaign_name_last = lambda name: FastForwardHandler.campaign_name_last(handler, name)
     handler.call_then_task = lambda: FastForwardHandler.call_then_task(handler)
+    handler.star_runs_clear = lambda: FastForwardHandler.star_runs_clear(handler)
 
     FastForwardHandler.handle_map_stop(handler)
 

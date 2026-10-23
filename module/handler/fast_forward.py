@@ -3,6 +3,7 @@ import re
 from module.base.timer import Timer
 from module.base.utils import color_bar_percentage
 from module.campaign.stage import stage_names
+from module.campaign.star_pass import clear_star_runs, star_stage_key
 from module.handler.assets import *
 from module.handler.auto_search import AutoSearchHandler
 from module.logger import logger
@@ -516,6 +517,7 @@ class FastForwardHandler(AutoSearchHandler):
         Modify configs after reaching a stop condition.
         Disable current task or increase stage.
         """
+        self.star_runs_clear()
         if self.config.StopCondition_StageIncrease:
             prev_stage = to_map_input_name(self.config.Campaign_Name)
             next_stage = self.campaign_name_increase(prev_stage)
@@ -534,6 +536,20 @@ class FastForwardHandler(AutoSearchHandler):
         else:
             self.config.Scheduler_Enable = False
             self.call_then_task()
+
+    def star_runs_clear(self):
+        """
+        The stage is left: the runs a pass for 3 stars counted on it are dropped, see module/campaign/star_pass.py.
+        """
+        config_name = getattr(self.config, 'config_name', None)
+        if not config_name:
+            return
+        try:
+            key = star_stage_key(self.config.Campaign_Event, self.config.Campaign_Mode,
+                                 to_map_input_name(self.config.Campaign_Name))
+            clear_star_runs(config_name, key)
+        except Exception as e:
+            logger.warning(f'Runs of the star pass not cleared: {e}')
 
     def call_then_task(self):
         """

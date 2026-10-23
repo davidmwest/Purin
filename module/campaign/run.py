@@ -7,7 +7,7 @@ from module.campaign.campaign_base import CampaignBase
 from module.campaign.campaign_event import CampaignEvent
 from module.campaign.campaign_ui import MODE_SWITCH_1
 from module.campaign.stage import StageNotFound, load_stage, stage_names
-from module.campaign.star_pass import STAR_RUNS_MAX, add_star_run
+from module.campaign.star_pass import STAR_RUNS_MAX, add_star_run, clear_star_runs, star_stage_key
 from module.config.config import AzurLaneConfig
 from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import to_map_file_name, to_map_input_name
@@ -384,13 +384,21 @@ class CampaignRun(CampaignEvent):
         """
         if self.config.StopCondition_MapAchievement != 'map_3_stars' or not self.config.StopCondition_StageIncrease:
             return False
+        # The leveling runs of a stage retreat are no runs of the pass, and a lost run is left to EndOnLoss and
+        # StageRetreat: 6 losses would send the fleet on to a harder stage
+        if self.config.StopCondition_RetreatRemain > 0:
+            return False
+        if getattr(self.campaign, 'run_lost', False):
+            return False
         stage = to_map_input_name(self.config.Campaign_Name)
-        runs = add_star_run(self.config.config_name, stage)
+        key = star_stage_key(self.config.Campaign_Event, self.config.Campaign_Mode, stage)
+        runs = add_star_run(self.config.config_name, key)
         logger.attr('Star_pass_runs', f'{stage} {runs}/{STAR_RUNS_MAX}')
         if runs < STAR_RUNS_MAX:
             return False
         logger.hr('Star pass runs', level=2)
         logger.warning(f'{stage} has no 3 stars after {runs} runs, the pass goes on to the next stage')
+        clear_star_runs(self.config.config_name, key)
         self.campaign.handle_map_stop()
         return True
 
@@ -561,10 +569,10 @@ class CampaignRun(CampaignEvent):
                 break
             if self.handle_stage_retreat():
                 break
-            if self.handle_star_runs_max():
-                break
             # End
             if self.triggered_stop_condition(oil_check=False):
+                break
+            if self.handle_star_runs_max():
                 break
             # One-time stage limit
             if self.campaign.config.MAP_IS_ONE_TIME_STAGE:
