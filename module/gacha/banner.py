@@ -7,7 +7,7 @@ import json
 import os
 import re
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 
@@ -26,6 +26,74 @@ from module.ui.scroll import Scroll
 
 CURRENT_EVENT = 'event_20261022_cn'
 BANNER_VERSION = 'rate-info-v2'
+# Reviewed against Purin's complete two-page Build Rates capture at 01:25 on
+# 2026-10-23. This is the event's advertised limited roster, not a dock census
+# or a claim that every ordinary ship in the construction pool is owned.
+ROSTER_VERSION = 'tempesta-20261022-en-v1'
+CURRENT_BANNER_NAMES = ('Merkuriy', 'Selimiye', 'Járnbarðinn', 'Ormrinn Langi')
+OWNERSHIP_MAX_AGE = timedelta(hours=24)
+CURRENT_EVENT_START = datetime(2026, 10, 22)
+
+
+def current_banner_roster():
+    return dict(event=CURRENT_EVENT, version=ROSTER_VERSION,
+                names=list(CURRENT_BANNER_NAMES), complete=True,
+                source='reviewed_complete_build_rates_20261023_0125')
+
+
+def inventory_banner_ownership(account, folder='./config/gacha', now=None):
+    """Positive retained copies read in this account's recent inventory only.
+
+    A partial scan can prove an individually read ship exists; neither its
+    completeness nor an old carried row can prove ownership. Re-read the
+    source on every decision so a cached positive never outlives its proof.
+    """
+    if not isinstance(account, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', account):
+        raise ScriptError('Invalid account name for Gacha ownership proof')
+    now = now or datetime.now()
+    root = os.path.join(os.path.dirname(os.path.normpath(os.fspath(folder))), 'inventory')
+    names, sources = set(), []
+    for suffix in ('.json', '.partial.json'):
+        path = os.path.join(root, f'{account}{suffix}')
+        try:
+            with open(path, encoding='utf-8') as stream:
+                snapshot = json.load(stream)
+            if (not isinstance(snapshot, dict)
+                    or snapshot.get('account', account) != account
+                    or snapshot.get('config_name', account) != account
+                    or not isinstance(snapshot.get('ships'), list)):
+                continue
+            stamp = datetime.fromisoformat(snapshot['time'])
+            if stamp.tzinfo is not None:
+                stamp = stamp.astimezone().replace(tzinfo=None)
+            if not CURRENT_EVENT_START <= stamp <= now or now - stamp > OWNERSHIP_MAX_AGE:
+                continue
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        positive = set()
+        for ship in snapshot['ships']:
+            if (not isinstance(ship, dict) or ship.get('name_whole') is not True
+                    or ship.get('locked') is not True
+                    or type(ship.get('level')) is not int or ship['level'] < 1
+                    or type(ship.get('missed', 0)) is not int or ship.get('missed', 0) != 0
+                    or ship.get('carried', False)):
+                continue
+            name = ship.get('name')
+            if isinstance(name, str) and name in CURRENT_BANNER_NAMES:
+                positive.add(name)
+        if positive:
+            names.update(positive)
+            sources.append(dict(path=path, time=stamp.isoformat(timespec='seconds'),
+                                positive_exact_names=sorted(positive)))
+    return dict(account=account, event=CURRENT_EVENT, roster_version=ROSTER_VERSION,
+                positive_exact_names=sorted(names), sources=sources)
+
+
+def resolve_mission_pool(account, fallback='light', folder='./config/gacha'):
+    """Runtime pool choice; unknown or expired ownership keeps Event."""
+    return verified_banner_pool(current_banner_roster(),
+                                inventory_banner_ownership(account, folder=folder),
+                                account, fallback=fallback)
 
 
 def verified_banner_pool(roster, owned, account, event=CURRENT_EVENT, fallback='light'):
@@ -88,6 +156,14 @@ def save_banner_state(account, state, folder):
 
 
 class EventBannerObserver(GachaUI):
+    def _refresh_ownership(self, record, folder):
+        roster = current_banner_roster()
+        owned = inventory_banner_ownership(self.config.config_name, folder=folder)
+        pool = verified_banner_pool(roster, owned, self.config.config_name,
+                                    fallback=getattr(self.config, 'Gacha_FallbackPool', 'light'))
+        record.update(roster=roster, ownership=owned, preferred_pool=pool,
+                      banner_ownership_verified=pool != 'event')
+
     def _exact(self, button):
         return self.match_template_color(button, offset=(3, 3), similarity=.85)
 
@@ -217,6 +293,7 @@ class EventBannerObserver(GachaUI):
             record = dict(state[key], reused=True)
             if record.get('status') == 'observing':
                 record.update(status='blocked', reason='previous_banner_observation_interrupted')
+            self._refresh_ownership(record, folder)
             record['returned_main'] = self._return_main()
             state[key] = record
             save_banner_state(account, state, folder)
@@ -227,8 +304,8 @@ class EventBannerObserver(GachaUI):
                       info_clicks=0, orders_submitted=0, preferred_pool='event',
                       banner_ownership_verified=False,
                       rate_pages=[], rate_scrolls=0, rate_list_scrolled_complete=False,
-                      roster=dict(event=CURRENT_EVENT, version=BANNER_VERSION, names=[], complete=False),
                       started=datetime.now().isoformat(timespec='seconds'))
+        self._refresh_ownership(record, folder)
         state[key] = record
         save_banner_state(account, state, folder)
         try:

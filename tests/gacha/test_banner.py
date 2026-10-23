@@ -1,3 +1,5 @@
+import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -340,3 +342,118 @@ def test_banner_fallback_requires_complete_roster_and_every_positive_owned_name(
     assert banner.verified_banner_pool(dict(roster, names=[]), owned, 'alas') == 'event'
     assert banner.verified_banner_pool(roster, dict(owned, positive_exact_names=['Selimiye']), 'alas') == 'event'
     assert banner.verified_banner_pool(roster, dict(owned, roster_version='old'), 'alas') == 'event'
+
+
+@pytest.fixture
+def ownership_clock(monkeypatch):
+    now = datetime(2026, 10, 23, 2)
+
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(banner, 'datetime', FixedClock)
+    return now
+
+
+def write_owned_inventory(tmp_path, now, account='alas', partial=False, **changes):
+    folder = tmp_path / 'gacha'
+    inventory = tmp_path / 'inventory'
+    inventory.mkdir(exist_ok=True)
+    snapshot = dict(time=(now - timedelta(minutes=10)).isoformat(), complete=False,
+                    ships=[dict(name=name, name_whole=True, locked=True, level=1)
+                           for name in banner.CURRENT_BANNER_NAMES])
+    snapshot.update(changes)
+    path = inventory / f'{account}{".partial" if partial else ""}.json'
+    path.write_text(json.dumps(snapshot), encoding='utf-8')
+    return folder, path, snapshot
+
+
+def test_reviewed_complete_roster_contains_exact_four_observed_names():
+    roster = banner.current_banner_roster()
+    assert roster['names'] == ['Merkuriy', 'Selimiye', 'Járnbarðinn', 'Ormrinn Langi']
+    assert roster['complete'] is True
+    assert roster['event'] == banner.CURRENT_EVENT
+    assert roster['version'] == banner.ROSTER_VERSION
+    roster['names'].clear()
+    assert len(banner.current_banner_roster()['names']) == 4
+
+
+@pytest.mark.parametrize('partial', [False, True])
+@pytest.mark.parametrize('fallback', ['light', 'heavy', 'special'])
+def test_runtime_pool_uses_every_fresh_positive_ship_even_in_incomplete_scan(
+        tmp_path, ownership_clock, partial, fallback):
+    folder, _, _ = write_owned_inventory(tmp_path, ownership_clock, partial=partial)
+    assert banner.resolve_mission_pool('alas', fallback=fallback, folder=folder) == fallback
+    proof = banner.inventory_banner_ownership('alas', folder=folder)
+    assert set(proof['positive_exact_names']) == set(banner.CURRENT_BANNER_NAMES)
+    assert proof['account'] == 'alas'
+    assert proof['event'] == banner.CURRENT_EVENT
+    assert proof['roster_version'] == banner.ROSTER_VERSION
+    assert len(proof['sources']) == 1
+
+
+@pytest.mark.parametrize('field,value', [
+    ('missed', 1), ('missed', '0'), ('carried', True), ('name_whole', False),
+    ('name_whole', 1), ('locked', False), ('level', 0), ('level', True),
+    ('name', 'Ormrinn Lang'), ('name', 'Ormrinn Langi '), ('name', None),
+])
+def test_runtime_pool_rejects_carried_unlocked_partial_or_fuzzy_ownership(
+        tmp_path, ownership_clock, field, value):
+    folder, path, snapshot = write_owned_inventory(tmp_path, ownership_clock)
+    snapshot['ships'][-1][field] = value
+    path.write_text(json.dumps(snapshot), encoding='utf-8')
+    assert banner.resolve_mission_pool('alas', folder=folder) == 'event'
+
+
+@pytest.mark.parametrize('stamp', [
+    '2026-10-21T23:59:59',  # Before this banner, even if the file is new.
+    '2026-10-22T01:59:59',  # Older than the 24-hour proof window.
+    '2026-10-23T03:00:00',  # A future clock cannot supply fresh proof.
+    'unreadable', None,
+])
+def test_stale_pre_event_future_or_unreadable_inventory_keeps_event(
+        tmp_path, ownership_clock, stamp):
+    folder, _, _ = write_owned_inventory(tmp_path, ownership_clock, time=stamp)
+    assert banner.resolve_mission_pool('alas', folder=folder) == 'event'
+
+
+@pytest.mark.parametrize('metadata', [{'account': 'f2p'}, {'config_name': 'f2p'}])
+def test_mismatched_inventory_account_never_supplies_ownership(tmp_path, ownership_clock, metadata):
+    folder, _, _ = write_owned_inventory(tmp_path, ownership_clock, **metadata)
+    assert banner.resolve_mission_pool('alas', folder=folder) == 'event'
+
+
+def test_other_accounts_positive_inventory_does_not_authorize_fallback(tmp_path, ownership_clock):
+    folder, _, _ = write_owned_inventory(tmp_path, ownership_clock, account='alas')
+    assert banner.resolve_mission_pool('f2p', folder=folder) == 'event'
+
+
+@pytest.mark.parametrize('contents', ['not json', '[]', '{"ships":null}', '{"time":1,"ships":[]}'])
+def test_corrupt_inventory_is_unknown_and_does_not_authorize_fallback(tmp_path, ownership_clock, contents):
+    folder, path, _ = write_owned_inventory(tmp_path, ownership_clock)
+    path.write_text(contents, encoding='utf-8')
+    assert banner.resolve_mission_pool('alas', folder=folder) == 'event'
+
+
+def test_cached_banner_record_refreshes_positive_proof_and_drops_it_when_source_disappears(
+        tmp_path, ownership_clock):
+    folder, path, _ = write_owned_inventory(tmp_path, ownership_clock)
+    helper = controller()
+    helper.config.Gacha_FallbackPool = 'special'
+    helper._return_main = Mock(return_value=True)
+    helper.enter_event_pool = Mock()
+    key = f'{banner.CURRENT_EVENT}:{banner.BANNER_VERSION}'
+    save_banner_state('alas', {key: dict(status='observed', info_clicks=1)}, folder)
+    first = helper.run(folder=folder)
+    assert first['banner_ownership_verified'] is True
+    assert first['preferred_pool'] == 'special'
+    assert first['roster']['complete'] is True
+    path.unlink()
+    second = helper.run(folder=folder)
+    assert second['banner_ownership_verified'] is False
+    assert second['preferred_pool'] == 'event'
+    assert second['ownership']['positive_exact_names'] == []
+    helper.enter_event_pool.assert_not_called()
+    helper.device.click.assert_not_called()
