@@ -15,7 +15,8 @@ from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_
 from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
                                                EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT,
                                                EX_MAP_NO_TIME_LIMIT, EX_MAP_COLUMNS_SHIFTED,
-                                               EX_MAP_TERRAIN_SHIFTED)
+                                               EX_MAP_TERRAIN_SHIFTED, EX_MAP_BOSS, EX_MAP_FLEET_AMMO,
+                                               EX_MAP_BOSS_SHIFTED, EX_MAP_FLEET_AMMO_SHIFTED)
 from module.combat.assets import AUTOMATION_ON, BATTLE_PREPARATION, DEFEAT_TIPS
 from module.combat.combat import Combat
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
@@ -187,7 +188,7 @@ class EventExtraRunner(EventExtraScout, Combat):
     """One direct EX sortie, using a verified common or stage-owned lineup.
 
     The observed hard selector permits only its own recommended Fleet 1.
-    The observed EX board permits one settled Attack click, with no grid moves.
+    The observed EX board permits one recognized boss selection and one Attack.
     """
 
     def _fleet_operators(self):
@@ -302,15 +303,31 @@ class EventExtraRunner(EventExtraScout, Combat):
                 and any(self.match_template_color(button, offset=(3, 3), similarity=.85)
                         for button in (EX_MAP_TIME_LIMIT, EX_MAP_NO_TIME_LIMIT)))
 
+    def _extra_map_boss(self):
+        # Column labels alone do not locate an enemy. Require the captured
+        # boss badge/level and the player's ammo marker in the same camera.
+        for columns, terrain, boss, fleet in (
+                (EX_MAP_COLUMNS, None, EX_MAP_BOSS, EX_MAP_FLEET_AMMO),
+                (EX_MAP_COLUMNS_SHIFTED, EX_MAP_TERRAIN_SHIFTED,
+                 EX_MAP_BOSS_SHIFTED, EX_MAP_FLEET_AMMO_SHIFTED)):
+            if (self.match_template_color(columns, offset=(3, 3), similarity=.85)
+                    and (terrain is None or self.match_template_color(terrain, offset=(3, 3), similarity=.85))
+                    and self.match_template_color(boss, offset=(3, 3), similarity=.85)
+                    and self.match_template_color(fleet, offset=(3, 3), similarity=.85)):
+                return boss
+        return None
+
     def _launch_extra_map(self, record, reserve):
-        # The first map screenshot can precede drawing the fleets/enemies. Wait
-        # for fresh, stable board images; never select a guessed grid coordinate.
+        if record.get('map_boss_clicked') or record.get('map_attack_clicked'):
+            return False  # A possible boss engagement must never be retried.
+        # The first map screenshot can precede drawing the fleets/enemies.
+        # Wait for fresh stable board images and the actual boss/fleet pair.
         settled = Timer(2, count=3).start()
         previous = None
         stable_frames = 0
         for _ in self.loop(skip_first=False, timeout=12):
-            if not (self._extra_map_appear()
-                    and self.match_template_color(EX_MAP_ATTACK, offset=(3, 3), similarity=.85)):
+            boss = self._extra_map_boss() if self._extra_map_appear() else None
+            if not (boss and self.match_template_color(EX_MAP_ATTACK, offset=(3, 3), similarity=.85)):
                 previous = None
                 stable_frames = 0
                 settled.reset()
@@ -325,13 +342,56 @@ class EventExtraRunner(EventExtraScout, Combat):
                 stable_frames += 1
             previous = board.copy()
             if stable_frames >= 3 and settled.reached():
-                self._extra_capture(record, 'settled_map_attack')
+                self._extra_capture(record, 'settled_map_boss')
                 record['map_observed'] = True
+                record['map_boss_clicked'] = True
+                record['map_boss_target'] = 'B3'
+                record['map_boss_witness'] = boss.name
+                reserve()  # Selecting an enemy can itself start combat.
+                self.device.click(boss)
+                break
+        else:
+            self._extra_capture(record, 'map_launch_unverified')
+            return False
+
+        # Standard maps engage by clicking the enemy. Give that movement/start
+        # precedence over Attack; never press Attack on a moving/unknown board.
+        settled.reset()
+        previous = None
+        stable_frames = 0
+        for _ in self.loop(skip_first=False, timeout=12):
+            if self.appear(BATTLE_PREPARATION, offset=(30, 20)):
+                self._extra_capture(record, 'boss_battle_preparation')
+                return True
+            if not self.appear(IN_MAP, offset=(5, 5)):
+                if self.is_combat_loading() or self.is_combat_executing():
+                    record['combat_seen'] = True
+                    reserve()
+                    return True
+                previous = None
+                stable_frames = 0
+                settled.reset()
+                continue
+            if not (self._extra_map_appear() and self._extra_map_boss() is boss
+                    and self.match_template_color(EX_MAP_ATTACK, offset=(3, 3), similarity=.85)):
+                previous = None
+                stable_frames = 0
+                settled.reset()
+                continue
+            board = self.device.image[625:646:2, 450:1120:2].astype(np.int16)
+            if previous is None or np.mean(np.abs(board - previous)) > 2:
+                stable_frames = 0
+                settled.reset()
+            else:
+                stable_frames += 1
+            previous = board.copy()
+            if stable_frames >= 3 and settled.reached():
+                self._extra_capture(record, 'selected_boss_map_attack')
                 record['map_attack_clicked'] = True
-                reserve()  # Durable evidence precedes the only map launch click.
+                reserve()
                 self.device.click(EX_MAP_ATTACK)
                 return True
-        self._extra_capture(record, 'map_launch_unverified')
+        self._extra_capture(record, 'boss_selection_unverified')
         return False
 
     def _return_extra_event(self, record):
@@ -395,6 +455,7 @@ class EventExtraRunner(EventExtraScout, Combat):
                 if not map_attack_clicked:
                     if not self._launch_extra_map(record, reserve):
                         return 'blocked', 'map_launch_not_verified'
+                    combat_seen = bool(record.get('combat_seen'))
                     map_attack_clicked = True
                     start_deadline = monotonic() + 30
                 elif monotonic() >= start_deadline:

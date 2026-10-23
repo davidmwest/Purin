@@ -42,3 +42,20 @@ EX_MAP_TERRAIN_SHIFTED = Button(
 EX_MAP_ATTACK = Button(
     area=(1147, 652, 1263, 701), color=(232, 182, 108), button=(1147, 652, 1263, 701),
     file=_EX_MAP, name='EX_MAP_ATTACK')
+
+# The actual unselected Lv125 boss occupies B3 and the player's ammo marker
+# occupies D2. These paired witnesses identify the only supported target in
+# each observed camera, rather than inferring a grid from a column label.
+_EX_BOSS = './assets/en/event_completion/TEMPESTA_EX_BOSS_20261023.png'
+EX_MAP_BOSS = Button(
+    area=(631, 337, 691, 406), color=(131, 96, 101), button=(638, 343, 678, 373),
+    file=_EX_BOSS, name='EX_MAP_BOSS')
+EX_MAP_FLEET_AMMO = Button(
+    area=(834, 211, 923, 246), color=(102, 97, 101), button=(834, 211, 923, 246),
+    file=_EX_BOSS, name='EX_MAP_FLEET_AMMO')
+EX_MAP_BOSS_SHIFTED = Button(
+    area=(541, 316, 601, 385), color=(132, 99, 104), button=(548, 322, 588, 352),
+    file=_EX_BOSS, name='EX_MAP_BOSS_SHIFTED')
+EX_MAP_FLEET_AMMO_SHIFTED = Button(
+    area=(742, 191, 831, 226), color=(102, 95, 100), button=(742, 191, 831, 226),
+    file=_EX_BOSS, name='EX_MAP_FLEET_AMMO_SHIFTED')
