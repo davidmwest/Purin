@@ -197,12 +197,36 @@ def test_equipped_enhancement_material_opens_the_exact_disassembly_dialog(monkey
     assert not controller.is_enhance_equipment_dialog()
 
 
+def test_actual_equipment_return_requires_its_title_and_second_confirm(monkeypatch):
+    from module.base.button import Button
+    from module.leveling import enhance
+    # F2P Long Island enhancement stalled here on 2026-10-23 03:21:22.
+    image = load_image(os.path.join(DATA, 'enhance_equipment_return.png'))
+    confirm = Button(area=(740, 557, 872, 582), color=(159, 186, 220), button=(740, 557, 872, 582),
+                     file='./assets/en/retire/EQUIP_CONFIRM_2.png', name='EQUIP_CONFIRM_2')
+    monkeypatch.setattr(enhance, 'EQUIP_CONFIRM_2', confirm)
+    controller = enhance.FleetEnhance.__new__(enhance.FleetEnhance)
+    controller.device = SimpleNamespace(image=image)
+    controller.match_template_color = lambda button, **kwargs: button.match_template_color(
+        controller.device.image, **kwargs)
+    assert controller.is_enhance_equipment_return_dialog()
+    image[125:165, 578:707] = 0
+    assert not controller.is_enhance_equipment_return_dialog()
+    image = load_image(os.path.join(DATA, 'enhance_equipment_return.png'))
+    controller.device.image = image
+    image[540:605, 715:900] = 0
+    assert not controller.is_enhance_equipment_return_dialog()
+    controller.device.image = load_image(os.path.join(DATA, 'enhance_equipment_dialog.png'))
+    assert not controller.is_enhance_equipment_return_dialog()
+
+
 def finish_controller(monkeypatch, frames):
     from unittest.mock import Mock
     from module.leveling import enhance
     controller = enhance.FleetEnhance.__new__(enhance.FleetEnhance)
     controller.device = SimpleNamespace(click=Mock(), image=None)
     controller.is_enhance_equipment_dialog = lambda: controller.device.image == 'equipment'
+    controller.is_enhance_equipment_return_dialog = lambda: controller.device.image == 'equipment_return'
     controller.is_enhance_tab = lambda: controller.device.image in ('filled', 'empty')
     controller.is_enhance_slot_empty = lambda: controller.device.image == 'empty'
     controller.match_template_color = lambda button, **kwargs: controller.device.image == 'receipt'
@@ -231,6 +255,47 @@ def test_enhancement_confirms_observed_equipment_then_receipt_and_empty_tab(monk
                                                      call(GET_ITEMS_1_RETIREMENT_SAVE)]
     controller.save_enhance_stall.assert_not_called()
     controller.loop.assert_called_once_with(timeout=40)
+
+
+def test_equipment_return_is_confirmed_before_receipt_and_verified_empty_tab(monkeypatch):
+    from unittest.mock import call
+    from module.leveling.enhance import ENHANCE_BUTTON, EQUIP_CONFIRM, EQUIP_CONFIRM_2, GET_ITEMS_1_RETIREMENT_SAVE
+    controller = finish_controller(monkeypatch, ['equipment', 'equipment_return', 'receipt', 'empty', 'empty'])
+    assert controller.enhance_finish(1) == 1
+    assert controller.device.click.call_args_list == [call(ENHANCE_BUTTON), call(EQUIP_CONFIRM),
+                                                     call(EQUIP_CONFIRM_2), call(GET_ITEMS_1_RETIREMENT_SAVE)]
+    controller.save_enhance_stall.assert_not_called()
+
+
+def test_unowned_equipment_return_is_not_confirmed_or_forwarded_to_generic_popup(monkeypatch):
+    from module.exception import ScriptError
+    from module.leveling.enhance import ENHANCE_BUTTON
+    controller = finish_controller(monkeypatch, ['equipment_return'] * 20)
+    with pytest.raises(ScriptError, match='recognized empty tab'):
+        controller.enhance_finish(1)
+    controller.device.click.assert_called_once_with(ENHANCE_BUTTON)
+    controller.handle_popup_confirm_loose.assert_not_called()
+    controller.save_enhance_stall.assert_called_once_with('completion_timeout')
+
+
+def test_equipment_return_confirmation_is_bounded_independently_of_first_confirmation(monkeypatch):
+    from unittest.mock import call
+    from module.exception import ScriptError
+    from module.leveling.enhance import ENHANCE_BUTTON, EQUIP_CONFIRM, EQUIP_CONFIRM_2
+    controller = finish_controller(monkeypatch, ['equipment'] + ['equipment_return'] * 20)
+    with pytest.raises(ScriptError, match='equipment return confirmation'):
+        controller.enhance_finish(1)
+    assert controller.device.click.call_args_list == [call(ENHANCE_BUTTON), call(EQUIP_CONFIRM),
+                                                     call(EQUIP_CONFIRM_2), call(EQUIP_CONFIRM_2)]
+    controller.save_enhance_stall.assert_called_once_with('equipment_return_confirmation_rejected')
+
+
+def test_equipment_return_alone_does_not_count_as_verified_completion(monkeypatch):
+    from module.exception import ScriptError
+    controller = finish_controller(monkeypatch, ['equipment', 'equipment_return', 'unknown', 'empty'])
+    with pytest.raises(ScriptError, match='recognized empty tab'):
+        controller.enhance_finish(1)
+    controller.save_enhance_stall.assert_called_once_with('completion_timeout')
 
 
 def test_enhancement_equipment_rejected_clicks_are_capped(monkeypatch):

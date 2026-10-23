@@ -32,7 +32,7 @@ from module.leveling.plan import name_key
 from module.logger import logger
 from module.ocr.ocr import Ocr
 from module.retire.dock_walk import DockWalker
-from module.retire.assets import EQUIP_CONFIRM, GET_ITEMS_1_RETIREMENT_SAVE
+from module.retire.assets import EQUIP_CONFIRM, EQUIP_CONFIRM_2, GET_ITEMS_1_RETIREMENT_SAVE
 from module.retire.scanner import ShipScanner
 from module.ui.page import page_dock, page_fleet, page_main
 
@@ -55,6 +55,10 @@ DETAIL_NAME = area_button((230, 86, 420, 118), 'DETAIL_NAME')
 # Its default selection and confirmation follow the existing retirement enhancement path.
 ENHANCE_EQUIPMENT_MESSAGE = './assets/leveling/enhance_equipment_message.png'
 ENHANCE_EQUIPMENT_AREA = (330, 518, 1090, 558)
+# Disassembly then shows the returned items under "Will get:". This is a second
+# confirmation, not an Item Found receipt or an unrelated blue Confirm.
+ENHANCE_EQUIPMENT_RETURN = './assets/leveling/enhance_equipment_return.png'
+ENHANCE_EQUIPMENT_RETURN_AREA = (578, 125, 707, 165)
 SIMILARITY = 0.85
 # Confirm of a popup told by its color: 12 from it on "You've selected a Elite and above ship", 34 and more on the
 # limit break and enhance tabs, the picker and the result of a limit break
@@ -186,6 +190,11 @@ class FleetEnhance(LevelingFleet):
         return (template_score(self.device.image, self._enhance_template(ENHANCE_EQUIPMENT_MESSAGE),
                                ENHANCE_EQUIPMENT_AREA) > SIMILARITY
                 and self.match_template_color(EQUIP_CONFIRM, offset=(3, 3), similarity=SIMILARITY))
+
+    def is_enhance_equipment_return_dialog(self):
+        return (template_score(self.device.image, self._enhance_template(ENHANCE_EQUIPMENT_RETURN),
+                               ENHANCE_EQUIPMENT_RETURN_AREA) > SIMILARITY
+                and self.match_template_color(EQUIP_CONFIRM_2, offset=(3, 3), similarity=SIMILARITY))
 
     def save_enhance_stall(self, reason):
         try:
@@ -412,7 +421,7 @@ class FleetEnhance(LevelingFleet):
         retry = Timer(4, count=8).start()
         empty = Timer(1, count=2).start()
         empty_reads = 0
-        retries = equipment_clicks = receipts = popups = 0
+        retries = equipment_clicks = equipment_return_clicks = receipts = popups = 0
         for _ in self.loop(timeout=STEP_TIMEOUT * 2):
             if not click.reached():
                 continue
@@ -424,6 +433,19 @@ class FleetEnhance(LevelingFleet):
                     raise ScriptError('Enhancement equipment confirmation was not accepted')
                 self.device.click(EQUIP_CONFIRM)
                 equipment_clicks += 1
+                click.reset()
+                continue
+            if self.is_enhance_equipment_return_dialog():
+                empty_reads = 0
+                empty.reset()
+                # Only our preceding disassembly confirmation owns this panel.
+                if not equipment_clicks:
+                    continue
+                if equipment_return_clicks >= EQUIPMENT_RETRIES:
+                    self.save_enhance_stall('equipment_return_confirmation_rejected')
+                    raise ScriptError('Enhancement equipment return confirmation was not accepted')
+                self.device.click(EQUIP_CONFIRM_2)
+                equipment_return_clicks += 1
                 click.reset()
                 continue
             if equipment_clicks and self.match_template_color(GET_ITEMS_1, offset=(30, 30), similarity=SIMILARITY):
