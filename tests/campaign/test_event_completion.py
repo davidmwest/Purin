@@ -1340,7 +1340,7 @@ def test_failed_strict_return_cannot_reach_scheduler_as_success(monkeypatch):
 
 
 @pytest.mark.parametrize('status,expected', [('observed', 'incomplete'), ('failed', 'failed'),
-                                          ('unsupported', 'unsupported'), ('unknown', 'failed')])
+                                          ('unsupported', 'unsupported'), ('unknown', 'failed'), ('complete', 'failed')])
 def test_ticket_claim_or_unlock_capture_never_proves_side_story_completion(monkeypatch, status, expected):
     helper = controller()
     helper.observe_event_side_prepare = Mock(return_value=dict(status='observed'))
@@ -1354,6 +1354,24 @@ def test_ticket_claim_or_unlock_capture_never_proves_side_story_completion(monke
     assert result['event_side_story'] == expected
     assert result['event_beckoning_ticket_collection']['story_complete'] is False
     helper.collect_beckoning_tickets.assert_called_once_with('event_20261022_cn')
+    helper.collect_strict_maid_rewards.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [None, 'story_complete', 'final_reward_collected'])
+def test_only_verified_all_stories_and_collected_reward_report_complete(monkeypatch, missing):
+    helper = controller()
+    helper.observe_event_side_prepare = Mock(return_value=dict(status='observed'))
+    helper.observe_event_side_choice = Mock(return_value=dict(status='observed'))
+    collection = dict(status='complete', returned_main=True, story_complete=True,
+                      final_reward_collected=True)
+    if missing:
+        collection.pop(missing)
+    helper.collect_beckoning_tickets.return_value = collection
+    story = Mock()
+    story.return_value.run.return_value = True
+    monkeypatch.setattr(completion, 'EventStory', story)
+    result = helper.run('event_20261022_cn', collect_rewards=False, complete_story=True)
+    assert result['event_side_story'] == ('complete' if missing is None else 'failed')
     helper.collect_strict_maid_rewards.assert_not_called()
 
 

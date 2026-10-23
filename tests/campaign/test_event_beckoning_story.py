@@ -13,7 +13,7 @@ from module.campaign.event_beckoning_assets import (
     BECKONING_MONTHLY_COLLECT, BECKONING_VICTORY_COLLECT)
 from module.campaign.event_beckoning_story import BeckoningStoryContinuation
 from module.campaign.event_beckoning_story_assets import (
-    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS, STORY_UNLOCKED_TITLES,
+    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS, STORY_FINAL_COLLECTED, STORY_UNLOCKED_TITLES,
     STORY_VIEWER_LOG, STORY_VIEWER_SKIP, VICTORY_MISSION)
 from module.combat.assets import GET_ITEMS_1
 from module.exception import ScriptError
@@ -119,7 +119,7 @@ def test_remaining_locked_cards_match_actual_post_third_story_screen():
         assert BeckoningStoryContinuation.visible(helper, lock), name
 
 
-ACTUAL_RETURN_TICKETS = {'3': 2, '4': 2, '5': 1}
+ACTUAL_RETURN_TICKETS = {'3': 2, '4': 2, '5': 1, '6': 0}
 
 
 def actual_card_return(card='3', frames=5):
@@ -139,7 +139,7 @@ def actual_card_return(card='3', frames=5):
     return helper, owner, record, state, saved
 
 
-@pytest.mark.parametrize('card', ['3', '4', '5'])
+@pytest.mark.parametrize('card', ['3', '4', '5', '6'])
 def test_actual_unlocked_title_needs_its_observed_alternative(card):
     helper, owner, *_ = actual_card_return(card)
     index = int(card) - 1
@@ -153,7 +153,7 @@ def test_actual_unlocked_title_needs_its_observed_alternative(card):
     owner.device.click.assert_not_called()
 
 
-@pytest.mark.parametrize('card', ['3', '4', '5'])
+@pytest.mark.parametrize('card', ['3', '4', '5', '6'])
 def test_actual_paid_story_return_finishes_without_another_input(immediate, card):
     helper, owner, _, _, saved = actual_card_return(card)
     assert helper.finish_story(card) is True
@@ -166,7 +166,7 @@ def test_actual_paid_story_return_finishes_without_another_input(immediate, card
 
 
 @pytest.mark.parametrize('missing', [None, 'title', 'lock_removed', 'payment', 'viewer', 'choice'])
-@pytest.mark.parametrize('card', ['3', '4', '5'])
+@pytest.mark.parametrize('card', ['3', '4', '5', '6'])
 def test_interrupted_actual_return_verifies_only_paid_seen_unlocked_card(immediate, missing, card):
     helper, owner, *_ = actual_card_return(card)
     index = int(card) - 1
@@ -190,6 +190,64 @@ def test_interrupted_actual_return_verifies_only_paid_seen_unlocked_card(immedia
     assert helper.cards['1']['complete'] and helper.cards['2']['complete']
     owner.device.click.assert_not_called()
     owner.story_skip.assert_not_called()
+
+
+@pytest.mark.parametrize('card', ['3', '4', '5', '6'])
+def test_actual_final_collected_marker_rejects_precompletion_rewards(card):
+    helper, owner, *_ = actual_card_return(card)
+    assert helper.visible(STORY_FINAL_COLLECTED) is (card == '6')
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [None, 'marker', 'choice', 'story'])
+def test_actual_final_reward_is_recorded_only_after_all_stories_and_exact_terminal(immediate, missing):
+    helper, owner, record, _, saved = actual_card_return('6')
+    helper.cards['6'].update(complete=True, pending=False)
+    if missing == 'marker':
+        x1, y1, x2, y2 = STORY_FINAL_COLLECTED.area
+        owner.device.image[y1-4:y2+4, x1-4:x2+4] = 0
+    elif missing == 'choice':
+        owner._on_choice = lambda: False
+    elif missing == 'story':
+        helper.cards['6'].update(complete=False, pending=True)
+    assert helper.observe_final_reward() is (missing is None)
+    assert helper.ledger.get('final_reward_collected', False) is (missing is None)
+    assert record.get('final_reward_collected', False) is (missing is None)
+    if missing is None:
+        assert saved[-1][0][EVENT + ':beckoning_stories_v1']['final_reward_collected']
+    owner.device.click.assert_not_called()
+    owner.story_skip.assert_not_called()
+
+
+def test_final_reward_requires_three_fresh_consistent_frames(immediate):
+    helper, owner, record, *_ = actual_card_return('6', frames=5)
+    helper.cards['6'].update(complete=True, pending=False)
+    owner._on_choice = Mock(side_effect=[True, True, False, True, True])
+    assert helper.observe_final_reward() is False
+    assert not helper.ledger.get('final_reward_collected')
+    owner.device.click.assert_not_called()
+
+
+def test_final_story_and_reward_verify_without_new_unlock_or_claim(immediate):
+    helper, owner, record, *_ = actual_card_return('6')
+    assert helper.observe_unlock_payment() is True
+    assert helper.run_cards() is True
+    assert record['status'] == 'complete' and record['story_complete'] is True
+    assert record['final_reward_collected'] is True
+    assert helper.cards['6']['clicks'] == 1
+    owner.device.click.assert_not_called()
+    owner.story_skip.assert_not_called()
+
+
+def test_story_completion_preserves_unverified_reward_state(immediate):
+    helper, owner, record, *_ = actual_card_return('6')
+    assert helper.observe_unlock_payment() is True
+    x1, y1, x2, y2 = STORY_FINAL_COLLECTED.area
+    owner.device.image[y1-4:y2+4, x1-4:x2+4] = 0
+    assert helper.run_cards() is True
+    assert record['status'] == 'observed' and record['story_complete'] is True
+    assert record['final_reward_collected'] is False
+    owner.device.click.assert_not_called()
 
 
 def test_interrupted_return_cannot_verify_from_unstable_ticket_readings(immediate):

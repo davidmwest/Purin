@@ -700,9 +700,13 @@ class EventCompletion(Reward):
                     # Receiving a ticket and capturing an unlock destination do
                     # not prove the character story has been completed.
                     ticket_status = tickets.get('status', 'failed')
-                    result['event_side_story'] = ('incomplete' if ticket_status == 'observed'
-                                                 else 'unsupported' if ticket_status == 'unsupported' else 'failed')
-                    logger.info('Side-story ticket/unlock step remains separate from story completion')
+                    verified = (ticket_status == 'complete' and tickets.get('story_complete') is True
+                                and tickets.get('final_reward_collected') is True)
+                    result['event_side_story'] = (
+                        'complete' if verified else 'incomplete' if ticket_status == 'observed'
+                        else 'unsupported' if ticket_status == 'unsupported' else 'failed')
+                    logger.info('All six side stories and final reward verified' if verified else
+                                'Side-story ticket/unlock step remains separate from story completion')
             else:
                 logger.warning(f'Automatic event story is not supported for {event}')
                 result['story'] = 'unsupported'

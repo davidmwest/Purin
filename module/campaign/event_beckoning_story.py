@@ -3,7 +3,7 @@ from module.base.timer import Timer
 from module.campaign.event_beckoning_assets import (
     BECKONING_MONTHLY_COLLECT, BECKONING_VICTORY_COLLECT, OCR_BECKONING_VICTORIES)
 from module.campaign.event_beckoning_story_assets import (
-    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS, STORY_UNLOCKED_TITLES,
+    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS, STORY_FINAL_COLLECTED, STORY_UNLOCKED_TITLES,
     STORY_VIEWER_LOG, STORY_VIEWER_SKIP, VICTORY_MISSION)
 from module.campaign.event_rewards import EventRewards
 from module.exception import ScriptError
@@ -230,6 +230,27 @@ class BeckoningStoryContinuation:
             wait.reset()
         return self.fail('milestone_claim_unverified')
 
+    def observe_final_reward(self):
+        """Record the observed auto-collected reward; no claim input exists here."""
+        if not all(self.cards.get(name, {}).get('complete') for name, _, _ in STORY_CARDS):
+            return False
+        frames = 0
+        settled = Timer(1, count=2).start()
+        for _ in self.owner.loop(skip_first=False, timeout=10):
+            if self.owner._on_choice() and self.visible(STORY_FINAL_COLLECTED):
+                frames += 1
+                if frames >= 3 and settled.reached():
+                    self.ledger['final_reward_collected'] = True
+                    self.record['final_reward_collected'] = True
+                    self.owner._capture(self.record, 'final_reward_collected')
+                    self.persist()
+                    return True
+            else:
+                frames = 0
+                settled.reset()
+        self.record['final_reward_collected'] = False
+        return False
+
     def run_cards(self):
         owner = self.owner
         # At most six unlocks plus one audited replay of an interrupted viewer.
@@ -274,8 +295,12 @@ class BeckoningStoryContinuation:
                 return self.fail('story_cards_not_stably_recognized')
             if candidate is None:
                 complete = all(self.cards.get(name, {}).get('complete') for name, _, _ in STORY_CARDS)
-                self.record.update(status='complete' if complete else 'observed', story_complete=complete,
-                                   reason='all_six_stories_verified' if complete else 'remaining_stories_require_evidence_or_tickets')
+                reward_collected = self.observe_final_reward() if complete else False
+                self.record.update(
+                    status='complete' if complete and reward_collected else 'observed', story_complete=complete,
+                    reason=('all_six_stories_verified' if reward_collected else
+                            'all_six_stories_verified_final_reward_unverified' if complete else
+                            'remaining_stories_require_evidence_or_tickets'))
                 owner._capture(self.record, 'stories_finished' if complete else 'stories_pending')
                 self.persist()
                 return True
