@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 from module.exception import GameNotRunningError, GamePageUnknownError, ScriptError
-from module.gacha import mission
+from module.gacha import mission, mission_orders
 from module.gacha.gacha_reward import RewardGacha
 from module.gacha.mission import (
     GachaMissionObserver, GachaMissionOrderObserver, choose_mission_pool, load_mission_state,
@@ -197,21 +197,19 @@ def test_invalid_account_cannot_escape_state_folder(tmp_path):
 
 def test_default_mission_mode_bypasses_legacy_fixed_light_orders(monkeypatch):
     helper = RewardGacha.__new__(RewardGacha)
-    helper.config = SimpleNamespace(task_delay=Mock())
+    helper.config = SimpleNamespace(config_name="alas", Scheduler_ServerUpdate="00:00", task_delay=Mock())
     helper.device = object()
     helper.gacha_run = Mock()
-    observer = SimpleNamespace(run=Mock(return_value={'orders_submitted': 0}))
-    factory = Mock(return_value=observer)
-    monkeypatch.setattr(mission, 'GachaMissionObserver', factory)
-    monkeypatch.setattr(mission, 'GachaMissionOrderObserver', Mock(return_value=SimpleNamespace(
-        run=Mock(return_value={'build_open_clicked': False}))))
+    executor = SimpleNamespace(run=Mock(return_value=dict(status='complete',mission_reward_claimed=True,returned_main=True)))
+    factory=Mock(return_value=executor)
+    monkeypatch.setattr(mission_orders,'GachaMissionOrders',factory)
     monkeypatch.setitem(sys.modules, 'module.gacha.banner', SimpleNamespace(
         EventBannerObserver=Mock(return_value=SimpleNamespace(
             run=Mock(return_value={'returned_main': True})))))
     helper.run()
     helper.gacha_run.assert_not_called()
     factory.assert_called_once_with(config=helper.config, device=helper.device)
-    observer.run.assert_called_once_with()
+    executor.run.assert_called_once_with()
     helper.config.task_delay.assert_called_once_with(server_update=True)
 
 
@@ -481,30 +479,55 @@ def test_reset_before_or_during_warning_reservation_vetoes_ack(monkeypatch, rese
 @pytest.mark.parametrize('reused', [False, True])
 def test_unknown_rateinfo_exit_stops_before_order_navigation(monkeypatch, reused):
     helper = RewardGacha.__new__(RewardGacha)
-    helper.config = SimpleNamespace(task_delay=Mock())
+    helper.config = SimpleNamespace(config_name="alas", Scheduler_ServerUpdate="00:00", task_delay=Mock())
     helper.device = object()
     monkeypatch.setattr(mission, 'GachaMissionObserver', Mock(return_value=SimpleNamespace(run=Mock())))
     order = Mock()
-    monkeypatch.setattr(mission, 'GachaMissionOrderObserver', order)
+    monkeypatch.setattr(mission_orders, 'GachaMissionOrders', order)
     monkeypatch.setitem(sys.modules, 'module.gacha.banner', SimpleNamespace(
         EventBannerObserver=Mock(return_value=SimpleNamespace(
             run=Mock(return_value={'returned_main': False, 'reused': reused})))))
-    with pytest.raises(GamePageUnknownError, match='RateInfo'):
+    with pytest.raises(GamePageUnknownError, match='banner modal'):
         helper.run()
     order.assert_not_called()
     helper.config.task_delay.assert_not_called()
 
 
-def test_newly_observed_order_dialog_requests_scheduler_recovery_without_submission(monkeypatch):
+@pytest.mark.parametrize('returned_main,expected', [(False,'recovery'), (True,'retry')])
+def test_unknown_order_credit_retries_today_without_legacy_builds(monkeypatch,returned_main,expected):
     helper = RewardGacha.__new__(RewardGacha)
-    helper.config = SimpleNamespace(task_delay=Mock())
+    helper.config = SimpleNamespace(config_name="alas", Scheduler_ServerUpdate="00:00", task_delay=Mock())
     helper.device = object()
-    monkeypatch.setattr(mission, 'GachaMissionObserver', Mock(return_value=SimpleNamespace(run=Mock())))
-    monkeypatch.setattr(mission, 'GachaMissionOrderObserver', Mock(return_value=SimpleNamespace(
-        run=Mock(return_value={'build_open_clicked': True}))))
+    helper.gacha_run=Mock()
+    monkeypatch.setattr(mission_orders,'GachaMissionOrders',Mock(return_value=SimpleNamespace(
+        run=Mock(return_value=dict(status='blocked',returned_main=returned_main)))))
     monkeypatch.setitem(sys.modules, 'module.gacha.banner', SimpleNamespace(
         EventBannerObserver=Mock(return_value=SimpleNamespace(
             run=Mock(return_value={'returned_main': True})))))
-    with pytest.raises(GamePageUnknownError, match='no submission'):
+    if returned_main:
         helper.run()
-    helper.config.task_delay.assert_not_called()
+        helper.config.task_delay.assert_called_once_with(minute=10)
+    else:
+        with pytest.raises(GamePageUnknownError,match='recognized recovery'):
+            helper.run()
+        helper.config.task_delay.assert_not_called()
+    helper.gacha_run.assert_not_called()
+
+
+def test_owned_receipt_recovery_bypasses_banner_and_legacy_orders(monkeypatch):
+    helper = RewardGacha.__new__(RewardGacha)
+    helper.config = SimpleNamespace(task_delay=Mock())
+    helper.device = object()
+    helper.gacha_run = Mock()
+    recovery = Mock(return_value=True)
+    monkeypatch.setattr(mission_orders, 'mission_claim_recovery_due', recovery)
+    factory = Mock(return_value=SimpleNamespace(run=Mock(return_value=dict(
+        status='complete', mission_reward_claimed=True, returned_main=True))))
+    monkeypatch.setattr(mission_orders, 'GachaMissionOrders', factory)
+    banner = Mock(side_effect=AssertionError('owned receipt must be handled before banner navigation'))
+    monkeypatch.setitem(sys.modules, 'module.gacha.banner', SimpleNamespace(EventBannerObserver=banner))
+    helper.run()
+    banner.assert_not_called()
+    helper.gacha_run.assert_not_called()
+    factory.return_value.run.assert_called_once_with()
+    helper.config.task_delay.assert_called_once_with(server_update=True)

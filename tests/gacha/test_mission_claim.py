@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import numpy as np
 import pytest
@@ -49,6 +49,7 @@ def controller():
     helper.device = SimpleNamespace(image=screenshot(), click=Mock(), stuck_record_clear=Mock())
     helper._capture = Mock()
     helper._resume_receipts = Mock()
+    helper._reward_dialog = Mock(return_value=None)
     helper.reward_side_navbar_ensure = Mock(return_value=True)
     return helper
 
@@ -104,10 +105,15 @@ def test_claim_is_durable_before_input_and_postclaim_requires_receipt_and_stable
     monkeypatch.setattr(mission_claim, 'Timer', ImmediateTimer)
     monkeypatch.setattr(mission_claim, 'ensure_event_running', Mock())
     monkeypatch.setattr(mission_claim, 'ensure_event_page', Mock(return_value=True))
-    helper._daily_list = Mock(side_effect=[True] * 3 + [False] + [True] * 3)
-    helper.loop = Mock(return_value=iter(range(7)))
+    frame = {'receipt': False}
+    def frames(**kwargs):
+        for is_receipt in [False] * 3 + [True] + [False] * 3:
+            frame['receipt'] = is_receipt
+            yield
+    helper._daily_list = Mock(side_effect=lambda: not frame['receipt'])
+    helper.loop = frames
     helper._reward_get_state = Mock(return_value=object())
-    helper._reward_dialog = Mock(return_value=GET_ITEMS_1)
+    helper._reward_dialog = Mock(side_effect=lambda: GET_ITEMS_1 if frame['receipt'] else None)
     button = Button((1118, 449, 1224, 479), (0, 0, 0), (1118, 449, 1224, 479), name='TARGET_CLAIM')
     monkeypatch.setattr(mission_claim, 'earned_build_mission', Mock(side_effect=[button] * 3 + [None] * 3))
     monkeypatch.setattr(mission, 'locate_build_mission', Mock(side_effect=[{}] * 3 + [None] * 3))
@@ -204,7 +210,7 @@ def test_claim_key_uses_configured_server_reset_and_current_event(tmp_path, monk
     assert result['period'] == reset.isoformat()
     assert result['event'] == mission.CURRENT_EVENT
     assert f'{reset.isoformat()}:{mission.CURRENT_EVENT}:{CLAIM_VERSION}' in load_claim_state('alas', tmp_path)
-    get_reset.assert_called_once_with('04:00')
+    assert get_reset.call_args_list == [call('04:00'), call('04:00')]
 
 
 @pytest.mark.parametrize('after_reservation', [False, True])
@@ -255,3 +261,106 @@ def test_invalid_claim_count_cannot_authorize_input(tmp_path, monkeypatch, value
 def test_account_validation_keeps_claim_audit_in_its_folder(tmp_path):
     with pytest.raises(ScriptError):
         claim_state_path('../alas', tmp_path)
+
+
+def test_event_claim_has_separate_durable_budget_from_daily(tmp_path,monkeypatch):
+    helper=controller()
+    monkeypatch.setattr(mission_claim,'ensure_event_running',Mock())
+    monkeypatch.setattr(mission_claim,'ensure_event_page',Mock(return_value=True))
+    def collect(audit,persist):
+        audit.update(claim_clicks=1,claim_tab=helper._claim_upper,pending_claim=True,status='blocked')
+        persist()
+    helper._collect=Mock(side_effect=collect)
+    result=helper.run(folder=tmp_path,tabs=(4,6))
+    assert result['claim_clicks']==2 and not result['mission_reward_claimed']
+    saved=load_claim_state('alas',tmp_path)
+    assert saved[day_key()]['claim_clicks']==1
+    assert saved[day_key()+':tab6']['claim_clicks']==1
+    assert [call.kwargs['upper'] for call in helper.reward_side_navbar_ensure.call_args_list]==[4,6]
+    helper._collect=Mock()
+    helper.run(folder=tmp_path,tabs=(4,6))
+    assert helper._resume_receipts.call_count==2
+    helper.device.click.assert_not_called()
+
+
+def test_both_rewards_require_each_tab_verified(monkeypatch):
+    helper=controller()
+    helper._run_tab=Mock(side_effect=[dict(status='complete',mission_reward_claimed=True,returned_main=True),
+                                     dict(status='blocked',mission_reward_claimed=False,returned_main=True)])
+    result=helper.run(tabs=(4,6))
+    assert result['status']=='blocked' and not result['mission_reward_claimed']
+    assert list(result['tab_results'])==[4,6]
+
+
+def test_selected_event_list_requires_exact_active_event_tab():
+    helper=controller()
+    helper._claim_upper=6
+    helper.ui_page_appear=Mock(return_value=True)
+    nav=SimpleNamespace(get_info=Mock(return_value=(5,0,5)))
+    helper.__dict__['_reward_side_navbar']=nav
+    assert helper._daily_list()
+    nav.get_info.return_value=(3,0,5)
+    assert not helper._daily_list()
+
+
+def test_pending_event_receipt_is_resumed_before_unclaimed_daily_tab(tmp_path):
+    helper = controller()
+    save_claim_state('alas', {day_key()+':tab6': record(claim_clicks=1, pending_claim=True, claim_tab=6)}, tmp_path)
+    helper._run_tab = Mock(return_value=dict(status='complete', mission_reward_claimed=True, returned_main=True))
+    result = helper.run(folder=tmp_path, tabs=(4, 6))
+    assert [call.kwargs['upper'] for call in helper._run_tab.call_args_list] == [6, 4]
+    assert list(result['tab_results']) == [6, 4]
+    assert result['mission_reward_claimed']
+
+
+def test_owned_receipt_takes_priority_over_matching_background_page(monkeypatch):
+    helper = controller()
+    del helper._resume_receipts
+    monkeypatch.setattr(mission_claim, 'Timer', ImmediateTimer)
+    visible = {'receipt': True}
+    helper._reward_dialog = Mock(side_effect=lambda: GET_ITEMS_1 if visible['receipt'] else None)
+    helper.ui_page_appear = Mock(return_value=True)
+    helper.loop = Mock(return_value=iter(range(2)))
+    audit = record(claim_clicks=1, pending_claim=True)
+    persist = Mock()
+    def click(button):
+        assert audit['receipt_seen'] and audit['reward_dialogs'] == 1
+        assert persist.call_count == 1
+        visible['receipt'] = False
+    helper.device.click.side_effect = click
+    assert helper._resume_receipts(audit, persist)
+    helper.device.click.assert_called_once_with(GET_ITEMS_1)
+    assert audit['receipt_seen']
+
+
+def test_exhausted_owned_receipt_never_falls_through_to_generic_navigation(tmp_path, monkeypatch):
+    helper = controller()
+    del helper._resume_receipts
+    monkeypatch.setattr(mission_claim, 'Timer', ImmediateTimer)
+    monkeypatch.setattr(mission_claim, 'ensure_event_running', Mock())
+    navigate = Mock()
+    monkeypatch.setattr(mission_claim, 'ensure_event_page', navigate)
+    save_claim_state('alas', {day_key(): record(claim_clicks=1, reward_dialogs=8, pending_claim=True)}, tmp_path)
+    helper._reward_dialog = Mock(return_value=GET_ITEMS_1)
+    helper.ui_page_appear = Mock(return_value=True)
+    helper.loop = Mock(return_value=iter(range(3)))
+    result = helper.run(folder=tmp_path)
+    assert result['status'] == 'blocked' and not result['returned_main']
+    assert not result['mission_reward_claimed']
+    navigate.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_verified_claim_can_recover_failed_home_without_reclaim(tmp_path, monkeypatch):
+    helper = controller()
+    save_claim_state('alas', {day_key(): record(claim_clicks=1, receipt_seen=True,
+        mission_reward_claimed=True, returned_main=False)}, tmp_path)
+    monkeypatch.setattr(mission_claim, 'ensure_event_running', Mock())
+    navigate = Mock(return_value=True)
+    monkeypatch.setattr(mission_claim, 'ensure_event_page', navigate)
+    helper._collect = Mock()
+    result = helper.run(folder=tmp_path)
+    assert result['mission_reward_claimed'] and result['returned_main'] and result['reused']
+    navigate.assert_called_once_with(helper, page_main)
+    helper._collect.assert_not_called()
+    helper.device.click.assert_not_called()

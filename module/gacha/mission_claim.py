@@ -102,7 +102,7 @@ class GachaMissionClaim(Reward):
 
     def _daily_list(self):
         return (self.ui_page_appear(page_mission)
-                and self._reward_side_navbar.get_info(self) == (3, 0, 5))
+                and self._reward_side_navbar.get_info(self) == (getattr(self, '_claim_upper', 4) - 1, 0, 5))
 
     def _reward_dialog(self):
         for button in (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP):
@@ -122,10 +122,15 @@ class GachaMissionClaim(Reward):
     def _resume_receipts(self, record, persist):
         wait = Timer(1, count=2)
         for _ in self.loop(skip_first=False, timeout=10):
+            # Background page templates can match through a receipt overlay.
+            # Its exact witness takes priority and is audited before dismissal.
+            if self._reward_dialog() is not None:
+                if wait.reached() and self._dismiss_receipt(record, persist):
+                    wait.reset()
+                continue
             if self.ui_page_appear(page_mission) or self.ui_page_appear(page_main):
-                return
-            if wait.reached() and self._dismiss_receipt(record, persist):
-                wait.reset()
+                return True
+        return False
 
     def _collect(self, record, persist):
         from module.gacha.mission import locate_build_mission
@@ -135,6 +140,12 @@ class GachaMissionClaim(Reward):
         prior = None
         frames = 0
         for _ in self.loop(skip_first=False, timeout=40):
+            if record['claim_clicks'] and self._reward_dialog() is not None:
+                prior, frames = None, 0
+                settled.reset()
+                if click_wait.reached() and self._dismiss_receipt(record, persist):
+                    click_wait.reset()
+                continue
             if not self._daily_list():
                 prior, frames = None, 0
                 settled.reset()
@@ -155,7 +166,8 @@ class GachaMissionClaim(Reward):
                 if self._period() != record['period']:
                     record.update(status='blocked', reason='mission_period_changed')
                     return
-                record.update(claim_clicks=1, pending_claim=True, earned_row=list(button.button))
+                record.update(claim_clicks=1, pending_claim=True, earned_row=list(button.button),
+                              claim_tab=getattr(self, '_claim_upper', 4))
                 # A crash after input resumes receipt verification only. It can
                 # never submit builds or repeat this claim on the same server day.
                 persist()
@@ -169,6 +181,9 @@ class GachaMissionClaim(Reward):
                 prior, frames = None, 0
                 settled.reset()
                 continue
+            if not record['claim_clicks']:
+                record.update(status='blocked', reason='build_mission_not_earned_on_tab')
+                return
             if (row is None and record['claim_clicks'] and record['receipt_seen']
                     and self._reward_get_state() is not None):
                 record.update(status='complete', reason='build_mission_reward_verified',
@@ -176,13 +191,13 @@ class GachaMissionClaim(Reward):
                 return
         record.update(status='blocked', reason='build_mission_claim_unverified')
 
-    def run(self, folder='./config/gacha'):
+    def _run_tab(self, folder='./config/gacha', upper=4):
         from module.gacha.mission import CURRENT_EVENT
 
         ensure_event_running(self)
         account = self.config.config_name
         period = self._period()
-        key = f'{period}:{CURRENT_EVENT}:{CLAIM_VERSION}'
+        key = f'{period}:{CURRENT_EVENT}:{CLAIM_VERSION}' + (':tab6' if upper == 6 else '')
         state = load_claim_state(account, folder)
         previous = state.get(key, {})
         for name, maximum in (('claim_clicks', 1), ('reward_dialogs', DIALOGS_MAX)):
@@ -191,27 +206,44 @@ class GachaMissionClaim(Reward):
         for name in ('receipt_seen', 'pending_claim', 'mission_reward_claimed'):
             if name in previous and type(previous[name]) is not bool:
                 raise ScriptError('Invalid durable Gacha claim proof')
+        if type(previous.get('claim_tab', upper)) is not int or previous.get('claim_tab', upper) != upper:
+            raise ScriptError('Invalid durable Gacha claim tab')
         if previous.get('mission_reward_claimed'):
+            if not previous.get('returned_main'):
+                # Claim proof survives a failed Home return. Never repeat the
+                # claim, and never consume an unexpected receipt on this path.
+                previous['returned_main'] = (self._reward_dialog() is None
+                                             and ensure_event_page(self, page_main))
+                if previous['returned_main']:
+                    previous.update(status='complete', reason='build_mission_reward_verified')
+                save_claim_state(account, state, folder)
             return dict(previous, reused=True)
-        record = dict(status='claiming', reason='earned_build_mission_requires_verification',
+        self._claim_upper = upper
+        record = dict(claim_tab=upper, status='claiming', reason='earned_build_mission_requires_verification',
                       period=period, event=CURRENT_EVENT,
                       diagnostics=[], claim_clicks=0, reward_dialogs=0, receipt_seen=False,
                       pending_claim=False, mission_reward_claimed=False, returned_main=False)
         record.update({k: previous[k] for k in ('claim_clicks', 'reward_dialogs', 'receipt_seen',
-                                               'pending_claim', 'diagnostics') if k in previous})
+                                               'pending_claim', 'diagnostics', 'claim_tab') if k in previous})
         state[key] = record
 
         def persist():
             save_claim_state(account, state, folder)
 
         persist()
+        receipt_blocked = False
         try:
-            if record['claim_clicks']:
-                self._resume_receipts(record, persist)
-            if not ensure_event_page(self, page_mission) or not self.reward_side_navbar_ensure(upper=4):
+            receipt_blocked = (record['claim_clicks']
+                               and self._resume_receipts(record, persist) is False)
+            if receipt_blocked:
+                record.update(status='blocked', reason='owned_claim_receipt_unrecognized')
+            elif not ensure_event_page(self, page_mission):
                 record.update(status='blocked', reason='daily_mission_page_unrecognized')
             else:
-                self._collect(record, persist)
+                if not self.reward_side_navbar_ensure(upper=upper):
+                    record.update(status='blocked', reason='mission_tab_unrecognized')
+                else:
+                    self._collect(record, persist)
             self._capture(record, record['status'])
         except Exception:
             record.update(status='blocked', reason='build_mission_claim_exception')
@@ -219,10 +251,53 @@ class GachaMissionClaim(Reward):
             raise
         finally:
             try:
-                record['returned_main'] = ensure_event_page(self, page_main)
+                # An exhausted receipt budget must not fall through to generic
+                # navigation, which could dismiss it without our audit.
+                if receipt_blocked or (record['claim_clicks'] and self._reward_dialog() is not None):
+                    record['returned_main'] = False
+                else:
+                    record['returned_main'] = ensure_event_page(self, page_main)
                 if not record['returned_main']:
                     record.update(status='blocked', reason='claim_main_return_unrecognized')
             finally:
                 persist()
         logger.attr('GachaMissionClaim', record)
         return record
+
+
+    def run(self, folder='./config/gacha', tabs=(4,)):
+        """Claim each independently proven Build3 tab with its own journal."""
+        if (not isinstance(tabs, (list, tuple)) or not tabs
+                or any(type(tab) is not int or tab not in (4,6) for tab in tabs)
+                or len(set(tabs)) != len(tabs)):
+            raise ScriptError('Invalid proven Build mission tabs')
+        from module.gacha.mission import CURRENT_EVENT
+
+        state = load_claim_state(self.config.config_name, folder)
+        prefix = f'{self._period()}:{CURRENT_EVENT}:{CLAIM_VERSION}'
+        def pending(upper):
+            previous = state.get(prefix + (':tab6' if upper == 6 else ''), {})
+            clicks = previous.get('claim_clicks', 0)
+            if type(clicks) is not int or not 0 <= clicks <= 1:
+                raise ScriptError('Invalid durable Gacha claim budget')
+            return clicks == 1 and not previous.get('mission_reward_claimed')
+
+        # An Event receipt may be open while Daily has not been claimed yet.
+        # Resume the owning tab before navigating to any fresh claim tab.
+        ordered = sorted(tabs, key=lambda upper: not pending(upper))
+        results=[]
+        for upper in ordered:
+            result=self._run_tab(folder=folder,upper=upper)
+            results.append(result)
+            if not result.get('returned_main'):
+                break
+        if len(tabs)==1:
+            return results[0]
+        claimed=(len(results)==len(tabs)
+                 and all(item.get('mission_reward_claimed') for item in results))
+        return dict(status='complete' if claimed else 'blocked',
+                    reason='all_proven_build_rewards_verified' if claimed else 'proven_build_reward_pending',
+                    mission_reward_claimed=claimed, returned_main=all(item.get('returned_main') for item in results),
+                    claim_clicks=sum(item.get('claim_clicks',0) for item in results),
+                    diagnostics=[path for item in results for path in item.get('diagnostics',[])],
+                    tab_results=dict(zip(ordered,results)))

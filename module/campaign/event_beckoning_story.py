@@ -3,7 +3,7 @@ from module.base.timer import Timer
 from module.campaign.event_beckoning_assets import (
     BECKONING_MONTHLY_COLLECT, BECKONING_VICTORY_COLLECT, OCR_BECKONING_VICTORIES)
 from module.campaign.event_beckoning_story_assets import (
-    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS,
+    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS, STORY_UNLOCKED_TITLES,
     STORY_VIEWER_LOG, STORY_VIEWER_SKIP, VICTORY_MISSION)
 from module.campaign.event_rewards import EventRewards
 from module.exception import ScriptError
@@ -46,6 +46,11 @@ class BeckoningStoryContinuation:
     def on_story(self):
         return self.visible(STORY_VIEWER_LOG) and self.visible(STORY_VIEWER_SKIP)
 
+    def card_title_visible(self, name):
+        title = STORY_CARDS[int(name) - 1][1]
+        unlocked = STORY_UNLOCKED_TITLES.get(name)
+        return self.visible(title) or (unlocked is not None and self.visible(unlocked))
+
     def fail(self, reason):
         self.record.update(status='failed', reason=reason, story_complete=False)
         self.owner._capture(self.record, reason)
@@ -64,7 +69,7 @@ class BeckoningStoryContinuation:
                 if owner._on_choice():
                     tickets = owner._tickets()
                     card = STORY_CARDS[int(name) - 1]
-                    unlocked = self.visible(card[1]) and not self.visible(card[2])
+                    unlocked = self.card_title_visible(name) and not self.visible(card[2])
                     paid = (type(tickets) is int and type(audit.get('tickets_before')) is int
                             and (tickets < audit['tickets_before'] or audit.get('replay')))
                     if audit.get('story_seen') and unlocked and paid:
@@ -134,7 +139,7 @@ class BeckoningStoryContinuation:
             proof = tuple(name for name, audit in pending
                           if type(tickets) is int and type(audit.get('tickets_before')) is int
                           and tickets < audit['tickets_before']
-                          and self.visible(STORY_CARDS[int(name) - 1][1])
+                          and self.card_title_visible(name)
                           and not self.visible(STORY_CARDS[int(name) - 1][2]))
             observation = tickets, proof
             if observation != previous or type(tickets) is not int:
@@ -143,7 +148,14 @@ class BeckoningStoryContinuation:
             frames += 1
             if type(tickets) is int and frames >= 3 and settled.reached():
                 for name in proof:
-                    self.cards[name].update(unlock_paid=True, unlock_tickets=tickets)
+                    audit = self.cards[name]
+                    audit.update(unlock_paid=True, unlock_tickets=tickets)
+                    # A prior invocation may have seen the viewer but failed to
+                    # recognize its unlocked return. The same stable paid,
+                    # unlocked evidence finishes that audit without a replay.
+                    if audit.get('story_seen'):
+                        audit.update(pending=False, complete=True, tickets_after=tickets)
+                        self.owner._capture(self.record, f'card_{name}_story_finished')
                 if proof:
                     self.persist()
                 return True
@@ -240,7 +252,7 @@ class BeckoningStoryContinuation:
                 available = []
                 for name, title, lock in STORY_CARDS:
                     audit = self.cards.get(name, {})
-                    if audit.get('complete') or not self.visible(title):
+                    if audit.get('complete') or not self.card_title_visible(name):
                         continue
                     locked = self.visible(lock)
                     if locked and type(tickets) is int and tickets > 0 and not audit:

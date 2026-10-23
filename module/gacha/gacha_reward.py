@@ -382,18 +382,24 @@ class RewardGacha(GachaUI, Retirement):
             out: page_build
         """
         if getattr(self.config, 'Gacha_MissionDriven', True):
-            # Mission mode never reaches the fixed-count queue/submit path.
-            # First collect exact mission and banner evidence through the job.
             from module.exception import GamePageUnknownError
             from module.gacha.banner import EventBannerObserver
-            from module.gacha.mission import GachaMissionObserver, GachaMissionOrderObserver
-            GachaMissionObserver(config=self.config, device=self.device).run()
-            banner = EventBannerObserver(config=self.config, device=self.device).run()
-            if not banner.get('returned_main'):
-                raise GamePageUnknownError('Gacha RateInfo captured; unknown exit requires game restart')
-            order = GachaMissionOrderObserver(config=self.config, device=self.device).run()
-            if order.get('build_open_clicked') and not order.get('reused'):
-                raise GamePageUnknownError('Gacha order dialog captured; no submission authorized')
-        else:
-            self.gacha_run()
+            from module.gacha.mission_orders import GachaMissionOrders, mission_claim_recovery_due
+            # A receipt from our persisted claim must be audited by the claim
+            # helper before banner navigation or generic popup handlers run.
+            if not mission_claim_recovery_due(self.config):
+                banner = EventBannerObserver(config=self.config, device=self.device).run()
+                if not banner.get('returned_main'):
+                    raise GamePageUnknownError('Gacha banner modal requires recognized recovery')
+            result = GachaMissionOrders(config=self.config, device=self.device).run()
+            if not result.get('returned_main'):
+                raise GamePageUnknownError('Gacha mission result requires recognized recovery')
+            # Uncertain credit/claim is retried on this server day. Its durable
+            # reservation prevents another submission while recovery is pending.
+            if result.get('status') == 'complete' and result.get('mission_reward_claimed'):
+                self.config.task_delay(server_update=True)
+            else:
+                self.config.task_delay(minute=10)
+            return
+        self.gacha_run()
         self.config.task_delay(server_update=True)

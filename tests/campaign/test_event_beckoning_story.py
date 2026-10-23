@@ -7,11 +7,11 @@ import pytest
 from PIL import Image
 
 from module.campaign import event_beckoning_story as story
-from module.campaign.event_beckoning import EVENT
+from module.campaign.event_beckoning import BeckoningTickets, EVENT
 from module.campaign.event_beckoning_assets import BECKONING_MONTHLY_COLLECT
 from module.campaign.event_beckoning_story import BeckoningStoryContinuation
 from module.campaign.event_beckoning_story_assets import (
-    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS,
+    MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS, STORY_UNLOCKED_TITLES,
     STORY_VIEWER_LOG, STORY_VIEWER_SKIP, VICTORY_MISSION)
 from module.combat.assets import GET_ITEMS_1
 from module.exception import ScriptError
@@ -57,6 +57,80 @@ def test_actual_six_locked_cards_and_escalating_missions_are_recognized():
     assert OCR_MONTHLY_MILESTONE.ocr(image) == (2, 0, 2)
     # The counter reader clamps the actual 155 victories to the earned 30 goal.
     assert story.OCR_BECKONING_VICTORIES.ocr(image) == (30, 0, 30)
+
+
+def actual_card3_return(frames=5):
+    state = {EVENT + ':beckoning_stories_v1': dict(cards={
+        '1': dict(clicks=2, complete=True, pending=False),
+        '2': dict(clicks=1, complete=True, pending=False),
+        '3': dict(clicks=1, complete=False, pending=True, story_seen=True,
+                  tickets_before=3, handler_calls=3)}, milestones={})}
+    helper, owner, record, state, saved = controller(frames=frames, state=state)
+    owner.device.image = np.asarray(Image.open(
+        'tests/campaign/data/beckoning_card3_unlocked.png').convert('RGB')).copy()
+    owner._matches = lambda button: button.match_template_color(
+        owner.device.image, offset=(3, 3), similarity=.85)
+    owner._on_choice = lambda: BeckoningTickets._on_choice(owner)
+    owner._tickets = lambda: BeckoningTickets._tickets(owner)
+    helper.visible = lambda button: BeckoningStoryContinuation.visible(helper, button)
+    return helper, owner, record, state, saved
+
+
+def test_actual_card3_unlocked_title_needs_its_observed_alternative():
+    helper, owner, *_ = actual_card3_return()
+    assert owner._on_choice() and owner._tickets() == 2
+    assert not helper.visible(STORY_CARDS[2][1])
+    assert helper.visible(STORY_UNLOCKED_TITLES['3'])
+    assert helper.card_title_visible('3')
+    assert not helper.visible(STORY_CARDS[2][2])
+    owner.device.image[:] = 0
+    assert not helper.card_title_visible('3')
+    owner.device.click.assert_not_called()
+
+
+def test_actual_paid_story_return_finishes_without_another_input(immediate):
+    helper, owner, _, _, saved = actual_card3_return()
+    assert helper.finish_story('3') is True
+    assert helper.cards['3']['complete'] and not helper.cards['3']['pending']
+    assert helper.cards['3']['clicks'] == 1
+    assert helper.cards['3']['tickets_after'] == 2
+    assert saved[-1][0][EVENT + ':beckoning_stories_v1']['cards']['3']['complete']
+    owner.device.click.assert_not_called()
+    owner.story_skip.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [None, 'title', 'lock_removed', 'payment', 'viewer', 'choice'])
+def test_interrupted_actual_return_verifies_only_paid_seen_unlocked_card(immediate, missing):
+    helper, owner, *_ = actual_card3_return()
+    if missing == 'title':
+        x1, y1, x2, y2 = STORY_CARDS[2][1].area
+        owner.device.image[y1-4:y2+4, x1-4:x2+4] = 0
+    elif missing == 'lock_removed':
+        locked = np.asarray(Image.open(
+            'tests/campaign/data/beckoning_escalating_missions.png').convert('RGB'))
+        x1, y1, x2, y2 = STORY_CARDS[2][2].area
+        owner.device.image[y1-4:y2+4, x1-4:x2+4] = locked[y1-4:y2+4, x1-4:x2+4]
+    elif missing == 'payment':
+        owner._tickets = lambda: 3
+    elif missing == 'viewer':
+        helper.cards['3']['story_seen'] = False
+    elif missing == 'choice':
+        owner._on_choice = lambda: False
+    helper.observe_unlock_payment()
+    assert helper.cards['3'].get('complete', False) is (missing is None)
+    assert helper.cards['3']['clicks'] == 1
+    assert helper.cards['1']['complete'] and helper.cards['2']['complete']
+    owner.device.click.assert_not_called()
+    owner.story_skip.assert_not_called()
+
+
+def test_interrupted_return_cannot_verify_from_unstable_ticket_readings(immediate):
+    helper, owner, *_ = actual_card3_return(frames=5)
+    owner._tickets = Mock(side_effect=[2, 1, 2, 1, 2])
+    assert helper.observe_unlock_payment() is False
+    assert not helper.cards['3']['complete']
+    owner.device.click.assert_not_called()
+    owner.story_skip.assert_not_called()
 
 
 @pytest.mark.parametrize('missing', [None, STORY_VIEWER_LOG, STORY_VIEWER_SKIP])
