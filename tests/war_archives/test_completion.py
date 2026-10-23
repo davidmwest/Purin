@@ -160,6 +160,37 @@ def test_prize_proof_rejects_unknown(value, setup):
     assert not verified_prize(value, setup[2].prizes[0])
 
 
+def received_proof():
+    return dict(verified=True, claimed=True, count=None, total=60,
+                proof_kind='source_received_hidden_button', reason='prize_already_claimed',
+                archive='war_archives_20190321_en', prize_id=307061,
+                returned_stage=True, diagnostics=['/capture/prize_already_claimed.png'])
+
+
+def test_exact_received_button_proof_needs_no_fabricated_counter():
+    prize = get_archive('war_archives_20190321_en').prizes[0]
+    assert verified_prize(received_proof(), prize)
+
+
+@pytest.mark.parametrize('field,value', [
+    ('verified', False), ('claimed', False), ('proof_kind', None),
+    ('reason', 'unverified'), ('archive', 'war_archives_20181026_en'),
+    ('prize_id', 105121), ('returned_stage', False), ('diagnostics', [])])
+def test_received_proof_rejects_unbound_or_incomplete_evidence(field, value):
+    proof = received_proof()
+    proof[field] = value
+    assert not verified_prize(proof, get_archive('war_archives_20190321_en').prizes[0])
+
+
+def test_other_difficulty_prizes_remain_explicitly_deferred(setup):
+    config, state, archive, goal, plan, observer = setup
+    state.update(story_key(archive), complete=True)
+    plan = ArchivePlan(archive, 'normal', (goal,), (), archive.prizes)
+    result = ArchiveCoordinator(config, state, observer, lambda: pytest.fail('no sortie')).run((plan,))
+    assert result == dict(status='deferred_prizes', reason='prizes_require_other_difficulty',
+                          sorties=0, deferred_prizes=1)
+
+
 @pytest.mark.parametrize('reserved', [False, True])
 def test_hard_lineup_defers_only_affected_archive_and_preserves_budget(setup, reserved):
     config, state, archive, goal, plan, observer = setup
