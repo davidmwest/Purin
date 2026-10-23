@@ -1252,6 +1252,7 @@
       "DailyTickets": 4,
       "ExtraOilReserve": 5000,
       "StagesPerRun": 4,
+      "LossRetry": "two_hours",
       "ObserveOnly": false
     },
     "Campaign": {
@@ -1353,6 +1354,7 @@
       "DailyTickets": 4,
       "ExtraOilReserve": 5000,
       "StagesPerRun": 4,
+      "LossRetry": "two_hours",
       "ObserveOnly": false
     },
     "Campaign": {

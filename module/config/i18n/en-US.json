@@ -1699,6 +1699,12 @@
       "name": "Entries per scheduler run",
       "help": "Yield to other work after this many attempted archive stages."
     },
+    "LossRetry": {
+      "name": "Retry after a combat loss",
+      "help": "Next day stops both archive jobs after the first confirmed loss until the next server reset. Oil, morale and screen-reading delays do not count as losses. Use the same policy on both jobs.",
+      "two_hours": "After two hours",
+      "next_day": "Next server day"
+    },
     "ObserveOnly": {
       "name": "Inspect archive screens only",
       "help": "Save fresh archive, stage and reward diagnostics without entering combat or claiming rewards."

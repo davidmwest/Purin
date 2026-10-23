@@ -6709,6 +6709,14 @@
         "type": "input",
         "value": 4
       },
+      "LossRetry": {
+        "type": "select",
+        "value": "two_hours",
+        "option": [
+          "two_hours",
+          "next_day"
+        ]
+      },
       "ObserveOnly": {
         "type": "checkbox",
         "value": false
@@ -7238,6 +7246,14 @@
       "StagesPerRun": {
         "type": "input",
         "value": 4
+      },
+      "LossRetry": {
+        "type": "select",
+        "value": "two_hours",
+        "option": [
+          "two_hours",
+          "next_day"
+        ]
       },
       "ObserveOnly": {
         "type": "checkbox",

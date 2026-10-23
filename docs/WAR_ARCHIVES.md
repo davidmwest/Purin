@@ -23,9 +23,12 @@ Both new scheduler jobs share one account-wide daily ledger, so enabling both do
 | `DailyTickets` | `4` | Daily-reserve sorties, 0–4, shared by the two jobs. Later entries require the extra oil reserve. |
 | `ExtraOilReserve` | `5000` | Minimum oil for extra entries and between their battles, subject to the 500 safety floor. |
 | `StagesPerRun` | `4` | Maximum reserved sorties in one scheduler chunk; runtime bounds this to 1–20. Read-only inspections do not consume sorties. |
+| `LossRetry` | `two_hours` | Retry a combat loss after two hours, or use `next_day` to stop both archive jobs until the next server reset after their first confirmed loss. Set the same policy on both jobs. |
 | `ObserveOnly` | `false` | When true, inspect known UI without reserving keys, starting a sortie or claiming a guaranteed prize. |
 
 For the requested account policy, main `alas` uses `Difficulty=hard`, `Goal=stories`; F2P uses `Difficulty=easy`, `Goal=items_and_stories`. These are account choices, not different global defaults. A Hard-only guarantee remains explicitly deferred on the Easy account.
+
+F2P uses `LossRetry=next_day` on both jobs. A confirmed combat loss remains spent in the shared daily ledger and blocks further archive entries that server day, including after a restart or target change. The unfinished stage is eligible again after reset; regular account jobs continue. Oil shortages, morale waits, interrupted runs and unreadable screens do not create this loss pause. Main retains `two_hours`. Pending owned reward receipts can still be recovered during the pause, and read-only diagnostics remain available.
 
 For a specific guaranteed ship, set `WarArchivesPrize` to `Target=Visitors Dyed in Red`, `Difficulty=hard`, `Prize=Zuikaku` (or reward ID `307061`). This job first satisfies that archive's campaign-completion goal, then observes and advances the Hard D3 counter to its verified 60-clear claim. For an Easy-accessible item, choose `Target=Passionate Polaris`, `Prize=Cosmic Kicks`; its single route is Normal SP1–SP5. Selecting one target does not farm unrelated archives. `WarArchivesComplete` includes prizes only when its `Goal=items_and_stories`; the Prize job requests them regardless of `Goal`.
 

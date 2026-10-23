@@ -1699,6 +1699,12 @@
       "name": "Archive.StagesPerRun.name",
       "help": "Archive.StagesPerRun.help"
     },
+    "LossRetry": {
+      "name": "Archive.LossRetry.name",
+      "help": "Archive.LossRetry.help",
+      "two_hours": "two_hours",
+      "next_day": "next_day"
+    },
     "ObserveOnly": {
       "name": "Archive.ObserveOnly.name",
       "help": "Archive.ObserveOnly.help"

@@ -398,6 +398,9 @@ Archive:
     option: [ 0, 1, 2, 3, 4 ]
   ExtraOilReserve: 5000
   StagesPerRun: 4
+  LossRetry:
+    value: two_hours
+    option: [ two_hours, next_day ]
   ObserveOnly: false
 
 

@@ -172,3 +172,33 @@ def test_finish_requires_a_matching_reserved_goal_and_cannot_refinish(tmp_path):
     with pytest.raises(ScriptError, match='no reserved entry'):
         state.finish('day', 'a', 'refunded')
     assert state.used('day') == 1
+
+
+def test_daily_loss_pause_blocks_stale_job_reservations_without_refunding(tmp_path):
+    stories = ArchiveState('f2p', str(tmp_path))
+    prizes = ArchiveState('f2p', str(tmp_path))
+    assert stories.reserve('today', 'archive/normal/a1/archive_clear', 6000, 300)
+    stories.finish('today', 'archive/normal/a1/archive_clear', 'lost')
+    assert prizes.has_loss('today')
+    assert not prizes.reserve('today', 'different/prize', 6000, 295, stop_after_loss=True)
+    assert prizes.used('today') == 1
+    assert prizes.reserve('tomorrow', 'archive/normal/a1/archive_clear', 6000, 295,
+                          stop_after_loss=True)
+    assert not prizes.has_loss('tomorrow')
+
+
+@pytest.mark.parametrize('status', ['won', 'uncertain', 'reserved', 'refunded'])
+def test_only_confirmed_loss_triggers_daily_pause(tmp_path, status):
+    state = ArchiveState('f2p', str(tmp_path))
+    assert state.reserve('today', 'first', 6000, 300)
+    if status != 'reserved':
+        state.finish('today', 'first', status)
+    assert not state.has_loss('today')
+    assert state.reserve('today', 'next', 6000, 295, stop_after_loss=True)
+
+
+def test_two_hour_policy_remains_eligible_after_loss(tmp_path):
+    state = ArchiveState('alas', str(tmp_path))
+    assert state.reserve('today', 'first', 6000, 300)
+    state.finish('today', 'first', 'lost')
+    assert state.reserve('today', 'next', 6000, 295, stop_after_loss=False)

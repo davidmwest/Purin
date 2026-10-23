@@ -234,6 +234,7 @@ class GeneratedConfig:
     Archive_DailyTickets = 4  # 0, 1, 2, 3, 4
     Archive_ExtraOilReserve = 5000
     Archive_StagesPerRun = 4
+    Archive_LossRetry = 'two_hours'  # two_hours, next_day
     Archive_ObserveOnly = False
 
     # Group `Commission`

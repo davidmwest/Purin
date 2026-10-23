@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -152,6 +153,91 @@ def test_loss_is_spent_and_stops_chunk(setup):
     assert state.entries(coordinator.period)[0]['status'] == 'lost'
     assert not state.record(goal.key).get('complete')
     assert len(calls) == 1
+
+
+def test_daily_loss_pause_survives_new_job_target_and_prize_selection(setup, monkeypatch):
+    from module.war_archives import completion
+    config, state, archive, goal, plan, observer = setup
+    config.Archive_LossRetry = 'next_day'
+    calls = []
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='lost', reason='battle_lost', reserved=True, boss_won=False)], calls))
+    assert coordinator.run((plan,))['status'] == 'lost'
+    assert state.used(coordinator.period) == 1
+    state = ArchiveState('f2p', str(Path(state.path).parent))
+    observer.proof_for_goal = Mock(side_effect=AssertionError('no new entry today'))
+    observer.observe_prize = Mock(side_effect=AssertionError('no prize farming today'))
+    second = ArchiveCoordinator(config, state, observer, lambda: pytest.fail('no runner today'))
+    prize_plan = ArchivePlan(archive, archive.prizes[0].mode, (), archive.prizes)
+    expected = dict(status='loss_deferred', reason='battle_lost_today', reserved=False, sorties=0)
+    assert second.run((prize_plan, plan)) == expected
+    assert len(calls) == 1
+    assert not state.record(goal.key).get('complete')
+    # Advancing the server period, not restarting the worker, releases the pause.
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(completion, 'get_server_last_update',
+                        lambda trigger: datetime.fromisoformat(coordinator.period) + timedelta(days=1))
+    observer.proof_for_goal = lambda selected: dict(raw_keys=80)
+    tomorrow = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='complete', reserved=True, boss_won=True, stage_complete=True)], calls))
+    assert tomorrow.run((plan,))['status'] == 'complete'
+    assert state.used(coordinator.period) == state.used(tomorrow.period) == 1
+
+
+@pytest.mark.parametrize('status', ['deferred', 'oil_exhausted', 'interrupted', 'blocked'])
+def test_temporary_failures_do_not_create_daily_loss_pause(setup, status):
+    config, state, _, _, plan, observer = setup
+    config.Archive_LossRetry = 'next_day'
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status=status, reserved=True, boss_won=False)], []))
+    assert coordinator.run((plan,))['status'] == status
+    assert coordinator.loss_pause() is None
+
+
+@pytest.mark.parametrize('policy,expected_delay', [('next_day', dict(server_update=True)),
+                                                 ('two_hours', dict(minute=120))])
+def test_job_schedules_loss_by_account_policy(setup, monkeypatch, policy, expected_delay):
+    from module.war_archives import completion
+    config, state, _, _, plan, observer = setup
+    config.Archive_LossRetry = policy
+    config.Archive_Target, config.Archive_Difficulty = 'all', 'easy'
+    config.Archive_Goal, config.Archive_Prize, config.Archive_ObserveOnly = 'stories', 'auto', False
+    config.task_delay = Mock()
+    observer.run_observe = Mock(return_value=dict(status='observed', pages=[]))
+    monkeypatch.setattr(completion, 'build_plan', lambda *args: ((plan,), ()))
+    monkeypatch.setattr(completion, 'ArchiveProgress', lambda **kwargs: observer)
+    monkeypatch.setattr(completion, 'ArchiveState', lambda *args: state)
+    runner = factory([dict(status='lost', reserved=True, boss_won=False)], [])
+    monkeypatch.setattr(completion, 'WarArchivesExecution', lambda **kwargs: runner())
+    job = object.__new__(completion.WarArchivesComplete)
+    job.config, job.device = config, observer.device
+    job.run()
+    config.task_delay.assert_called_once_with(**expected_delay)
+
+
+def test_daily_loss_pause_precedes_list_scan_and_still_recovers_owned_receipts(setup, monkeypatch):
+    from module.war_archives import completion
+    config, state, _, goal, plan, observer = setup
+    config.Archive_LossRetry = 'next_day'
+    config.Archive_Target, config.Archive_Difficulty = 'all', 'easy'
+    config.Archive_Goal, config.Archive_Prize, config.Archive_ObserveOnly = 'stories', 'auto', False
+    config.task_delay = Mock()
+    period = ArchiveCoordinator(config, state, observer, lambda: None).period
+    assert state.reserve(period, goal.key, 6000, 300)
+    state.finish(period, goal.key, 'lost')
+    observer.run_observe = Mock(side_effect=AssertionError('no census today'))
+    observer.proof_for_goal = Mock(side_effect=AssertionError('no entry today'))
+    monkeypatch.setattr(completion, 'build_plan', lambda *args: ((plan,), ()))
+    monkeypatch.setattr(completion, 'ArchiveProgress', lambda **kwargs: observer)
+    monkeypatch.setattr(completion, 'ArchiveState', lambda *args: state)
+    resume = Mock(return_value=None)
+    monkeypatch.setattr(completion.ArchiveCoordinator, 'resume_prizes', resume)
+    job = object.__new__(completion.WarArchivesComplete)
+    job.config, job.device = config, observer.device
+    job.run()
+    resume.assert_called_once()
+    observer.run_observe.assert_not_called()
+    config.task_delay.assert_called_once_with(server_update=True)
 
 
 @pytest.mark.parametrize('value', [None, {}, dict(verified=True, returned_stage=True, count=True, total=60, claimed=False),

@@ -89,7 +89,11 @@ class ArchiveState:
     def used(self, period):
         return sum(entry['status'] != 'refunded' for entry in self.entries(period))
 
-    def reserve(self, period, goal, oil, raw_keys, key_cost=5, daily_tickets=4, extra_reserve=5000):
+    def has_loss(self, period):
+        return any(entry['status'] == 'lost' for entry in self.entries(period))
+
+    def reserve(self, period, goal, oil, raw_keys, key_cost=5, daily_tickets=4, extra_reserve=5000,
+                stop_after_loss=False):
         """Literal True to the entry hook only after durable budget ownership.
 
         One current entry consumes five raw keys. Incomplete OCR or a failed
@@ -100,9 +104,12 @@ class ArchiveState:
                 or any(type(value) is not int for value in
                        (oil, raw_keys, key_cost, daily_tickets, extra_reserve))
                 or key_cost != RAW_KEYS_PER_ENTRY or not key_cost <= raw_keys <= RAW_KEYS_CAPACITY
-                or not 0 <= daily_tickets <= 4 or extra_reserve < 0):
+                or not 0 <= daily_tickets <= 4 or extra_reserve < 0
+                or type(stop_after_loss) is not bool):
             return False
         with self._transaction():
+            if stop_after_loss and self.has_loss(period):
+                return False
             floor = 500 if self.used(period) < daily_tickets else max(500, extra_reserve)
             # This cutoff is checked before the sortie; fleet preview remains
             # authoritative for actual battle cost.

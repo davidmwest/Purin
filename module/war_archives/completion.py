@@ -45,6 +45,15 @@ class ArchiveCoordinator:
         self.prize_folder = prize_folder
         self.period = get_server_last_update(config.Scheduler_ServerUpdate).isoformat()
 
+    @property
+    def stop_after_loss(self):
+        return getattr(self.config, 'Archive_LossRetry', 'two_hours') == 'next_day'
+
+    def loss_pause(self):
+        if self.stop_after_loss and self.state.has_loss(self.period):
+            return dict(status='loss_deferred', reason='battle_lost_today', reserved=False, sorties=0)
+        return None
+
     def sync_list(self, observation, plans):
         """Only an identity-bound 100% reading can skip an entire story route."""
         by_id = {plan.archive.id: plan.archive for plan in plans}
@@ -64,7 +73,8 @@ class ArchiveCoordinator:
             self.period, goal.key, oil=runner.get_oil(skip_first_screenshot=False),
             raw_keys=runner.proof.get('raw_keys'), key_cost=raw_keys,
             daily_tickets=self.config.Archive_DailyTickets,
-            extra_reserve=self.config.Archive_ExtraOilReserve)
+            extra_reserve=self.config.Archive_ExtraOilReserve,
+            stop_after_loss=self.stop_after_loss)
 
     def _safe_target_failure(self, value, goal):
         """Only a fresh exact stage page can permit trying another archive."""
@@ -180,6 +190,9 @@ class ArchiveCoordinator:
             recovery = self.resume_prizes()
             if recovery is not None:
                 return dict(recovery, sorties=0)
+            pause = self.loss_pause()
+            if pause is not None:
+                return pause
         # Inspections do not consume the daily budget, but remain bounded so a
         # mature account cannot monopolize the scheduler while skipping old maps.
         sortie_limit = max(1, min(int(self.config.Archive_StagesPerRun), 20))
@@ -275,6 +288,8 @@ class WarArchivesComplete(ModuleBase):
             self.config.task_delay(success=False)
             return
         recovery = coordinator.resume_prizes()
+        if recovery is None:
+            recovery = coordinator.loss_pause()
         if recovery is None and state.record('_list_scan').get('period') != coordinator.period:
             observation = observer.run_observe()
             coordinator.sync_list(observation, plans)
@@ -291,7 +306,9 @@ class WarArchivesComplete(ModuleBase):
         if result['status'] == 'deferred':
             # Morale/preemption owns its already scheduled retry.
             return
-        if result['status'] in ('complete', 'deferred_prizes'):
+        if (result['status'] in ('complete', 'deferred_prizes', 'loss_deferred')
+                or (result['status'] == 'lost' and coordinator.stop_after_loss)
+                or coordinator.loss_pause() is not None):
             self.config.task_delay(server_update=True)
         elif result['status'] == 'pending':
             self.config.task_delay(minute=1)
