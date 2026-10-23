@@ -9,10 +9,12 @@ from time import monotonic
 from module.campaign.campaign_ui import ASIDE_SWITCH_20241219, MODE_SWITCH_20241219, CampaignUI
 from module.campaign.event_completion import EventCompletion
 from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED
+from module.campaign.event_extra_assets import EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE
 from module.combat.assets import AUTOMATION_ON, BATTLE_PREPARATION, DEFEAT_TIPS
 from module.combat.combat import Combat
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
 from module.exception import CampaignNameError, ScriptError
+from module.handler.assets import IN_MAP
 from module.logger import logger
 from module.map.assets import (FLEET_1_ADVICE, FLEET_1_BAR, FLEET_1_CHOOSE, FLEET_1_CLEAR,
                                FLEET_1_HARD_SATIESFIED, FLEET_1_IN_USE, FLEET_2_ADVICE,
@@ -176,10 +178,10 @@ def valid_extra_fleet_options(options, choose):
 
 
 class EventExtraRunner(EventExtraScout, Combat):
-    """One supported direct EX sortie, using an explicitly verified common fleet.
+    """One direct EX sortie, using a verified common or stage-owned lineup.
 
-    A stage-specific hard lineup or a map-based EX is deliberately unsupported.
-    No ship replacement, fleet advice, retirement, or second battle is attempted.
+    The observed hard selector permits only its own recommended Fleet 1.
+    Map-based EX remains unsupported; no map moves or second battle are attempted.
     """
 
     def _fleet_operators(self):
@@ -223,6 +225,33 @@ class EventExtraRunner(EventExtraScout, Combat):
                 return fleet.in_use()
         return False
 
+    def _extra_hard_secondary_disabled(self, secondary, submarine):
+        # Absence of a button alone cannot prove a disabled slot. Require the
+        # actual disabled-X rows, and reject any active secondary controls.
+        return (self.match_template_color(EX_DISABLED_FLEET_2, offset=(3, 3))
+                and self.match_template_color(EX_DISABLED_SUBMARINE, offset=(3, 3))
+                and not secondary.allow() and not secondary.is_hard()
+                and not submarine.allow() and not submarine.is_hard())
+
+    def _prepare_extra_hard_fleet(self, record, fleet, secondary, submarine):
+        if not fleet.allow() or not self._extra_hard_secondary_disabled(secondary, submarine):
+            return False, 'hard_lineup_layout_unrecognized'
+        self._extra_capture(record, 'hard_lineup_before_recommendation')
+        # FleetOperator.advise has a 20-second/three-click cap and never clears
+        # fleets. It also leaves an already-satisfied lineup unchanged.
+        if fleet.advise() is not True:
+            return False, 'hard_lineup_recommendation_failed'
+        self.device.screenshot()
+        if (not self.appear(FLEET_PREPARATION, offset=(20, 50))
+                or not fleet.allow() or not fleet.is_hard()
+                or fleet.is_hard_satisfied() is not True or not fleet.in_use()
+                or not self._extra_hard_secondary_disabled(secondary, submarine)):
+            self._extra_capture(record, 'hard_lineup_unverified')
+            return False, 'hard_lineup_not_verified'
+        record['fleet'] = 'stage_owned_recommended'
+        self._extra_capture(record, 'hard_lineup_verified')
+        return True, 'hard_lineup_verified'
+
     def _prepare_extra_fleet(self, record):
         # This job's fleet settings are isolated from ordinary Event farming.
         if (self.config.Fleet_Fleet1 != 6 or self.config.Fleet_Fleet2
@@ -232,7 +261,9 @@ class EventExtraRunner(EventExtraScout, Combat):
         if self.get_oil() < max(100, self.config.StopCondition_OilLimit):
             return False, 'oil_floor_reached'
         fleet, secondary, submarine = self._fleet_operators()
-        if not fleet.allow() or fleet.is_hard():
+        if fleet.is_hard():
+            return self._prepare_extra_hard_fleet(record, fleet, secondary, submarine)
+        if not fleet.allow():
             return False, 'common_fleet_selector_unrecognized'
         if not self._clear_extra_fleet(secondary) or not self._clear_extra_fleet(submarine):
             return False, 'secondary_fleet_not_cleared'
@@ -278,6 +309,9 @@ class EventExtraRunner(EventExtraScout, Combat):
                 if self.combat_won:
                     return 'complete', 'battle_won'
                 return 'blocked', 'returned_without_verified_result'
+            if self.appear(IN_MAP, offset=(5, 5)):
+                self._extra_capture(record, 'unsupported_map')
+                return 'blocked', 'map_based_ex_unsupported'
             if self.appear(BATTLE_PREPARATION, offset=(30, 20)):
                 if combat_seen or result_seen:
                     # Loading already proves a possible sortie. A fast defeat

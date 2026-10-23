@@ -3,14 +3,26 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import numpy as np
+from PIL import Image
 
 from module.campaign import event_extra
 from module.campaign.event_extra import (EventExtraRunner, EventExtraScout, load_extra_state,
                                          save_extra_state, valid_extra_fleet_options)
+from module.campaign.event_extra_assets import EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE
+from module.config import server
 from module.exception import GameNotRunningError, ScriptError
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION
 
 EVENT = 'event_20261022_cn'
+
+
+@pytest.fixture
+def english_assets():
+    previous = server.server
+    server.set_server('en')
+    yield
+    server.set_server(previous)
 
 
 def controller():
@@ -397,4 +409,125 @@ def test_possible_direct_battle_then_unreadable_defeat_never_starts_retry(seen):
     helper.handle_combat_automation_set = Mock()
     assert helper._direct_extra_battle({'diagnostics': []}, Mock()) == ('blocked', 'battle_end_not_verified')
     helper.device.click.assert_called_once_with(FLEET_PREPARATION)
+    helper.handle_combat_automation_set.assert_not_called()
+
+
+def hard_preparation_controller():
+    helper = runner_controller()
+    helper.appear = Mock(return_value=True)
+    helper.match_template_color = Mock(return_value=True)
+    fleet = SimpleNamespace(allow=Mock(return_value=True), is_hard=Mock(return_value=True),
+                            advise=Mock(return_value=True), is_hard_satisfied=Mock(return_value=True),
+                            in_use=Mock(return_value=True))
+    secondary = SimpleNamespace(allow=Mock(return_value=False), is_hard=Mock(return_value=False))
+    submarine = SimpleNamespace(allow=Mock(return_value=False), is_hard=Mock(return_value=False))
+    helper._fleet_operators = Mock(return_value=(fleet, secondary, submarine))
+    helper._clear_extra_fleet = Mock()
+    helper._extra_dropdown = Mock()
+    return helper, fleet, secondary, submarine
+
+
+def test_captured_ex_has_hard_empty_primary_and_exact_disabled_secondary_rows(english_assets):
+    helper = runner_controller()
+    image = np.asarray(Image.open('tests/campaign/data/ex_hard_preparation.png').convert('RGB'))
+    helper.device.image = image
+    helper.appear = lambda button, offset=0, **kwargs: button.match(image, offset=offset) if offset else button.appear_on(image)
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    helper.image_crop = lambda area, **kwargs: image[area[1]:area[3], area[0]:area[2]]
+    fleet, secondary, submarine = helper._fleet_operators()
+    assert helper.appear(FLEET_PREPARATION, offset=(20, 50))
+    assert fleet.allow() and fleet.is_hard()
+    assert fleet.is_hard_satisfied() is False
+    assert not fleet.in_use()
+    assert helper._extra_hard_secondary_disabled(secondary, submarine)
+    for button in (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE):
+        assert button.match_template_color(image, offset=(3, 3))
+        assert not button.match_template_color(image * 0, offset=(3, 3))
+
+
+@pytest.mark.parametrize('missing', [EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE])
+def test_missing_disabled_row_witness_blocks_before_recommendation(missing):
+    helper, fleet, _, _ = hard_preparation_controller()
+    helper.match_template_color.side_effect = lambda button, **kwargs: button is not missing
+    assert EventExtraRunner._prepare_extra_fleet(helper, {}) == (False, 'hard_lineup_layout_unrecognized')
+    fleet.advise.assert_not_called()
+    helper._clear_extra_fleet.assert_not_called()
+    helper._extra_dropdown.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('slot', [1, 2])
+@pytest.mark.parametrize('control', ['allow', 'is_hard'])
+def test_active_secondary_or_submarine_is_never_cleared_or_recommended(slot, control):
+    helper, *fleets = hard_preparation_controller()
+    getattr(fleets[slot], control).return_value = True
+    assert EventExtraRunner._prepare_extra_fleet(helper, {}) == (False, 'hard_lineup_layout_unrecognized')
+    fleets[0].advise.assert_not_called()
+    helper._clear_extra_fleet.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_hard_recommendation_requires_fresh_verified_occupied_lineup_without_common_fleet_changes():
+    helper, fleet, _, _ = hard_preparation_controller()
+    record = {'diagnostics': []}
+    assert EventExtraRunner._prepare_extra_fleet(helper, record) == (True, 'hard_lineup_verified')
+    fleet.advise.assert_called_once_with()
+    helper.device.screenshot.assert_called_once_with()
+    fleet.is_hard_satisfied.assert_called_once_with()
+    fleet.in_use.assert_called_once_with()
+    assert record['fleet'] == 'stage_owned_recommended'
+    assert helper._extra_capture.call_args_list[-1].args[-1] == 'hard_lineup_verified'
+    helper._clear_extra_fleet.assert_not_called()
+    helper._extra_dropdown.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('advice', [False, None])
+def test_failed_or_unknown_advice_never_falls_through_to_common_fleet(advice):
+    helper, fleet, _, _ = hard_preparation_controller()
+    fleet.advise.return_value = advice
+    assert EventExtraRunner._prepare_extra_fleet(helper, {}) == (False, 'hard_lineup_recommendation_failed')
+    helper.device.screenshot.assert_not_called()
+    helper._clear_extra_fleet.assert_not_called()
+    helper._extra_dropdown.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('proof', ['go', 'allow', 'hard', 'satisfied', 'unknown_satisfied', 'occupied', 'disabled'])
+def test_changed_or_unreadable_post_recommendation_state_cannot_authorize_start(proof):
+    helper, fleet, _, _ = hard_preparation_controller()
+    def advised():
+        if proof == 'go':
+            helper.appear.return_value = False
+        elif proof == 'allow':
+            fleet.allow.return_value = False
+        elif proof == 'hard':
+            fleet.is_hard.return_value = False
+        elif proof in ('satisfied', 'unknown_satisfied'):
+            fleet.is_hard_satisfied.return_value = False if proof == 'satisfied' else None
+        elif proof == 'occupied':
+            fleet.in_use.return_value = False
+        elif proof == 'disabled':
+            helper.match_template_color.return_value = False
+        return True
+    fleet.advise.side_effect = advised
+    record = {}
+    assert EventExtraRunner._prepare_extra_fleet(helper, record) == (False, 'hard_lineup_not_verified')
+    assert 'fleet' not in record
+    helper.device.screenshot.assert_called_once_with()
+    helper.device.click.assert_not_called()
+
+
+def test_map_based_ex_is_captured_and_blocked_immediately_without_map_or_battle_actions():
+    helper = runner_controller()
+    helper.appear = Mock(side_effect=lambda button, **kwargs: button in (FLEET_PREPARATION, event_extra.IN_MAP))
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.combat_auto_reset = Mock()
+    helper.handle_combat_automation_set = Mock()
+    helper.loop = Mock(return_value=iter(range(3)))
+    reserve = Mock()
+    assert helper._direct_extra_battle({}, reserve) == ('blocked', 'map_based_ex_unsupported')
+    reserve.assert_called_once_with()
+    helper.device.click.assert_called_once_with(FLEET_PREPARATION)
+    helper._extra_capture.assert_called_once_with({}, 'unsupported_map')
     helper.handle_combat_automation_set.assert_not_called()
