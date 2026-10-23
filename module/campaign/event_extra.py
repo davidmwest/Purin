@@ -279,8 +279,9 @@ class EventExtraRunner(EventExtraScout, Combat):
                     return 'complete', 'battle_won'
                 return 'blocked', 'returned_without_verified_result'
             if self.appear(BATTLE_PREPARATION, offset=(30, 20)):
-                if result_seen:
-                    # Never start a second battle, including a defeat retry UI.
+                if combat_seen or result_seen:
+                    # Loading already proves a possible sortie. A fast defeat
+                    # may return here without a readable result; never retry it.
                     break
                 if monotonic() >= start_deadline:
                     break

@@ -375,3 +375,26 @@ def test_unknown_auto_setting_never_clicks_battle_start():
     helper.loop = Mock(return_value=iter(range(3)))
     assert helper._direct_extra_battle({'diagnostics': []}, Mock())[0] == 'blocked'
     helper.device.click.assert_called_once_with(FLEET_PREPARATION)
+
+
+@pytest.mark.parametrize('seen', ['loading', 'combat'])
+def test_possible_direct_battle_then_unreadable_defeat_never_starts_retry(seen):
+    helper = runner_controller()
+    current = ['fleet']
+    def states(**kwargs):
+        for screen in (seen, 'prep'):
+            current[0] = screen
+            yield screen
+    helper.loop = states
+    helper.appear = Mock(side_effect=lambda button, **kwargs:
+                         (button is FLEET_PREPARATION and current[0] == 'fleet') or
+                         (button is event_extra.BATTLE_PREPARATION and current[0] == 'prep'))
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.is_combat_executing = Mock(side_effect=lambda: current[0] == 'combat')
+    helper.is_combat_loading = Mock(side_effect=lambda: current[0] == 'loading')
+    helper.combat_auto_reset = Mock()
+    helper.handle_combat_auto = Mock()
+    helper.handle_combat_automation_set = Mock()
+    assert helper._direct_extra_battle({'diagnostics': []}, Mock()) == ('blocked', 'battle_end_not_verified')
+    helper.device.click.assert_called_once_with(FLEET_PREPARATION)
+    helper.handle_combat_automation_set.assert_not_called()
