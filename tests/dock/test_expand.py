@@ -107,3 +107,57 @@ def test_a_purchase_that_did_not_add_10_slots_is_a_failure(monkeypatch):
 
     expand.expansion_buy.assert_called_once()
     expand.config.task_delay.assert_called_once_with(success=False)
+
+
+def white_popup_on(image):
+    """
+    The shop with a white popup of the F2P account over it, "Cancel" and "Confirm" scaled down from 2560x1440.
+    """
+    import cv2
+    image = image.copy()
+    part = cv2.cvtColor(cv2.imread('tests/base/data/popup_no_mail_scaled.png'), cv2.COLOR_BGR2RGB)
+    height, width = part.shape[:2]
+    image[150:150 + height, 335:335 + width] = part
+    return image
+
+
+def test_a_purchase_cancels_the_popup_after_it_and_never_confirms(monkeypatch):
+    from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
+    from module.dock.expand import PURCHASE_BUTTON
+    shop = load_image(f'{DATA}/shop_items_f2p.png')
+    frames = {
+        'shop': shop,
+        'popup': load_image(f'{DATA}/dock_expansion_popup_f2p.png'),
+        'white': white_popup_on(shop),
+    }
+    state = {'now': 'shop'}
+    clicks = []
+
+    def click(button):
+        clicks.append(button.name)
+        if state['now'] == 'shop' and button.name == 'DOCK_EXPANSION':
+            state['now'] = 'popup'
+        elif state['now'] == 'popup' and button is PURCHASE_BUTTON:
+            state['now'] = 'white'
+        elif state['now'] == 'white' and button is POPUP_CANCEL_WHITE:
+            state['now'] = 'shop'
+
+    expand = make_expand('shop_items_f2p')
+    expand.device = SimpleNamespace(image=shop, click=click, stuck_record_add=Mock(), display_scale=2.0,
+                                    screenshot=Mock(), sleep=Mock())
+    expand.interval_timer = {}
+
+    def loop():
+        while 1:
+            expand.device.image = frames[state['now']]
+            yield expand.device.image
+
+    expand.loop = loop
+
+    assert expand.expansion_buy() is True
+
+    assert clicks.count('DOCK_EXPANSION') == 1
+    assert clicks.count(PURCHASE_BUTTON.name) == 1
+    assert any(name.startswith(POPUP_CANCEL_WHITE.name) for name in clicks)
+    assert not any(name.startswith(POPUP_CONFIRM_WHITE.name) for name in clicks)
+    assert state['now'] == 'shop'

@@ -9,7 +9,7 @@ import pytest
 import module.config.server as server
 from module.handler.info_handler import InfoHandler
 from module.ui.assets import SUPPLY_PACK_CHECK
-from module.ui_white.assets import POPUP_CONFIRM_WHITE
+from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 
@@ -68,8 +68,24 @@ def test_white_popup_needs_the_usual_similarity_on_a_native_screen():
     assert handler.handle_popup_confirm('MAIL_CLAIM') is False
 
 
+def test_white_popup_scaled_down_is_cancelled():
+    # "Cancel" scores 0.81, the default 0.85 left the popup open
+    handler = make_handler(screen('popup_no_mail_scaled.png', 335, 150))
+
+    assert POPUP_CANCEL_WHITE.match(handler.device.image, offset=(3, 30)) is False
+    assert handler.handle_popup_cancel('DOCK_EXPANSION') is True
+    assert handler.device.click.call_args[0][0] is POPUP_CANCEL_WHITE
+
+
+def test_white_popup_cancel_needs_the_usual_similarity_on_a_native_screen():
+    handler = make_handler(screen('popup_no_mail_scaled.png', 335, 150), scale=1.0)
+
+    assert handler.handle_popup_cancel('DOCK_EXPANSION') is False
+
+
 def test_no_popup():
     handler = make_handler(np.zeros((720, 1280, 3), dtype=np.uint8))
 
     assert handler.handle_popup_confirm('MAIL_CLAIM') is False
+    assert handler.handle_popup_cancel('MAIL_CLAIM') is False
     handler.device.click.assert_not_called()

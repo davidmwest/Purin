@@ -166,10 +166,11 @@ class DockExpand(UI):
                 self.device.click(DOCK_PLUS_BUTTON)
                 click.reset()
 
-    def expansion_buy(self, card):
+    def expansion_buy(self):
         """
         Purchase is tapped once only, a second tap could buy a second expansion. A popup after it is cancelled, never
-        confirmed: one that asks for gems the account does not have would open the paid gems.
+        confirmed: one that asks for gems the account does not have would open the paid gems. It ends on the shop
+        with no popup for 2 s, or at the timeout with any popup cancelled.
 
         Returns:
             bool: If Purchase was tapped
@@ -180,16 +181,20 @@ class DockExpand(UI):
         """
         timeout = Timer(PURCHASE_WAIT, count=30).start()
         click = Timer(3)
+        settled = Timer(2, count=4)
         purchased = False
         for _ in self.loop():
             if timeout.reached():
-                if purchased and self._appear(POPUP_TITLE, POPUP_TITLE_AREA):
-                    logger.warning('The popup of the Dock Expansion is still open after Purchase, cancelled')
+                if self._appear(POPUP_TITLE, POPUP_TITLE_AREA):
+                    logger.warning('The popup of the Dock Expansion is still open, cancelled')
                     self.device.click(CANCEL_BUTTON)
+                elif self.handle_popup_cancel('DOCK_EXPANSION'):
+                    logger.warning('A popup is still open, cancelled')
                 else:
                     logger.warning('The purchase of a Dock Expansion did not end on the shop')
                 return purchased
             if self._appear(POPUP_TITLE, POPUP_TITLE_AREA):
+                settled.clear()
                 if not purchased and self._appear(PURCHASE, PURCHASE_AREA):
                     self.device.click(PURCHASE_BUTTON)
                     purchased = True
@@ -198,12 +203,20 @@ class DockExpand(UI):
             if purchased:
                 if self.handle_popup_cancel('DOCK_EXPANSION'):
                     logger.warning('A popup came after Purchase, cancelled')
+                    settled.clear()
                     continue
                 if self.expansion_offer() is not None:
-                    return True
+                    if not settled.started():
+                        settled.start()
+                    if settled.reached():
+                        return True
+                else:
+                    settled.clear()
                 continue
-            if click.reached() and self.expansion_offer() is not None:
-                self.device.click(card)
+            # The card where it is now, not where the shop first drew it
+            offer = self.expansion_offer()
+            if offer is not None and click.reached():
+                self.device.click(offer[0])
                 click.reset()
 
     def run(self):
@@ -227,7 +240,7 @@ class DockExpand(UI):
             self.config.task_delay(success=False)
             return
         gems = int(OCR_SHOP_GEMS.ocr(self.device.image) or 0)
-        card, price = self.expansion_offer()
+        _, price = self.expansion_offer()
         logger.attr('Gems', gems)
         logger.attr('Dock_expansion_price', price)
         verdict = purchase_verdict(free, gems, price, free_below=free_below,
@@ -247,7 +260,7 @@ class DockExpand(UI):
 
         logger.hr('Dock expansion', level=2)
         logger.info(f'Buying a Dock Expansion for {price} gems of {gems}, dock {current}/{total}')
-        self.expansion_buy(card)
+        self.expansion_buy()
         self.ui_ensure(page_main)
         self.ui_ensure(page_dock)
         after, total_after = self.dock_amount()

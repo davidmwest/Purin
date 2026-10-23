@@ -134,7 +134,9 @@ class InfoHandler(ModuleBase):
             self.device.click(POPUP_CANCEL)
             POPUP_CANCEL.name = POPUP_CANCEL.name[:-len(name) - 1]
             return True
-        if self.appear(POPUP_CANCEL_WHITE, offset=offset, interval=interval):
+        # Like Confirm, the letters of Cancel scaled down from 2560x1440 score 0.81 (code review, 2026-10-22: a popup
+        # after the purchase of a Dock Expansion would have stayed open, and the next page switch confirmed it)
+        if self.appear_popup_white(POPUP_CANCEL_WHITE, offset=offset, interval=interval):
             POPUP_CANCEL_WHITE.name = POPUP_CANCEL_WHITE.name + '_' + name
             self.device.click(POPUP_CANCEL_WHITE)
             POPUP_CANCEL_WHITE.name = POPUP_CANCEL_WHITE.name[:-len(name) - 1]
