@@ -20,7 +20,7 @@ from module.gacha.mission_claim_assets import BUILD_MISSION_CLAIM, BUILD_MISSION
 from module.logger import logger
 from module.ocr.ocr import Ocr
 from module.reward.reward import Reward
-from module.ui.assets import DORM_CHECK
+from module.ui.assets import DORM_CHECK, DORM_INFO
 from module.ui.page import page_dorm, page_main, page_mission
 
 VERSION = 'restock-one-v1'
@@ -224,10 +224,21 @@ class DormDaily(RewardDorm, Reward):
         return None
 
     def _feed_panel(self, opened):
-        clicks, settle = 0, Timer(2, count=2)
+        clicks, info_clicks, settle = 0, 0, Timer(2, count=2)
         for _ in self.loop(skip_first=False, timeout=12):
+            if self._receipt() is not None:
+                return False
             if self.appear(DORM_BUY_FOOD_CHECK, offset=(20, 20)):
                 return False
+            # Entering Dorm can show its XP summary over a recognizable
+            # background. Dismiss only this established exact control before
+            # deciding whether the food panel is open or clicking its toggle.
+            if self.appear(DORM_INFO, offset=(30, 30)):
+                if info_clicks < 2 and settle.reached():
+                    self.device.click(DORM_INFO)
+                    info_clicks += 1
+                    settle.reset()
+                continue
             panel = self.appear(DORM_FEED_CHECK, offset=(20, 20))
             if (panel if opened else not panel and self.appear(DORM_CHECK, offset=(20, 20))):
                 return True

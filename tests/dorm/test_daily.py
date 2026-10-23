@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+import module.config.server as server
 from module.base.button import Button
 from module.combat.assets import GET_ITEMS_1
 from module.dorm import daily
@@ -216,6 +217,52 @@ def test_food_shop_is_vetoed_without_confirmation(monkeypatch):
     owner = controller(monkeypatch)
     owner.appear = Mock(return_value=True)
     assert not owner._feed_panel(True)
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('opened', [False, True])
+def test_captured_dorm_xp_summary_is_dismissed_before_panel_detection(monkeypatch, opened):
+    previous_server = server.server
+    server.set_server('en')
+    try:
+        owner = controller(monkeypatch)
+        actual = np.array(Image.open(DATA / 'dorm_info.png').convert('RGB'))
+        phase = ['summary']
+        def appear(button, **kwargs):
+            if phase[0] == 'summary':
+                return button.match(actual, offset=kwargs.get('offset', 0), similarity=.85)
+            return button is (DORM_FEED_CHECK if phase[0] == 'food' else daily.DORM_CHECK)
+        def click(button):
+            if button is daily.DORM_INFO:
+                phase[0] = 'dorm'
+            elif button is daily.DORM_FEED_ENTER:
+                phase[0] = 'food'
+            else:
+                pytest.fail('Only exact Dorm summary or food-toggle input is allowed')
+        owner.appear = Mock(side_effect=appear)
+        owner.device.click.side_effect = click
+        assert owner._feed_panel(opened)
+        expected = [daily.DORM_INFO, daily.DORM_FEED_ENTER] if opened else [daily.DORM_INFO]
+        assert [call.args[0] for call in owner.device.click.call_args_list] == expected
+        actual[590:665, 1040:1175] = 0
+        assert not daily.DORM_INFO.match(actual, offset=(30, 30), similarity=.85)
+    finally:
+        server.set_server(previous_server)
+
+
+def test_persistent_dorm_summary_has_bounded_confirm_and_no_background_toggle(monkeypatch):
+    owner = controller(monkeypatch)
+    owner.appear = Mock(side_effect=lambda button, **kwargs: button in (daily.DORM_INFO, daily.DORM_CHECK))
+    assert not owner._feed_panel(True)
+    assert [call.args[0] for call in owner.device.click.call_args_list] == [daily.DORM_INFO] * 2
+
+
+def test_unowned_receipt_precedes_summary_shop_and_background_panel_detection(monkeypatch):
+    owner = controller(monkeypatch)
+    owner._receipt.return_value = GET_ITEMS_1
+    owner.appear = Mock(return_value=True)
+    assert not owner._feed_panel(True)
+    owner.appear.assert_not_called()
     owner.device.click.assert_not_called()
 
 
