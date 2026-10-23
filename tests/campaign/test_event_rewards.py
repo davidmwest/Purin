@@ -9,7 +9,8 @@ from module.campaign import event_rewards as rewards
 from module.campaign.event_completion import load_reward_observations, save_reward_observations
 from module.campaign.event_rewards import EventRewards
 from module.campaign.event_rewards_assets import (
-    FOGGY_CLAIM_BADGE, FOGGY_COLLECT_ALL, FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE)
+    FOGGY_CLAIM_BADGE, FOGGY_COLLECT_ALL, FOGGY_COLLECT_ALL_DISABLED,
+    FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE)
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
 from module.exception import GameNotRunningError
 
@@ -19,9 +20,11 @@ EVENT = 'event_20261022_cn'
 def controller(frames=10):
     helper = EventRewards.__new__(EventRewards)
     helper.config = SimpleNamespace(config_name='f2p')
-    helper.device = SimpleNamespace(app_is_running=Mock(return_value=True), click=Mock())
+    helper.device = SimpleNamespace(app_is_running=Mock(return_value=True), click=Mock(),
+                                    stuck_record_clear=Mock())
     helper.loop = Mock(return_value=iter(range(frames)))
     helper.appear = Mock(return_value=False)
+    helper.match_template_color = Mock(return_value=False)
     helper._foggy_state = Mock(return_value='unknown')
     return helper
 
@@ -46,6 +49,49 @@ def test_captured_ladder_recognizes_page_home_collect_and_claim_badge():
     helper = controller()
     helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
     assert EventRewards._foggy_state(helper) == 'claimable'
+
+
+def captured_controller(filename):
+    helper = controller(3)
+    image = np.asarray(Image.open('tests/campaign/data/' + filename).convert('RGB')).copy()
+    helper.device.image = image
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    helper._foggy_state = lambda: EventRewards._foggy_state(helper)
+    return helper
+
+
+def test_actual_post_claim_disabled_frame_verifies_completion_without_another_claim(immediate):
+    helper = captured_controller('foggy_supply_empty.png')
+    assert FOGGY_COLLECT_ALL_DISABLED.match_template_color(helper.device.image, offset=(3, 3), similarity=.85)
+    assert not FOGGY_COLLECT_ALL.match_template_color(helper.device.image, offset=(3, 3), similarity=.85)
+    assert helper._foggy_state() == 'empty'
+    state = record()
+    state.update(claims=1, pending_claim=True)
+    helper._collect(state, Mock())
+    assert state['status'] == 'complete' and state['pending_claim'] is False
+    helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [FOGGY_SUPPLY_PAGE, FOGGY_SUPPLY_HOME, FOGGY_COLLECT_ALL_DISABLED])
+def test_actual_disabled_frame_requires_exact_title_home_and_disabled_control(missing):
+    helper = captured_controller('foggy_supply_empty.png')
+    x1, y1, x2, y2 = missing.area
+    helper.device.image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    assert helper._foggy_state() == 'unknown'
+
+
+def test_active_button_with_missing_badge_cannot_be_mistaken_for_disabled_completion():
+    helper = captured_controller('foggy_supply.png')
+    x1, y1, x2, y2 = FOGGY_CLAIM_BADGE.area
+    helper.device.image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    assert helper._foggy_state() == 'unknown'
+
+
+def test_disabled_button_with_unmatched_red_badge_fails_closed():
+    helper = captured_controller('foggy_supply_empty.png')
+    x1, y1, x2, y2 = FOGGY_CLAIM_BADGE.area
+    helper.device.image[y1:y2, x1:x2] = (255, 66, 85)
+    assert helper._foggy_state() == 'unknown'
 
 
 @pytest.mark.parametrize('missing', [FOGGY_SUPPLY_PAGE, FOGGY_SUPPLY_HOME, FOGGY_COLLECT_ALL])
@@ -116,6 +162,18 @@ def test_unknown_screen_before_claim_never_dismisses_or_buys(immediate):
     helper._collect(state, Mock())
     assert state['status'] == 'failed'
     helper._reward_dialog.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('known', [True, False])
+def test_watchdog_refresh_requires_the_exact_page_and_stays_locally_bounded(immediate, known):
+    helper = controller(3)
+    helper._foggy_page_appear = Mock(return_value=known)
+    state = record()
+    helper._collect(state, Mock())
+    assert helper.device.stuck_record_clear.call_count == (3 if known else 0)
+    helper.loop.assert_called_once_with(skip_first=False, timeout=90)
+    assert state['status'] == 'failed'
     helper.device.click.assert_not_called()
 
 
@@ -193,6 +251,25 @@ def test_navigation_failure_is_saved_and_returns_without_claim(monkeypatch, tmp_
     assert result['status'] == 'failed'
     helper._collect.assert_not_called()
     navigation._return_event_hub_main.assert_called_once()
+
+
+def test_collector_exception_is_captured_before_home_replaces_the_failed_frame(monkeypatch, tmp_path):
+    navigation = mock_navigation(monkeypatch)
+    helper = controller()
+    error = RuntimeError('collector watchdog')
+    helper._collect = Mock(side_effect=error)
+
+    def return_main():
+        rewards.save_event_diagnostic.assert_called_once_with(helper.device, 'f2p_event_free_pt_exception')
+        return True
+
+    navigation._return_event_hub_main.side_effect = return_main
+    with pytest.raises(RuntimeError) as caught:
+        helper.run(EVENT, folder=tmp_path)
+    assert caught.value is error
+    saved = load_reward_observations('f2p', folder=tmp_path)[EVENT + ':free_pt_collection']
+    assert saved['diagnostics'] == ['/tmp/pt.png']
+    assert saved['status'] == 'failed' and saved['returned_main'] is True
 
 
 def test_account_audits_are_separate(monkeypatch, tmp_path):

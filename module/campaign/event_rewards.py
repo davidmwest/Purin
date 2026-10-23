@@ -6,7 +6,8 @@ from module.campaign.event_completion import (
     EventCompletion, load_reward_observations, save_reward_observations)
 from module.campaign.event_completion_assets import TEMPESTA_FOGGY_SUPPLY_TAB
 from module.campaign.event_rewards_assets import (
-    FOGGY_CLAIM_BADGE, FOGGY_COLLECT_ALL, FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE)
+    FOGGY_CLAIM_BADGE, FOGGY_COLLECT_ALL, FOGGY_COLLECT_ALL_DISABLED,
+    FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE)
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP
 from module.eventstory.eventstory import ensure_event_running, save_event_diagnostic
 from module.handler.assets import GET_ITEMS_SHIP_1, GET_SKIN
@@ -19,17 +20,24 @@ REWARD_DIALOGS_MAX = 24
 
 
 class EventRewards(Reward):
+    def _foggy_page_appear(self):
+        return all(self.match_template_color(button, offset=(3, 3), similarity=.85)
+                   for button in (FOGGY_SUPPLY_PAGE, FOGGY_SUPPLY_HOME))
+
     def _foggy_state(self):
         """A missing marker never becomes permission to claim or success."""
-        if not all(self.match_template_color(button, offset=(3, 3), similarity=.85)
-                   for button in (FOGGY_SUPPLY_PAGE, FOGGY_SUPPLY_HOME, FOGGY_COLLECT_ALL)):
+        if not self._foggy_page_appear():
             return 'unknown'
         if self.match_template_color(FOGGY_CLAIM_BADGE, offset=(3, 3), similarity=.85):
-            return 'claimable'
+            if self.match_template_color(FOGGY_COLLECT_ALL, offset=(3, 3), similarity=.85):
+                return 'claimable'
+            return 'unknown'
         # A partly animated/unmatched badge must not be mistaken for no rewards.
         if self.image_color_count(FOGGY_CLAIM_BADGE, color=(255, 66, 85), threshold=80, count=12):
             return 'unknown'
-        return 'empty'
+        if self.match_template_color(FOGGY_COLLECT_ALL_DISABLED, offset=(3, 3), similarity=.85):
+            return 'empty'
+        return 'unknown'
 
     def _reward_dialog(self):
         """Only known reward-dismissal screens; no generic popup confirmation."""
@@ -47,6 +55,11 @@ class EventRewards(Reward):
         dialogs = 0
         for _ in self.loop(skip_first=False, timeout=90):
             state = self._foggy_state()
+            # The local timeout bounds a known ladder inspection. Its disabled
+            # button is a legitimate idle state, so keep the global watchdog
+            # alive only while the exact page title and Home remain recognized.
+            if state != 'unknown' or self._foggy_page_appear():
+                self.device.stuck_record_clear()
             if state == 'empty':
                 empty_frames += 1
                 if empty_frames >= 3 and settled.reached():
@@ -112,6 +125,11 @@ class EventRewards(Reward):
                 record['diagnostics'].append(path)
         except Exception:
             record.update(status='failed', reason='free_pt_collection_exception')
+            # Home recovery replaces the current image and screenshot history.
+            # Preserve the actual failed collector screen before that recovery.
+            path = save_event_diagnostic(self.device, f'{account}_event_free_pt_exception')
+            if path:
+                record['diagnostics'].append(path)
             raise
         finally:
             try:

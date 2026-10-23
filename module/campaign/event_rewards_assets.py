@@ -19,3 +19,9 @@ FOGGY_COLLECT_ALL = Button(
 FOGGY_CLAIM_BADGE = Button(
     area=(1193, 476, 1213, 496), color=(224, 99, 124), button=(1193, 476, 1213, 496),
     file=_FOGGY, name='FOGGY_CLAIM_BADGE')
+
+# Exact disabled state after Purin received the earned rewards at 23:28.
+# The changing PT total and reward cards are outside this recognition crop.
+FOGGY_COLLECT_ALL_DISABLED = Button(
+    area=(1066, 485, 1186, 511), color=(133, 133, 133), button=(1054, 484, 1187, 510),
+    file='./assets/en/event_completion/FOGGY_SUPPLY_EMPTY_20261022.png', name='FOGGY_COLLECT_ALL_DISABLED')
