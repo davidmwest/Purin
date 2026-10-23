@@ -31,7 +31,10 @@ def ensure_event_running(main):
 
 def ensure_event_page(main, destination, timeout=30, max_clicks=12):
     """Use the normal page graph with a finite budget and recognized screens only."""
-    from module.campaign.event_completion_assets import TEMPESTA_HUB, TEMPESTA_HUB_HOME, TEMPESTA_HUB_INACTIVE
+    from module.campaign.event_completion_assets import (
+        TEMPESTA_HUB, TEMPESTA_HUB_HOME, TEMPESTA_HUB_INACTIVE,
+        TEMPESTA_SIDE_CHOICE_BACK, TEMPESTA_SIDE_CHOICE_PAGE)
+    from module.campaign.event_rewards_assets import FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE
 
     ensure_event_running(main)
     Page.init_connection(destination)
@@ -64,6 +67,18 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
                  or main.match_template_color(TEMPESTA_HUB_INACTIVE, offset=(3, 3), similarity=.85))
                     and main.match_template_color(TEMPESTA_HUB_HOME, offset=(3, 3), similarity=.85)):
                 main.device.click(TEMPESTA_HUB_HOME)
+                clicks += 1
+                settled.reset()
+                continue
+            if (main.match_template_color(FOGGY_SUPPLY_PAGE, offset=(3, 3), similarity=.85)
+                    and main.match_template_color(FOGGY_SUPPLY_HOME, offset=(3, 3), similarity=.85)):
+                main.device.click(FOGGY_SUPPLY_HOME)
+                clicks += 1
+                settled.reset()
+                continue
+            if (main.match_template_color(TEMPESTA_SIDE_CHOICE_PAGE, offset=(3, 3), similarity=.85)
+                    and main.match_template_color(TEMPESTA_SIDE_CHOICE_BACK, offset=(3, 3), similarity=.85)):
+                main.device.click(TEMPESTA_SIDE_CHOICE_BACK)
                 clicks += 1
                 settled.reset()
                 continue

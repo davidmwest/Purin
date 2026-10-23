@@ -10,8 +10,9 @@ from module.campaign.event_completion_assets import (
     TEMPESTA_BECKONING_TAB, TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED, TEMPESTA_FEATURED_ENTRY,
     TEMPESTA_FOGGY_SUPPLY_TAB,
     TEMPESTA_HUB, TEMPESTA_HUB_HOME, TEMPESTA_HUB_INACTIVE,
-    TEMPESTA_HUB_LANDING, TEMPESTA_MAIN_ENTRY, TEMPESTA_REWARDS_TAB, TEMPESTA_SUPPLIES)
-from module.exception import GameNotRunningError, ScriptError
+    TEMPESTA_HUB_LANDING, TEMPESTA_MAIN_ENTRY, TEMPESTA_REWARDS_TAB, TEMPESTA_SUPPLIES,
+    TEMPESTA_SIDE_CHOICE_BACK, TEMPESTA_SIDE_CHOICE_PAGE)
+from module.exception import GameNotRunningError, GamePageUnknownError, ScriptError
 from module.reward.assets import MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
 from module.ui.assets import GOTO_MAIN
 from module.ui.page import page_event_list, page_main, page_mission, page_sp
@@ -23,6 +24,8 @@ def controller():
     helper.device = SimpleNamespace(stuck_record_clear=Mock(), click_record_clear=Mock(), click=Mock(),
                                     app_is_running=Mock(return_value=True), display_scale=1)
     helper.interval_clear = Mock()
+    helper.collect_current_event_rewards = Mock(return_value=dict(status='unsupported', diagnostics=[]))
+    helper.observe_event_strict_maid = Mock(return_value=dict(status='observed'))
     return helper
 
 
@@ -40,6 +43,8 @@ def test_disabled_options_do_not_even_construct_story_or_navigate(monkeypatch):
     helper.collect_event_missions.assert_not_called()
     helper.observe_event_side_prepare.assert_not_called()
     helper.observe_event_side_choice.assert_not_called()
+    helper.collect_current_event_rewards.assert_not_called()
+    helper.observe_event_strict_maid.assert_not_called()
 
 
 def test_story_uses_the_requested_event_and_explicit_bounded_battle_skip(monkeypatch):
@@ -56,6 +61,7 @@ def test_story_uses_the_requested_event_and_explicit_bounded_battle_skip(monkeyp
     assert result['event_side_story'] == 'unsupported'
     helper.observe_event_side_prepare.assert_called_once_with('event_20261022_cn')
     helper.observe_event_side_choice.assert_called_once_with('event_20261022_cn')
+    helper.observe_event_strict_maid.assert_called_once_with('event_20261022_cn')
     story.return_value.run.assert_called_once_with(event='event_20261022_cn', skip_battle=True)
 
 
@@ -82,6 +88,7 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     helper.observe_event_supplies = Mock(return_value={'status': 'observed'})
     result = helper.run('event_20261022_cn')
     assert result == {'story': 'disabled', 'rewards': 'complete', 'event_hub_rewards': 'unsupported',
+                      'event_hub_reward_collection': {'status': 'unsupported', 'diagnostics': []},
                       'event_main_observation': {'status': 'observed'},
                       'event_hub_observation': {'status': 'observed'},
                       'event_featured_observation': {'status': 'observed'},
@@ -94,6 +101,73 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     helper.observe_event_supplies.assert_called_once_with('event_20261022_cn')
     helper.observe_event_side_prepare.assert_not_called()
     helper.observe_event_side_choice.assert_not_called()
+    helper.observe_event_strict_maid.assert_not_called()
+    helper.collect_current_event_rewards.assert_called_once_with('event_20261022_cn')
+
+
+@pytest.mark.parametrize('status,expected', [('complete', 'complete'), ('failed', 'failed'),
+                                          ('unsupported', 'unsupported'), ('unexpected', 'failed')])
+def test_event_hub_collection_result_drives_the_scheduler_retry_gate(status, expected):
+    helper = controller()
+    for name in ('main', 'hub', 'featured', 'rewards_panel', 'beckoning', 'foggy_supply', 'rewards', 'supplies'):
+        setattr(helper, 'observe_event_' + name, Mock(return_value={'status': 'observed'}))
+    helper.collect_event_missions = Mock(return_value=True)
+    record = dict(status=status, diagnostics=['/tmp/receipt.png'])
+    helper.collect_current_event_rewards.return_value = record
+    result = helper.run('event_20261022_cn')
+    assert result['event_hub_rewards'] == expected
+    assert result['event_hub_reward_collection'] == record
+
+
+def test_current_event_collector_receives_the_shared_account_device_and_event(monkeypatch):
+    import sys
+
+    helper = controller()
+    rewards = Mock()
+    monkeypatch.setitem(sys.modules, 'module.campaign.event_rewards', SimpleNamespace(EventRewards=rewards))
+    assert EventCompletion.collect_current_event_rewards(helper, 'event_20261022_cn') is rewards.return_value.run.return_value
+    rewards.assert_called_once_with(config=helper.config, device=helper.device)
+    rewards.return_value.run.assert_called_once_with('event_20261022_cn')
+
+
+def test_strict_maid_observer_receives_the_shared_account_device_and_event(monkeypatch):
+    import sys
+
+    helper = controller()
+    observer = Mock()
+    monkeypatch.setitem(sys.modules, 'module.campaign.event_strict_maid',
+                        SimpleNamespace(StrictMaidObserver=observer))
+    assert EventCompletion.observe_event_strict_maid(helper, 'event_20261022_cn') is observer.return_value.run.return_value
+    observer.assert_called_once_with(config=helper.config, device=helper.device)
+    observer.return_value.run.assert_called_once_with('event_20261022_cn')
+
+
+@pytest.mark.parametrize('returned', [True, False])
+def test_fresh_failed_return_is_bounded_and_fails_before_the_next_action(monkeypatch, returned):
+    helper = controller()
+    helper.observe_event_side_prepare = Mock(return_value=dict(status='observed', returned_main=False))
+    helper.observe_event_side_choice = Mock(return_value=dict(status='observed'))
+    story = Mock()
+    monkeypatch.setattr(completion, 'EventStory', story)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=returned))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock())
+    if returned:
+        helper.run('event_20261022_cn', collect_rewards=False, complete_story=True)
+        helper.observe_event_side_choice.assert_called_once()
+    else:
+        with pytest.raises(GamePageUnknownError, match='recognized controls'):
+            helper.run('event_20261022_cn', collect_rewards=False, complete_story=True)
+        helper.observe_event_side_choice.assert_not_called()
+        helper.observe_event_strict_maid.assert_not_called()
+        completion.save_event_diagnostic.assert_called_once_with(helper.device, 'event_completion_return_unknown')
+    completion.ensure_event_page.assert_called_with(helper, page_main, timeout=10, max_clicks=3)
+
+
+def test_historical_failed_return_does_not_block_a_reused_observation(monkeypatch):
+    helper = controller()
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock())
+    helper.ensure_completion_return(dict(old=dict(returned_main=False, reused=True), other=dict(status='unsupported')))
+    completion.ensure_event_page.assert_not_called()
 
 
 def test_main_observation_is_durable_before_navigation_and_captures_fresh_recognized_frame(monkeypatch, tmp_path):
@@ -158,6 +232,7 @@ def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch
     helper.observe_event_foggy_supply = Mock(side_effect=lambda event: order.append('foggy_supply'))
     helper.observe_event_side_prepare = Mock(side_effect=lambda event: order.append('prepare'))
     helper.observe_event_side_choice = Mock(side_effect=lambda event: order.append('choice'))
+    helper.observe_event_strict_maid = Mock(side_effect=lambda event: order.append('strict'))
     helper.observe_event_rewards = Mock(side_effect=lambda event: order.append('list'))
     helper.observe_event_supplies = Mock(side_effect=lambda event: order.append('supplies'))
     helper.collect_event_missions = Mock(side_effect=lambda: order.append('missions'))
@@ -166,7 +241,7 @@ def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch
     monkeypatch.setattr(completion, 'EventStory', story)
     helper.run('event_20261022_cn', complete_story=True)
     assert order == ['main', 'hub', 'featured', 'pt', 'beckoning', 'foggy_supply',
-                     'story', 'prepare', 'choice', 'list', 'supplies', 'missions']
+                     'story', 'prepare', 'choice', 'strict', 'list', 'supplies', 'missions']
 
 
 def test_hub_budget_precedes_navigation_and_is_reused_after_capture(monkeypatch, tmp_path):
@@ -384,7 +459,7 @@ def test_hub_home_exit_requires_both_observed_templates(missing):
     helper.loop = Mock(return_value=iter(range(4)))
     helper.ui_page_appear = Mock(side_effect=[False, True] if missing is None else [False] * 4)
     helper.match_template_color = Mock(side_effect=lambda button, **kwargs:
-                                      button not in (GOTO_MAIN, TEMPESTA_HUB_INACTIVE, missing))
+                                      button in (TEMPESTA_HUB, TEMPESTA_HUB_HOME) and button is not missing)
     assert helper._return_event_hub_main() is (missing is None)
     if missing is None:
         helper.device.click.assert_called_once_with(TEMPESTA_HUB_HOME)
@@ -414,6 +489,54 @@ def test_observed_subpanel_has_a_verified_home_exit(missing, filename):
     assert helper._return_event_hub_main() is (missing is None)
     if missing is None:
         helper.device.click.assert_called_once_with(TEMPESTA_HUB_HOME)
+    else:
+        helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [None, 'page', 'home'])
+def test_foggy_observed_home_requires_its_own_exact_page_and_home(missing):
+    import numpy as np
+    from PIL import Image
+    from module.campaign.event_rewards_assets import FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE
+
+    image = np.asarray(Image.open('tests/campaign/data/foggy_supply.png').convert('RGB')).copy()
+    assert not TEMPESTA_HUB.match_template_color(image, offset=(3, 3), similarity=.85)
+    assert not TEMPESTA_HUB_INACTIVE.match_template_color(image, offset=(3, 3), similarity=.85)
+    if missing:
+        button = FOGGY_SUPPLY_PAGE if missing == 'page' else FOGGY_SUPPLY_HOME
+        x1, y1, x2, y2 = button.area
+        image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(2)))
+    helper.ui_page_appear = Mock(side_effect=[False, True] if missing is None else [False, False])
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert helper._return_event_hub_main() is (missing is None)
+    if missing is None:
+        helper.device.click.assert_called_once_with(FOGGY_SUPPLY_HOME)
+    else:
+        helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [None, 'page', 'back'])
+def test_choice_story_returns_only_with_the_exact_title_and_back(missing):
+    import numpy as np
+    from PIL import Image
+
+    image = np.asarray(Image.open('tests/campaign/data/tempesta_side_choice.png').convert('RGB')).copy()
+    assert TEMPESTA_SIDE_CHOICE_PAGE.match_template_color(image, offset=(3, 3), similarity=.85)
+    assert TEMPESTA_SIDE_CHOICE_BACK.match_template_color(image, offset=(3, 3), similarity=.85)
+    assert not TEMPESTA_HUB_INACTIVE.match_template_color(image, offset=(3, 3), similarity=.85)
+    if missing:
+        button = TEMPESTA_SIDE_CHOICE_PAGE if missing == 'page' else TEMPESTA_SIDE_CHOICE_BACK
+        x1, y1, x2, y2 = button.area
+        image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(2)))
+    helper.ui_page_appear = Mock(side_effect=[False, True] if missing is None else [False, False])
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert helper._return_event_hub_main() is (missing is None)
+    if missing is None:
+        helper.device.click.assert_called_once_with(TEMPESTA_SIDE_CHOICE_BACK)
     else:
         helper.device.click.assert_not_called()
 

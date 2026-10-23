@@ -274,6 +274,60 @@ def test_captured_tempesta_hub_exit_requires_title_and_home(missing, filename, t
         main.device.click.assert_not_called()
 
 
+@pytest.mark.parametrize('missing', [None, 'page', 'home'])
+def test_foggy_page_has_an_exact_home_recovery_path(missing):
+    from pathlib import Path
+    import numpy as np
+    from PIL import Image
+    from module.campaign.event_rewards_assets import FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE
+
+    image = np.asarray(Image.open(Path(__file__).parent / 'data' / 'foggy_supply.png').convert('RGB')).copy()
+    if missing:
+        button = FOGGY_SUPPLY_PAGE if missing == 'page' else FOGGY_SUPPLY_HOME
+        x1, y1, x2, y2 = button.area
+        image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    main = SimpleNamespace(
+        loop=Mock(return_value=iter(range(2))), interval_clear=Mock(),
+        ui_page_appear=Mock(side_effect=[False, True] if missing is None else [False, False]),
+        appear=Mock(return_value=False), handle_idle_page=Mock(return_value=False),
+        device=SimpleNamespace(image=image, click=Mock(), app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    main.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert ensure_event_page(main, page_main) is (missing is None)
+    if missing is None:
+        main.device.click.assert_called_once_with(FOGGY_SUPPLY_HOME)
+        main.appear.assert_not_called()
+    else:
+        main.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', [None, 'page', 'back'])
+def test_choice_story_has_an_exact_back_recovery_path(missing):
+    from pathlib import Path
+    import numpy as np
+    from PIL import Image
+    from module.campaign.event_completion_assets import TEMPESTA_SIDE_CHOICE_BACK, TEMPESTA_SIDE_CHOICE_PAGE
+
+    image = np.asarray(Image.open(Path(__file__).parent / 'data' / 'tempesta_side_choice.png').convert('RGB')).copy()
+    if missing:
+        button = TEMPESTA_SIDE_CHOICE_PAGE if missing == 'page' else TEMPESTA_SIDE_CHOICE_BACK
+        x1, y1, x2, y2 = button.area
+        image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    main = SimpleNamespace(
+        loop=Mock(return_value=iter(range(2))), interval_clear=Mock(),
+        ui_page_appear=Mock(side_effect=[False, True] if missing is None else [False, False]),
+        appear=Mock(return_value=False), handle_idle_page=Mock(return_value=False),
+        device=SimpleNamespace(image=image, click=Mock(), app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    main.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert ensure_event_page(main, page_main) is (missing is None)
+    if missing is None:
+        main.device.click.assert_called_once_with(TEMPESTA_SIDE_CHOICE_BACK)
+        main.appear.assert_not_called()
+    else:
+        main.device.click.assert_not_called()
+
+
 def test_tempesta_hub_exit_shares_navigation_click_and_settle_budget(monkeypatch):
     from module.campaign.event_completion_assets import TEMPESTA_HUB_HOME
 

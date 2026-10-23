@@ -16,10 +16,11 @@ from module.campaign.event_completion_assets import (
     TEMPESTA_BECKONING_TAB, TEMPESTA_CAMPAIGN, TEMPESTA_FEATURED_ENTRY, TEMPESTA_FOGGY_SUPPLY_TAB,
     TEMPESTA_HUB, TEMPESTA_HUB_HOME,
     TEMPESTA_HUB_INACTIVE,
-    TEMPESTA_HUB_LANDING, TEMPESTA_MAIN_ENTRY, TEMPESTA_REWARDS_TAB, TEMPESTA_SUPPLIES)
+    TEMPESTA_HUB_LANDING, TEMPESTA_MAIN_ENTRY, TEMPESTA_REWARDS_TAB, TEMPESTA_SUPPLIES,
+    TEMPESTA_SIDE_CHOICE_BACK, TEMPESTA_SIDE_CHOICE_PAGE)
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_running, save_event_diagnostic
-from module.exception import ScriptError
+from module.exception import GamePageUnknownError, ScriptError
 from module.logger import logger
 from module.reward.assets import MISSION_EMPTY, MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
 from module.reward.reward import Reward
@@ -100,6 +101,8 @@ class EventCompletion(Reward):
 
     def _return_event_hub_main(self):
         """Exit only through the existing home template, never unknown hub controls."""
+        from module.campaign.event_rewards_assets import FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE
+
         settled = Timer(2, count=2)
         clicks = 0
         for _ in self.loop(skip_first=False, timeout=10):
@@ -118,6 +121,16 @@ class EventCompletion(Reward):
                   and self.match_template_color(TEMPESTA_HUB_HOME, offset=(3, 3),
                                                 similarity=self.text_similarity)):
                 self.device.click(TEMPESTA_HUB_HOME)
+                clicks += 1
+                settled.reset()
+            elif (self.match_template_color(FOGGY_SUPPLY_PAGE, offset=(3, 3), similarity=self.text_similarity)
+                  and self.match_template_color(FOGGY_SUPPLY_HOME, offset=(3, 3), similarity=self.text_similarity)):
+                self.device.click(FOGGY_SUPPLY_HOME)
+                clicks += 1
+                settled.reset()
+            elif (self.match_template_color(TEMPESTA_SIDE_CHOICE_PAGE, offset=(3, 3), similarity=self.text_similarity)
+                  and self.match_template_color(TEMPESTA_SIDE_CHOICE_BACK, offset=(3, 3), similarity=self.text_similarity)):
+                self.device.click(TEMPESTA_SIDE_CHOICE_BACK)
                 clicks += 1
                 settled.reset()
         return False
@@ -621,6 +634,27 @@ class EventCompletion(Reward):
         save_event_diagnostic(self.device, 'mission_claim_stopped')
         return False
 
+    def collect_current_event_rewards(self, event):
+        # The supported collector reuses the bounded event entry helpers.
+        # Import lazily so ordinary event navigation has no import cycle.
+        from module.campaign.event_rewards import EventRewards
+
+        return EventRewards(config=self.config, device=self.device).run(event)
+
+    def observe_event_strict_maid(self, event):
+        from module.campaign.event_strict_maid import StrictMaidObserver
+
+        return StrictMaidObserver(config=self.config, device=self.device).run(event)
+
+    def ensure_completion_return(self, result):
+        """Do not let a new unknown event destination reach campaign reservation."""
+        if not any(isinstance(record, dict) and record.get('returned_main') is False
+                   and not record.get('reused') for record in result.values()):
+            return
+        if not ensure_event_page(self, page_main, timeout=10, max_clicks=3):
+            save_event_diagnostic(self.device, 'event_completion_return_unknown')
+            raise GamePageUnknownError('Event completion could not return through recognized controls')
+
     def run(self, event, collect_rewards=True, complete_story=False):
         result = dict(story='disabled', rewards='disabled', event_hub_rewards='disabled')
         if collect_rewards:
@@ -630,6 +664,7 @@ class EventCompletion(Reward):
             result['event_pt_observation'] = self.observe_event_rewards_panel(event)
             result['event_beckoning_observation'] = self.observe_event_beckoning(event)
             result['event_foggy_supply_observation'] = self.observe_event_foggy_supply(event)
+            self.ensure_completion_return(result)
         # Story detection taps entrances, so gate before constructing its controller.
         if complete_story:
             if event in SUPPORTED_STORY_EVENTS:
@@ -638,7 +673,11 @@ class EventCompletion(Reward):
                 result['story'] = 'complete' if story.run(event=event, skip_battle=True) else 'failed'
                 if event in REWARD_OBSERVATION_EVENTS:
                     result['event_side_prepare_observation'] = self.observe_event_side_prepare(event)
+                    self.ensure_completion_return(result)
                     result['event_side_choice_observation'] = self.observe_event_side_choice(event)
+                    self.ensure_completion_return(result)
+                    result['event_strict_maid_observation'] = self.observe_event_strict_maid(event)
+                    self.ensure_completion_return(result)
                     result['event_side_story'] = 'unsupported'
                     logger.warning('Side stories need supported destination assets; campaign story handled separately')
             else:
@@ -649,7 +688,10 @@ class EventCompletion(Reward):
             result['event_supplies_observation'] = self.observe_event_supplies(event)
             result['rewards'] = 'complete' if self.collect_event_missions() else 'failed'
             if event.startswith('event_'):
-                result['event_hub_rewards'] = 'unsupported'
-                logger.warning('Event hub PT ladder rewards need supported assets; ordinary mission claims handled')
+                collection = self.collect_current_event_rewards(event)
+                result['event_hub_reward_collection'] = collection
+                status = collection.get('status', 'failed')
+                result['event_hub_rewards'] = status if status in ('complete', 'failed', 'unsupported') else 'failed'
+            self.ensure_completion_return(result)
         logger.attr('EventCompletion', result)
         return result

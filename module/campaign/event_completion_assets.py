@@ -74,3 +74,12 @@ TEMPESTA_BECKONING_PREPARE = Button(
 TEMPESTA_BECKONING_CHOICE = Button(
     area=(944, 617, 1168, 664), color=(70, 87, 106), button=(946, 615, 1168, 665),
     file=_BECKONING, name='TEMPESTA_BECKONING_CHOICE')
+
+# Observed character-story destination has its own ornate Back, not hub Home.
+_SIDE_CHOICE = './assets/en/event_completion/TEMPESTA_SIDE_CHOICE_20261022.png'
+TEMPESTA_SIDE_CHOICE_PAGE = Button(
+    area=(128, 27, 458, 104), color=(96, 89, 106), button=(128, 27, 458, 104),
+    file=_SIDE_CHOICE, name='TEMPESTA_SIDE_CHOICE_PAGE')
+TEMPESTA_SIDE_CHOICE_BACK = Button(
+    area=(34, 31, 85, 61), color=(83, 70, 57), button=(12, 31, 79, 57),
+    file=_SIDE_CHOICE, name='TEMPESTA_SIDE_CHOICE_BACK')
