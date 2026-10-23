@@ -119,11 +119,14 @@ def test_remaining_locked_cards_match_actual_post_third_story_screen():
         assert BeckoningStoryContinuation.visible(helper, lock), name
 
 
+ACTUAL_RETURN_TICKETS = {'3': 2, '4': 2, '5': 1}
+
+
 def actual_card_return(card='3', frames=5):
     cards = {str(index): dict(clicks=1, complete=True, pending=False)
              for index in range(1, int(card))}
     cards[card] = dict(clicks=1, complete=False, pending=True, story_seen=True,
-                      tickets_before=3, handler_calls=3)
+                      tickets_before=ACTUAL_RETURN_TICKETS[card] + 1, handler_calls=3)
     state = {EVENT + ':beckoning_stories_v1': dict(cards=cards, milestones={})}
     helper, owner, record, state, saved = controller(frames=frames, state=state)
     owner.device.image = np.asarray(Image.open(
@@ -136,11 +139,11 @@ def actual_card_return(card='3', frames=5):
     return helper, owner, record, state, saved
 
 
-@pytest.mark.parametrize('card', ['3', '4'])
+@pytest.mark.parametrize('card', ['3', '4', '5'])
 def test_actual_unlocked_title_needs_its_observed_alternative(card):
     helper, owner, *_ = actual_card_return(card)
     index = int(card) - 1
-    assert owner._on_choice() and owner._tickets() == 2
+    assert owner._on_choice() and owner._tickets() == ACTUAL_RETURN_TICKETS[card]
     assert not helper.visible(STORY_CARDS[index][1])
     assert helper.visible(STORY_UNLOCKED_TITLES[card])
     assert helper.card_title_visible(card)
@@ -150,20 +153,20 @@ def test_actual_unlocked_title_needs_its_observed_alternative(card):
     owner.device.click.assert_not_called()
 
 
-@pytest.mark.parametrize('card', ['3', '4'])
+@pytest.mark.parametrize('card', ['3', '4', '5'])
 def test_actual_paid_story_return_finishes_without_another_input(immediate, card):
     helper, owner, _, _, saved = actual_card_return(card)
     assert helper.finish_story(card) is True
     assert helper.cards[card]['complete'] and not helper.cards[card]['pending']
     assert helper.cards[card]['clicks'] == 1
-    assert helper.cards[card]['tickets_after'] == 2
+    assert helper.cards[card]['tickets_after'] == ACTUAL_RETURN_TICKETS[card]
     assert saved[-1][0][EVENT + ':beckoning_stories_v1']['cards'][card]['complete']
     owner.device.click.assert_not_called()
     owner.story_skip.assert_not_called()
 
 
 @pytest.mark.parametrize('missing', [None, 'title', 'lock_removed', 'payment', 'viewer', 'choice'])
-@pytest.mark.parametrize('card', ['3', '4'])
+@pytest.mark.parametrize('card', ['3', '4', '5'])
 def test_interrupted_actual_return_verifies_only_paid_seen_unlocked_card(immediate, missing, card):
     helper, owner, *_ = actual_card_return(card)
     index = int(card) - 1
@@ -176,7 +179,7 @@ def test_interrupted_actual_return_verifies_only_paid_seen_unlocked_card(immedia
         x1, y1, x2, y2 = STORY_CARDS[index][2].area
         owner.device.image[y1-4:y2+4, x1-4:x2+4] = locked[y1-4:y2+4, x1-4:x2+4]
     elif missing == 'payment':
-        owner._tickets = lambda: 3
+        owner._tickets = lambda: ACTUAL_RETURN_TICKETS[card] + 1
     elif missing == 'viewer':
         helper.cards[card]['story_seen'] = False
     elif missing == 'choice':
@@ -198,10 +201,11 @@ def test_interrupted_return_cannot_verify_from_unstable_ticket_readings(immediat
     owner.story_skip.assert_not_called()
 
 
-def test_actual_fourth_story_return_preserves_remaining_locked_cards():
-    helper, owner, *_ = actual_card_return('4')
-    assert owner._on_choice() and owner._tickets() == 2
-    for name, title, lock in STORY_CARDS[4:]:
+@pytest.mark.parametrize('card', ['4', '5'])
+def test_actual_story_return_preserves_remaining_locked_cards(card):
+    helper, owner, *_ = actual_card_return(card)
+    assert owner._on_choice() and owner._tickets() == ACTUAL_RETURN_TICKETS[card]
+    for name, title, lock in STORY_CARDS[int(card):]:
         assert helper.card_title_visible(name), name
         assert helper.visible(lock), name
     owner.device.click.assert_not_called()
