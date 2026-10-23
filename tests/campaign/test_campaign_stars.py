@@ -9,6 +9,7 @@ from module.campaign.campaign_stars import (CampaignStars, EventExtra, EventStar
                                             StarProgress, campaign_plan, complete_stage, event_plan,
                                             stage_overrides)
 from module.campaign.run import CampaignRun
+from module.config.config import TaskEnd
 from module.exception import CampaignEnd, GameNotRunningError, ScriptEnd
 
 
@@ -220,6 +221,53 @@ def test_chapter_navigation_timeout_terminates_unlocked_stage_search(monkeypatch
     additional.assert_not_called()
 
 
+@pytest.mark.parametrize('kind,target', [('mode', 'combat'), ('aside', 'sp')])
+def test_event_selectors_use_bounded_known_state_helper_and_stop_if_unavailable(monkeypatch, kind, target):
+    from module.eventstory import eventstory
+    from module.campaign.campaign_ui import ASIDE_SWITCH_20241219, MODE_SWITCH_20241219
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    campaign = SimpleNamespace(triggered_map_stop=Mock(), handle_chapter_additional=Mock(),
+                               ensure_campaign_ui=Mock(), combat_status=Mock())
+    monkeypatch.setattr(CampaignRun, 'load_campaign', lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+    ensure = Mock(return_value=False)
+    monkeypatch.setattr(eventstory, 'ensure_event_switch', ensure)
+    runner.load_campaign('sp', 'event_20261022_cn')
+    method = (campaign.campaign_ensure_mode_20241219 if kind == 'mode'
+              else campaign.campaign_ensure_aside_20241219)
+    with pytest.raises(stars.StageUnavailable):
+        method(target)
+    ensure.assert_called_once_with(campaign, MODE_SWITCH_20241219 if kind == 'mode' else ASIDE_SWITCH_20241219, target)
+    ensure.return_value = True
+    method(target)
+
+
+@pytest.mark.parametrize('started', [False, True])
+def test_explicit_scheduler_deferral_refunds_only_before_campaign_run(monkeypatch, tmp_path, started):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    campaign = SimpleNamespace(triggered_map_stop=Mock(), handle_chapter_additional=Mock(),
+                               ensure_campaign_ui=Mock(), combat_status=Mock(),
+                               run=Mock(side_effect=TaskEnd('Commission notice found')))
+    monkeypatch.setattr(CampaignRun, 'load_campaign', lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+    def run(*args, **kwargs):
+        runner.load_campaign('sp', 'event_20261022_cn')
+        if started:
+            campaign.run()
+        raise TaskEnd('Commission notice found')
+    monkeypatch.setattr(runner, 'run', run)
+    goal = StageGoal('event_20261022_cn', 'SP', goal='clear')
+    progress = StarProgress('alas', 'EventStars', tmp_path)
+    with pytest.raises(TaskEnd, match='Commission notice found'):
+        complete_stage(goal, progress, runner.run_goal)
+    record = StarProgress('alas', 'EventStars', tmp_path).record(goal)
+    assert record == {'attempts': int(started), 'status': 'attempting' if started else 'deferred'}
+    # Both cases restore task overrides while preserving the actual scheduler stop.
+    assert runner.config.StopCondition_ThenTask == 'Event'
+    resume = Mock(return_value='capped' if started else 'complete')
+    complete_stage(goal, progress, resume)
+    resume.assert_called_once_with(goal, inspect_only=started)
+
+
 @pytest.mark.parametrize('boss_cleared,result', [(False, 'blocked'), (True, 'complete')])
 def test_one_clear_goal_rejects_early_emotion_withdrawal(monkeypatch, boss_cleared, result):
     runner = StageStarsRunner.__new__(StageStarsRunner)
@@ -355,11 +403,11 @@ def test_task_switch_resumes_after_completed_stage_without_repeating_it(monkeypa
     job.config.task_call.assert_called_once_with('Event', force_call=True)
 
 
-def test_extra_inspection_runs_once_then_disables_without_stage_runner(monkeypatch):
+def test_extra_attempt_runs_once_then_disables_without_stage_runner(monkeypatch):
     from module.campaign import event_extra
     factory = Mock()
     factory.return_value.run.return_value = dict(status='observed', combat_attempted=False)
-    monkeypatch.setattr(event_extra, 'EventExtraScout', factory)
+    monkeypatch.setattr(event_extra, 'EventExtraRunner', factory)
     job = EventExtra.__new__(EventExtra)
     job.device = Mock()
     job.ui_get_current_page = Mock()
@@ -381,13 +429,35 @@ def test_new_jobs_detect_closed_game_before_navigation_or_progress_budget(monkey
     progress = Mock()
     scout = Mock()
     monkeypatch.setattr(stars, 'StarProgress', progress)
-    monkeypatch.setattr(event_extra, 'EventExtraScout', scout)
+    monkeypatch.setattr(event_extra, 'EventExtraRunner', scout)
     with pytest.raises(GameNotRunningError):
         job.run()
     job.make_plan.assert_not_called()
     job.collect.assert_not_called()
     progress.assert_not_called()
     scout.assert_not_called()
+
+
+def test_event_pass_dispatches_extra_only_after_all_supported_stages_complete(monkeypatch, tmp_path):
+    goals = [StageGoal('event_20261022_cn', stage) for stage in ('T6', 'SP')]
+    job, progress, runner, _ = make_job(monkeypatch, tmp_path, goals)
+    job.config.StarPass_TryEx = True
+    job.config.StarPass_StagesPerRun = 1
+    job.extra_objectives = lambda: EventStars.extra_objectives(job)
+    job.run()
+    job.config.task_call.assert_not_called()
+    assert job.config.Scheduler_Enable
+    job.run()
+    job.config.task_call.assert_called_once_with('EventExtra', force_call=True)
+    assert not job.config.Scheduler_Enable
+
+
+def test_event_pass_does_not_dispatch_extra_after_loss(monkeypatch, tmp_path):
+    job, _, _, _ = make_job(monkeypatch, tmp_path, [StageGoal('event_20261022_cn', 'SP')], result='lost')
+    job.config.StarPass_TryEx = True
+    job.extra_objectives = lambda: EventStars.extra_objectives(job)
+    job.run()
+    job.config.task_call.assert_called_once_with('Event', force_call=True)
 
 
 def test_story_failure_dispatches_farming_without_stage_navigation(monkeypatch, tmp_path):

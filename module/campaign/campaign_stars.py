@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from module.base.timer import Timer
 from module.campaign.run import CampaignRun
 from module.campaign.stage import load_stage, stage_names
+from module.config.config import TaskEnd
 from module.exception import RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import to_map_file_name, to_map_input_name
 from module.logger import logger
@@ -142,6 +143,7 @@ class StageStarsRunner(CampaignRun):
         original_additional = campaign.handle_chapter_additional
         original_ensure = campaign.ensure_campaign_ui
         original_combat_status = campaign.combat_status
+        original_run = getattr(campaign, 'run', None)
         deadline = None
 
         def chapter_additional():
@@ -153,6 +155,30 @@ class StageStarsRunner(CampaignRun):
             nonlocal deadline
             deadline = Timer(20, count=60).start()
             return original_ensure(*args, **kwargs)
+
+        def ensure_event_mode(mode='combat'):
+            from module.campaign.campaign_ui import MODE_SWITCH_20241219
+            from module.eventstory.eventstory import ensure_event_switch
+            state = 'story' if mode == 'story' else 'combat'
+            if mode not in ('normal', 'hard', 'ex', 'combat', 'story') or not ensure_event_switch(
+                    campaign, MODE_SWITCH_20241219, state):
+                raise StageUnavailable(f'Event mode selector did not reach {mode}')
+
+        def ensure_event_aside(chapter):
+            from module.campaign.campaign_ui import ASIDE_SWITCH_20241219
+            from module.eventstory.eventstory import ensure_event_switch
+            states = dict(part1='part1', a='part1', c='part1', t='part1',
+                          part2='part2', b='part2', d='part2',
+                          sp='sp', ex_sp='sp', ex='ex', ex_ex='ex')
+            state = states.get(chapter)
+            if state is None or not ensure_event_switch(campaign, ASIDE_SWITCH_20241219, state):
+                raise StageUnavailable(f'Event chapter selector did not reach {chapter}')
+
+        def run_campaign(*args, **kwargs):
+            # Commission notices and event expiry stop CampaignRun before this
+            # call. Once map execution begins, any interruption keeps the budget.
+            self.attempt_started = True
+            return original_run(*args, **kwargs)
 
         def map_stop():
             self.goal_complete = original_stop()
@@ -178,6 +204,10 @@ class StageStarsRunner(CampaignRun):
 
         campaign.handle_chapter_additional = chapter_additional
         campaign.ensure_campaign_ui = ensure_ui
+        campaign.campaign_ensure_mode_20241219 = ensure_event_mode
+        campaign.campaign_ensure_aside_20241219 = ensure_event_aside
+        if original_run is not None:
+            campaign.run = run_campaign
         campaign.triggered_map_stop = map_stop
         campaign.combat_status = combat_status
         # CampaignRun catches ScriptEnd after this call. The job, not the map,
@@ -187,9 +217,15 @@ class StageStarsRunner(CampaignRun):
 
     def run_goal(self, goal, inspect_only=False):
         self.inspect_only, self.goal_complete, self.boss_cleared = inspect_only, False, False
+        self.attempt_started = False
         with stage_overrides(self.config, goal):
             try:
                 self.run(goal.stage, folder=goal.event, mode=goal.mode, total=1)
+            except TaskEnd as error:
+                # Preserve the scheduler's Commission/expiry dispatch. Only an
+                # explicit stop before campaign.run is proven safe to refund.
+                error.star_pass_precombat = not self.attempt_started
+                raise
             except (StageUnavailable, ScriptEnd) as error:
                 logger.warning(f'Star pass stopped at unavailable {goal.stage}: {error}')
                 return 'unavailable'
@@ -224,7 +260,12 @@ def complete_stage(goal, progress, attempt, max_runs=6):
         if not inspecting:
             runs += 1
             progress.save(goal, attempts=runs, status='attempting')
-        result = attempt(goal, inspect_only=inspecting)
+        try:
+            result = attempt(goal, inspect_only=inspecting)
+        except TaskEnd as error:
+            if getattr(error, 'star_pass_precombat', False) and not inspecting:
+                progress.save(goal, attempts=runs - 1, status='deferred')
+            raise
         # Navigation/oil deferral did not run combat. Return its reservation.
         if result in ('unavailable', 'stopped', 'already_complete') and not inspecting:
             runs -= 1
@@ -287,9 +328,10 @@ class CampaignStars(CampaignRun):
                 self.call_then_task()
                 return
             logger.info('Star pass completed all implemented stages')
-            self.extra_objectives()
+            extra_dispatched = self.extra_objectives()
             self.config.Scheduler_Enable = False
-            self.call_then_task()
+            if extra_dispatched is not True:
+                self.call_then_task()
         elif result in ('lost', 'blocked', 'capped'):
             logger.warning('Star pass held for fleet/progress review; saved attempts will not reset')
             self.config.task_delay(minute=360)
@@ -311,9 +353,9 @@ class EventStars(CampaignStars):
             return
         if any(goal.stage in ('EX', 'EXTRA') for goal in self.make_plan()):
             return
-        from module.campaign.event_extra import EventExtraScout
-        result = EventExtraScout(config=self.config, device=self.device).run(self.config.Campaign_Event)
-        logger.warning(f'Event EX objective remains unsupported; scout: {result}')
+        logger.info('Supported event stages complete; dispatching the isolated EX attempt')
+        self.config.task_call('EventExtra', force_call=True)
+        return True
 
     def make_plan(self):
         event = self.config.Campaign_Event
@@ -323,19 +365,21 @@ class EventStars(CampaignStars):
         if not self.config.StarPass_TryEx:
             plan = [goal for goal in plan if goal.stage not in ('EX', 'EXTRA')]
         if not any(goal.stage in ('EX', 'EXTRA') for goal in plan):
-            logger.warning(f'{event} has no supported EX map; EX needs a map implementation')
+            logger.info(f'{event} EX uses the separate verified direct-battle job')
         return plan
 
 
 class EventExtra(CampaignStars):
-    """One scheduler-driven EX inspection, separate from the regular stage pass."""
+    """One scheduler-driven EX attempt, separate from the regular stage pass."""
     def run(self):
         self.ui_get_current_page()
-        from module.campaign.event_extra import EventExtraScout
+        from module.campaign.event_extra import EventExtraRunner
         event = self.config.Campaign_Event
         if not event.startswith('event_'):
             raise ValueError('EventExtra needs a current event')
-        result = EventExtraScout(config=self.config, device=self.device).run(event)
-        logger.warning(f'Event EX inspection finished without a combat attempt: {result}')
+        result = EventExtraRunner(config=self.config, device=self.device).run(event)
+        logger.attr('Event_EX_result', result)
+        if result.get('status') != 'complete':
+            logger.warning('Event EX objective is not complete; no automatic battle retry')
         self.config.Scheduler_Enable = False
         self.call_then_task()

@@ -1,22 +1,27 @@
-"""Inspect a supported event's EX entrance once, without claiming a combat attempt.
-
-EX currently has no CampaignMap in this event. This scout records the recognized
-entrance and preparation UI so a battle runner can be implemented from evidence.
-It never clicks a fleet/battle start button or retries a lost battle.
-"""
+"""Bounded EX observation and one direct auto battle, with separate durable budgets."""
 import json
 import os
 import re
 import tempfile
 from datetime import datetime
+from time import monotonic
 
 from module.campaign.campaign_ui import ASIDE_SWITCH_20241219, MODE_SWITCH_20241219, CampaignUI
 from module.campaign.event_completion import EventCompletion
-from module.combat.assets import BATTLE_PREPARATION
+from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED
+from module.combat.assets import AUTOMATION_ON, BATTLE_PREPARATION, DEFEAT_TIPS
+from module.combat.combat import Combat
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
 from module.exception import CampaignNameError, ScriptError
 from module.logger import logger
-from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_HARD
+from module.map.assets import (FLEET_1_ADVICE, FLEET_1_BAR, FLEET_1_CHOOSE, FLEET_1_CLEAR,
+                               FLEET_1_HARD_SATIESFIED, FLEET_1_IN_USE, FLEET_2_ADVICE,
+                               FLEET_2_BAR, FLEET_2_CHOOSE, FLEET_2_CLEAR,
+                               FLEET_2_HARD_SATIESFIED, FLEET_2_IN_USE, FLEET_PREPARATION,
+                               MAP_PREPARATION, MAP_PREPARATION_HARD, SUBMARINE_ADVICE,
+                               SUBMARINE_BAR, SUBMARINE_CHOOSE, SUBMARINE_CLEAR,
+                               SUBMARINE_HARD_SATIESFIED, SUBMARINE_IN_USE)
+from module.map.map_fleet_preparation import FleetOperator
 from module.ui.page import page_sp
 
 EX_SCOUT_EVENTS = frozenset(('event_20261022_cn',))
@@ -60,7 +65,7 @@ def save_extra_state(config_name, data, folder=EX_SCOUT_DIR):
 
 class EventExtraScout(CampaignUI):
     def _observe_rewards(self, event):
-        return EventCompletion(config=self.config, device=self.device).observe_event_rewards(event)
+        return EventCompletion(config=self.config, device=self.device).observe_event_supplies(event)
 
     def _extra_capture(self, record, tag):
         path = save_event_diagnostic(self.device, f'{self.config.config_name}_ex_{tag}')
@@ -72,6 +77,11 @@ class EventExtraScout(CampaignUI):
             return 'blocked', 'event_page_unrecognized'
         if not ensure_event_switch(self, MODE_SWITCH_20241219, 'combat'):
             return 'blocked', 'combat_selector_unrecognized'
+        # The selector reports its previous value when the EX tab is locked.
+        # Distinguish a prerequisite from an unreadable entrance, without tapping it.
+        if self.appear(TEMPESTA_CAMPAIGN, offset=(3, 3)) and self.appear(
+                TEMPESTA_EX_LOCKED, offset=(3, 3)):
+            return 'locked', 'required_stage_not_cleared'
         if not ensure_event_switch(self, ASIDE_SWITCH_20241219, 'ex'):
             return 'blocked', 'ex_selector_unrecognized'
         self.device.screenshot()
@@ -123,6 +133,9 @@ class EventExtraScout(CampaignUI):
             if record.get('status') == 'inspecting':
                 record.update(status='blocked', reason='previous_inspection_interrupted')
             record['reused'] = True
+            # Supplies has its own observation budget. An earlier locked scout
+            # must not prevent the subsequently implemented reward observation.
+            record['event_reward_observation'] = self._observe_rewards(event)
             logger.attr('EXInspection', record)
             return record
 
@@ -146,4 +159,215 @@ class EventExtraScout(CampaignUI):
             self.config.override(STAGE_ENTRANCE=previous_entrances)
             save_extra_state(account, state, folder=folder)
         logger.attr('EXInspection', record)
+        return record
+
+
+def valid_extra_fleet_options(options, choose):
+    """The detector numbers contours; require the complete six-row list first."""
+    if set(options) != set(range(1, 7)):
+        return False
+    rows = [options[index] for index in range(1, 7)]
+    if sum(bool(row.selected) for row in rows) != 1:
+        return False
+    if not 0 <= rows[0].area[1] - choose.button[3] <= 33:
+        return False
+    return all(33 <= right.area[1] - left.area[1] <= 66
+               for left, right in zip(rows, rows[1:]))
+
+
+class EventExtraRunner(EventExtraScout, Combat):
+    """One supported direct EX sortie, using an explicitly verified common fleet.
+
+    A stage-specific hard lineup or a map-based EX is deliberately unsupported.
+    No ship replacement, fleet advice, retirement, or second battle is attempted.
+    """
+
+    def _fleet_operators(self):
+        return (
+            FleetOperator(FLEET_1_CHOOSE, FLEET_1_ADVICE, FLEET_1_BAR, FLEET_1_CLEAR,
+                          FLEET_1_IN_USE, FLEET_1_HARD_SATIESFIED, self),
+            FleetOperator(FLEET_2_CHOOSE, FLEET_2_ADVICE, FLEET_2_BAR, FLEET_2_CLEAR,
+                          FLEET_2_IN_USE, FLEET_2_HARD_SATIESFIED, self),
+            FleetOperator(SUBMARINE_CHOOSE, SUBMARINE_ADVICE, SUBMARINE_BAR, SUBMARINE_CLEAR,
+                          SUBMARINE_IN_USE, SUBMARINE_HARD_SATIESFIED, self),
+        )
+
+    def _clear_extra_fleet(self, fleet):
+        if not fleet.allow():
+            return True
+        if fleet.is_hard():
+            return False
+        if not fleet.in_use():
+            return True
+        self.device.click(fleet._clear)
+        for _ in self.loop(skip_first=False, timeout=5):
+            if fleet.allow() and not fleet.in_use():
+                return True
+        return False
+
+    def _extra_dropdown(self, fleet):
+        fleet.update_options()
+        if not fleet.options:
+            self.device.click(fleet._choose)
+        for _ in self.loop(skip_first=False, timeout=6):
+            fleet.update_options()
+            if fleet.options:
+                return valid_extra_fleet_options(fleet.options, fleet._choose)
+        return False
+
+    def _close_extra_dropdown(self, fleet):
+        self.device.click(fleet._choose)
+        for _ in self.loop(skip_first=False, timeout=5):
+            fleet.update_options()
+            if not fleet.options:
+                return fleet.in_use()
+        return False
+
+    def _prepare_extra_fleet(self, record):
+        # This job's fleet settings are isolated from ordinary Event farming.
+        if (self.config.Fleet_Fleet1 != 6 or self.config.Fleet_Fleet2
+                or self.config.Submarine_Fleet):
+            return False, 'requires_fleet_6_only'
+        # A missing oil read returns zero; never authorize a sortie from it.
+        if self.get_oil() < max(100, self.config.StopCondition_OilLimit):
+            return False, 'oil_floor_reached'
+        fleet, secondary, submarine = self._fleet_operators()
+        if not fleet.allow() or fleet.is_hard():
+            return False, 'common_fleet_selector_unrecognized'
+        if not self._clear_extra_fleet(secondary) or not self._clear_extra_fleet(submarine):
+            return False, 'secondary_fleet_not_cleared'
+        if not self._extra_dropdown(fleet):
+            return False, 'six_fleet_options_unrecognized'
+        if not fleet.options[6].selected:
+            self.device.click(fleet.options[6])
+            for _ in self.loop(skip_first=False, timeout=5):
+                fleet.update_options()
+                if not fleet.options:
+                    break
+            else:
+                return False, 'fleet_selection_not_closed'
+            if not self._extra_dropdown(fleet):
+                return False, 'fleet_selection_not_verifiable'
+        # Re-open after a selection to prove the orange row is really number 6.
+        if not fleet.options[6].selected:
+            return False, 'fleet_6_not_selected'
+        record['fleet'] = 6
+        self._extra_capture(record, 'fleet_6_verified')
+        if not self._close_extra_dropdown(fleet):
+            return False, 'fleet_dropdown_not_closed'
+        return True, 'fleet_6_verified'
+
+    def _direct_extra_battle(self, record, reserve):
+        if not self.appear(FLEET_PREPARATION, offset=(20, 50)):
+            return 'blocked', 'verified_fleet_preparation_disappeared'
+        self.combat_won = self.combat_lost = False
+        self.battle_status_click_interval = 0
+        self.combat_auto_reset()
+        # On a direct EX, this may be the final start. Persist before either
+        # possible start button, including crashes between the click and loading.
+        reserve()
+        self.device.click(FLEET_PREPARATION)
+        battle_start_clicked = False
+        result_seen = False
+        combat_seen = False
+        start_deadline = monotonic() + 30
+        for _ in self.loop(skip_first=False, timeout=360):
+            if self.ui_page_appear(page_sp):
+                if self.combat_lost:
+                    return 'lost', 'battle_lost'
+                if self.combat_won:
+                    return 'complete', 'battle_won'
+                return 'blocked', 'returned_without_verified_result'
+            if self.appear(BATTLE_PREPARATION, offset=(30, 20)):
+                if result_seen:
+                    # Never start a second battle, including a defeat retry UI.
+                    break
+                if monotonic() >= start_deadline:
+                    break
+                if battle_start_clicked:
+                    continue
+                if self.handle_combat_automation_set(auto=True):
+                    continue
+                if not self.appear(AUTOMATION_ON):
+                    continue
+                self._extra_capture(record, 'auto_battle_start')
+                self.device.click(BATTLE_PREPARATION)
+                battle_start_clicked = True
+                continue
+            if self.is_combat_executing():
+                combat_seen = True
+                self.handle_combat_auto('combat_auto')
+                continue
+            if self.is_combat_loading():
+                combat_seen = True
+                continue
+            if self.handle_combat_automation_confirm():
+                continue
+            if self.handle_battle_status():
+                result_seen = True
+                self._extra_capture(record, 'battle_result')
+                continue
+            if self.handle_get_items() or self.handle_exp_info():
+                continue
+            if self.appear_then_click(DEFEAT_TIPS, offset=(20, 20), interval=2):
+                continue
+            if result_seen and self.appear(FLEET_PREPARATION, offset=(20, 50)):
+                break
+            if not combat_seen and not result_seen and monotonic() >= start_deadline:
+                break
+        if self.combat_lost:
+            return 'lost', 'battle_lost'
+        if self.combat_won:
+            return 'complete', 'battle_won'
+        return 'blocked', 'battle_end_not_verified'
+
+    def run(self, event, folder=EX_SCOUT_DIR):
+        if event not in EX_SCOUT_EVENTS:
+            return dict(status='unsupported', combat_attempted=False, diagnostics=[])
+        ensure_event_running(self)
+        account = self.config.config_name
+        state = load_extra_state(account, folder=folder)
+        # An earlier scout, including a locked one, cannot consume this budget.
+        key = f'{event}/combat'
+        saved = state.get(key)
+        if saved and (saved.get('combat_attempted') or saved.get('status') != 'locked'):
+            result = dict(saved, reused=True)
+            if result.get('status') == 'preparing':
+                result.update(status='blocked', reason='previous_preparation_interrupted')
+            logger.attr('EXCombat', result)
+            return result
+        record = dict(status='preparing', combat_attempted=False, diagnostics=[],
+                      started=datetime.now().isoformat(timespec='seconds'))
+        state[key] = record
+        save_extra_state(account, state, folder=folder)
+        previous_entrances = self.config.STAGE_ENTRANCE
+
+        def reserve():
+            record.update(status='attempting', combat_attempted=True)
+            save_extra_state(account, state, folder=folder)
+
+        try:
+            self.config.override(STAGE_ENTRANCE=['half', '20240725'])
+            status, reason = self._inspect_extra(record)
+            if status == 'observed' and reason == 'fleet_preparation_requires_supported_runner':
+                prepared, reason = self._prepare_extra_fleet(record)
+                if prepared:
+                    status, reason = self._direct_extra_battle(record, reserve)
+                else:
+                    status = 'blocked'
+            elif status == 'observed':
+                status, reason = 'blocked', 'fleet_6_not_verified_before_battle_preparation'
+            record.update(status=status, reason=reason)
+            self._extra_capture(record, status)
+            record['returned_event'] = ensure_event_page(self, page_sp)
+            if not record['returned_event'] and status == 'complete':
+                record.update(status='blocked', reason='battle_won_but_event_return_unverified')
+        except Exception:
+            record.update(status='blocked', reason='combat_exception')
+            self._extra_capture(record, 'exception')
+            raise
+        finally:
+            self.config.override(STAGE_ENTRANCE=previous_entrances)
+            save_extra_state(account, state, folder=folder)
+        logger.attr('EXCombat', record)
         return record

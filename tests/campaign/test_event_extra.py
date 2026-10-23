@@ -5,7 +5,8 @@ from unittest.mock import Mock
 import pytest
 
 from module.campaign import event_extra
-from module.campaign.event_extra import EventExtraScout, load_extra_state, save_extra_state
+from module.campaign.event_extra import (EventExtraRunner, EventExtraScout, load_extra_state,
+                                         save_extra_state, valid_extra_fleet_options)
 from module.exception import GameNotRunningError, ScriptError
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION
 
@@ -18,6 +19,7 @@ def controller():
     helper.device = SimpleNamespace(screenshot=Mock(), click=Mock(), image='screen',
                                     app_is_running=Mock(return_value=True))
     helper._extra_capture = Mock()
+    helper.appear = Mock(return_value=False)
     helper._observe_rewards = Mock(return_value={'status': 'observed', 'diagnostics': ['/tmp/event_list.png']})
     return helper
 
@@ -40,7 +42,7 @@ def test_scout_budget_is_persisted_before_any_navigation_and_is_not_a_combat_att
     assert first['combat_attempted'] is second['combat_attempted'] is False
     assert second['reused'] is True
     helper._inspect_extra.assert_called_once()
-    helper._observe_rewards.assert_called_once_with(EVENT)
+    assert helper._observe_rewards.call_count == 2
     assert first['diagnostics'] == ['/tmp/event_list.png']
     assert helper.config.override.call_args_list[-1].kwargs == {'STAGE_ENTRANCE': ['old']}
 
@@ -141,3 +143,235 @@ def test_unrecognized_ex_entrance_is_never_tapped(monkeypatch):
     helper.loop = Mock(return_value=iter(range(3)))
     assert helper._inspect_extra({'diagnostics': []}) == ('blocked', 'ex_entrance_unrecognized')
     helper.device.click.assert_not_called()
+
+
+def test_locked_ex_does_not_tap_the_selector(monkeypatch):
+    helper = controller()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
+    switch = Mock(return_value=True)
+    monkeypatch.setattr(event_extra, 'ensure_event_switch', switch)
+    helper.appear = Mock(return_value=True)
+    assert helper._inspect_extra({'diagnostics': []}) == ('locked', 'required_stage_not_cleared')
+    assert switch.call_count == 1  # Combat only; the locked EX tab is not clicked.
+    helper.device.click.assert_not_called()
+
+
+def runner_controller():
+    helper = EventExtraRunner.__new__(EventExtraRunner)
+    helper.__dict__.update(controller().__dict__)
+    helper.config.Fleet_Fleet1 = 6
+    helper.config.Fleet_Fleet2 = 0
+    helper.config.Submarine_Fleet = 0
+    helper.config.StopCondition_OilLimit = 500
+    helper.get_oil = Mock(return_value=1000)
+    helper._inspect_extra = Mock(return_value=('observed', 'fleet_preparation_requires_supported_runner'))
+    helper._prepare_extra_fleet = Mock(return_value=(True, 'fleet_6_verified'))
+    return helper
+
+
+def test_actual_attempt_budget_is_separate_from_locked_scout_and_reserved_before_start(monkeypatch, tmp_path):
+    save_extra_state('f2p', {EVENT: dict(status='locked', combat_attempted=False)}, folder=tmp_path)
+    helper = runner_controller()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
+
+    def battle(record, reserve):
+        assert load_extra_state('f2p', tmp_path)[f'{EVENT}/combat']['combat_attempted'] is False
+        reserve()
+        assert load_extra_state('f2p', tmp_path)[f'{EVENT}/combat']['combat_attempted'] is True
+        helper.device.click('final_start')
+        return 'lost', 'battle_lost'
+
+    helper._direct_extra_battle = Mock(side_effect=battle)
+    first = helper.run(EVENT, folder=tmp_path)
+    second = helper.run(EVENT, folder=tmp_path)
+    assert first['status'] == second['status'] == 'lost'
+    assert first['combat_attempted'] is second['combat_attempted'] is True
+    assert first['returned_event'] is True
+    assert second['reused'] is True
+    helper._direct_extra_battle.assert_called_once()
+    helper.device.click.assert_called_once_with('final_start')
+    assert helper.config.override.call_args_list[-1].kwargs == {'STAGE_ENTRANCE': ['old']}
+
+
+def test_locked_actual_preflight_can_retry_after_sp_without_spending_a_combat_attempt(monkeypatch, tmp_path):
+    helper = runner_controller()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
+    helper._inspect_extra.return_value = ('locked', 'required_stage_not_cleared')
+    helper._direct_extra_battle = Mock()
+    assert helper.run(EVENT, folder=tmp_path)['combat_attempted'] is False
+    helper._direct_extra_battle.assert_not_called()
+    helper._inspect_extra.return_value = ('observed', 'fleet_preparation_requires_supported_runner')
+    helper._direct_extra_battle.side_effect = lambda record, reserve: (reserve() or 'complete', 'battle_won')
+    assert helper.run(EVENT, folder=tmp_path)['status'] == 'complete'
+    assert load_extra_state('f2p', tmp_path)[f'{EVENT}/combat']['combat_attempted'] is True
+
+
+def test_interrupted_combat_preparation_is_not_retried(monkeypatch, tmp_path):
+    save_extra_state('f2p', {f'{EVENT}/combat': dict(status='preparing', combat_attempted=False)}, folder=tmp_path)
+    helper = runner_controller()
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['reason'] == 'previous_preparation_interrupted'
+    helper._inspect_extra.assert_not_called()
+
+
+@pytest.mark.parametrize('preparation', ['battle_preparation_requires_supported_runner', 'unrecognized'])
+def test_actual_runner_never_starts_without_fleet_proof(monkeypatch, tmp_path, preparation):
+    helper = runner_controller()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
+    helper._inspect_extra.return_value = ('observed', preparation)
+    helper._direct_extra_battle = Mock()
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['status'] == 'blocked'
+    assert result['combat_attempted'] is False
+    helper._prepare_extra_fleet.assert_not_called()
+    helper._direct_extra_battle.assert_not_called()
+
+
+def test_unverified_return_never_reports_completed_objective(monkeypatch, tmp_path):
+    helper = runner_controller()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=False))
+    helper._direct_extra_battle = Mock(side_effect=lambda record, reserve: (reserve() or 'complete', 'battle_won'))
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['status'] == 'blocked'
+    assert result['reason'] == 'battle_won_but_event_return_unverified'
+    assert result['combat_attempted'] is True
+
+
+def test_combat_exception_keeps_budget_spent(monkeypatch, tmp_path):
+    helper = runner_controller()
+    def battle(record, reserve):
+        reserve()
+        raise ScriptError('unknown result')
+    helper._direct_extra_battle = Mock(side_effect=battle)
+    with pytest.raises(ScriptError, match='unknown result'):
+        helper.run(EVENT, folder=tmp_path)
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['status'] == 'blocked'
+    assert result['combat_attempted'] is True
+    helper._direct_extra_battle.assert_called_once()
+
+
+def fleet_options(selected=6):
+    return {index: SimpleNamespace(index=index, area=(100, 270 + (index - 1) * 40, 269, 303 + (index - 1) * 40),
+                                   selected=index == selected)
+            for index in range(1, 7)}
+
+
+def test_fleet_option_validation_requires_six_contiguous_rows_and_one_selected():
+    choose = SimpleNamespace(button=(100, 193, 160, 251))
+    options = fleet_options()
+    assert valid_extra_fleet_options(options, choose)
+    assert not valid_extra_fleet_options({key: row for key, row in options.items() if key != 1}, choose)
+    options[1].selected = True
+    assert not valid_extra_fleet_options(options, choose)
+    options[1].selected = False
+    options[6].area = (100, 600, 269, 633)
+    assert not valid_extra_fleet_options(options, choose)
+
+
+def test_fleet_6_selection_must_be_reopened_and_verified_before_success():
+    helper = runner_controller()
+    fleet = SimpleNamespace(allow=Mock(return_value=True), is_hard=Mock(return_value=False),
+                            options=fleet_options(selected=1), _choose='choose', update_options=Mock())
+    helper._fleet_operators = Mock(return_value=(fleet, Mock(), Mock()))
+    helper._clear_extra_fleet = Mock(return_value=True)
+    calls = []
+    def dropdown(current):
+        calls.append('open')
+        if len(calls) == 2:
+            current.options = fleet_options(selected=6)
+        return True
+    helper._extra_dropdown = Mock(side_effect=dropdown)
+    def closed():
+        fleet.options = {}
+    fleet.update_options.side_effect = closed
+    helper.loop = Mock(return_value=iter([0]))
+    helper._close_extra_dropdown = Mock(return_value=True)
+    target = fleet.options[6]
+    record = {'diagnostics': []}
+    assert EventExtraRunner._prepare_extra_fleet(helper, record) == (True, 'fleet_6_verified')
+    helper.device.click.assert_called_once_with(target)
+    assert calls == ['open', 'open']
+    assert record['fleet'] == 6
+    helper._close_extra_dropdown.assert_called_once_with(fleet)
+
+
+def test_incorrect_fleet_selection_proof_blocks_start():
+    helper = runner_controller()
+    fleet = SimpleNamespace(allow=Mock(return_value=True), is_hard=Mock(return_value=False),
+                            options=fleet_options(selected=1), _choose='choose', update_options=Mock())
+    helper._fleet_operators = Mock(return_value=(fleet, Mock(), Mock()))
+    helper._clear_extra_fleet = Mock(return_value=True)
+    helper._extra_dropdown = Mock(return_value=True)
+    # The selection closes, but reopening still shows fleet 1.
+    def closed():
+        fleet.options = {}
+    fleet.update_options.side_effect = closed
+    helper.loop = Mock(return_value=iter([0]))
+    def dropdown(current):
+        current.options = fleet_options(selected=1)
+        return True
+    helper._extra_dropdown.side_effect = dropdown
+    assert EventExtraRunner._prepare_extra_fleet(helper, {'diagnostics': []}) == (False, 'fleet_6_not_selected')
+
+
+@pytest.mark.parametrize('oil', [0, 499])
+def test_oil_floor_or_unreadable_oil_blocks_before_fleet_changes(oil):
+    helper = runner_controller()
+    helper.get_oil.return_value = oil
+    helper._fleet_operators = Mock()
+    assert EventExtraRunner._prepare_extra_fleet(helper, {'diagnostics': []}) == (False, 'oil_floor_reached')
+    helper._fleet_operators.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('outcome', ['won', 'lost', 'unknown'])
+def test_direct_battle_uses_auto_once_and_reports_only_observed_results(outcome):
+    helper = runner_controller()
+    current = ['fleet']
+    # Defeat may lead back to a start screen; it must never authorize a retry.
+    screens = ['prep', 'prep', 'loading', 'combat', outcome, 'prep' if outcome == 'lost' else 'event']
+    def states(**kwargs):
+        for screen in screens:
+            current[0] = screen
+            yield screen
+    helper.loop = states
+    helper.appear = Mock(side_effect=lambda button, **kwargs:
+                         (button is FLEET_PREPARATION and current[0] == 'fleet') or
+                         (button is event_extra.BATTLE_PREPARATION and current[0] == 'prep') or
+                         (button is event_extra.AUTOMATION_ON and current[0] == 'prep'))
+    helper.ui_page_appear = Mock(side_effect=lambda page: current[0] == 'event')
+    helper.is_combat_executing = Mock(side_effect=lambda: current[0] == 'combat')
+    helper.is_combat_loading = Mock(side_effect=lambda: current[0] == 'loading')
+    helper.handle_combat_automation_set = Mock(return_value=False)
+    helper.handle_combat_automation_confirm = Mock(return_value=False)
+    helper.handle_combat_auto = Mock()
+    helper.combat_auto_reset = Mock()
+    def result():
+        helper.combat_won = current[0] == 'won'
+        helper.combat_lost = current[0] == 'lost'
+        return helper.combat_won or helper.combat_lost
+    helper.handle_battle_status = Mock(side_effect=result)
+    helper.handle_get_items = Mock(return_value=False)
+    helper.handle_exp_info = Mock(return_value=False)
+    helper.appear_then_click = Mock(return_value=False)
+    reserved = []
+    def click(button):
+        assert reserved, 'start before reservation'
+    helper.device.click.side_effect = click
+    result = helper._direct_extra_battle({'diagnostics': []}, lambda: reserved.append(True))
+    assert result[0] == {'won': 'complete', 'lost': 'lost', 'unknown': 'blocked'}[outcome]
+    assert [call.args[0] for call in helper.device.click.call_args_list] == [FLEET_PREPARATION, event_extra.BATTLE_PREPARATION]
+    helper.handle_combat_automation_set.assert_called_once_with(auto=True)
+    helper.handle_combat_auto.assert_called_once_with('combat_auto')
+
+
+def test_unknown_auto_setting_never_clicks_battle_start():
+    helper = runner_controller()
+    helper.appear = Mock(side_effect=lambda button, **kwargs: button in (FLEET_PREPARATION, event_extra.BATTLE_PREPARATION))
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.combat_auto_reset = Mock()
+    helper.handle_combat_automation_set = Mock(return_value=False)
+    helper.loop = Mock(return_value=iter(range(3)))
+    assert helper._direct_extra_battle({'diagnostics': []}, Mock())[0] == 'blocked'
+    helper.device.click.assert_called_once_with(FLEET_PREPARATION)
