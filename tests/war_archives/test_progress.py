@@ -283,6 +283,12 @@ def test_actual_both_account_lists_identify_selected_ex_and_read_relative_comple
     assert {item['completion'] for item in observed} == {expected}
     assert all(item['completion_verified'] and item['card_area'] for item in observed)
     assert not any(item['fully_observed'] for item in observed)  # Prize/lock status still unknown.
+    # Real template matching produces NumPy coordinates; a durable pre-input
+    # journal must encode them without a special JSON encoder.
+    import json
+    assert json.loads(json.dumps(observed)) == observed
+    assert all(type(value) is int for item in observed
+               for key in ('identity_area', 'card_area') for value in item[key])
     assert p.parse_key_counter(p.ARCHIVE_KEYS.ocr(owner.device.image)) == dict(raw_keys=keys, key_capacity=300)
 
 

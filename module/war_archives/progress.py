@@ -95,12 +95,12 @@ class ArchiveProgress(CampaignUI):
         headers = FILES_HEADER.match_multi(self.device.image, similarity=.90)
         for archive, template in dic_archives_template.items():
             similarity, anchor = template.match_result(self.device.image)
-            left, top, right, bottom = anchor.area
+            left, top, right, bottom = (int(value) for value in anchor.area)
             if similarity < .85 or not (75 <= left < right <= 1245 and 110 <= top < bottom <= 700):
                 continue
             boxes = []
             for header in headers:
-                x, y = header.area[:2]
+                x, y = (int(value) for value in header.area[:2])
                 # Geometry is relative to the exact repeated Files header in
                 # both captured account fixtures. A clipped card is unreadable.
                 box = (x, y + 20, x + 470, y + 249)
@@ -111,11 +111,11 @@ class ArchiveProgress(CampaignUI):
             completion, card_area = None, None
             if len(boxes) == 1:
                 header, card_area = boxes[0]
-                x, y = header.area[:2]
+                x, y = (int(value) for value in header.area[:2])
                 completion = parse_completion(Ocr((x + 80, y + 204, x + 143, y + 234),
                     lang='cnocr', letter=(158, 255, 82), threshold=96,
                     alphabet='0123456789%', name='ARCHIVE_COMPLETION').ocr(self.device.image))
-            cards.append(dict(archive=archive, identity_area=list(anchor.area),
+            cards.append(dict(archive=archive, identity_area=[left, top, right, bottom],
                               identity_similarity=round(float(similarity), 4),
                               card_area=None if card_area is None else list(card_area),
                               completion=completion, completion_verified=completion is not None,
