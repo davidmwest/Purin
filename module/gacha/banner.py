@@ -9,17 +9,48 @@ import re
 import tempfile
 from datetime import datetime
 
+import numpy as np
+
 from module.base.timer import Timer
+from module.base.utils import random_rectangle_point
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
-from module.gacha.banner_assets import (EVENT_BANNER_DURATION, EVENT_BANNER_TEXT, EVENT_RATE_INFO,
-                                      EVENT_BUILD_ORDERS)
+from module.gacha.banner_assets import (EVENT_BANNER_DURATION, EVENT_BANNER_DURATION_F2P,
+                                      EVENT_BANNER_TEXT, EVENT_RATE_INFO, EVENT_BUILD_ORDERS,
+                                      EVENT_RATE_INFO_HEADER, EVENT_BUILD_RATES_TITLE,
+                                      EVENT_RATE_INFO_CLOSE, EVENT_RATE_INFO_CONFIRM)
 from module.gacha.ui import GachaUI
 from module.logger import logger
 from module.ui.page import page_build, page_main
+from module.ui.scroll import Scroll
 
 CURRENT_EVENT = 'event_20261022_cn'
-BANNER_VERSION = 'rate-info-v1'
+BANNER_VERSION = 'rate-info-v2'
+
+
+def verified_banner_pool(roster, owned, account, event=CURRENT_EVENT, fallback='light'):
+    """A nonempty complete roster and exact account/event proof are required.
+
+    Callers must pass explicit positive ownership evidence, never inferred
+    absence, ambiguous OCR names, or the completeness of a cached dock census.
+    """
+    if fallback not in ('light', 'heavy', 'special'):
+        raise ScriptError('Unsupported completed-banner fallback pool')
+    if not isinstance(roster, dict) or not isinstance(owned, dict):
+        return 'event'
+    names = roster.get('names')
+    version = roster.get('version')
+    if (roster.get('complete') is not True or roster.get('event') != event
+            or not isinstance(version, str) or not version
+            or not isinstance(names, list) or not names
+            or any(not isinstance(name, str) or not name for name in names)
+            or owned.get('account') != account or owned.get('event') != event
+            or owned.get('roster_version') != version):
+        return 'event'
+    evidence = owned.get('positive_exact_names')
+    if not isinstance(evidence, list) or any(not isinstance(name, str) for name in evidence):
+        return 'event'
+    return fallback if set(names).issubset(evidence) else 'event'
 
 
 def banner_state_path(account, folder):
@@ -64,8 +95,63 @@ class EventBannerObserver(GachaUI):
         return (self.ui_page_appear(page_build)
                 and self._gacha_side_navbar.get_active(self) == 0
                 and self._construct_bottom_navbar.get_info(self) == (0, 0, 3)
+                and (self._exact(EVENT_BANNER_DURATION) or self._exact(EVENT_BANNER_DURATION_F2P))
                 and all(self._exact(button) for button in (
-                    EVENT_BUILD_ORDERS, EVENT_BANNER_DURATION, EVENT_BANNER_TEXT, EVENT_RATE_INFO)))
+                    EVENT_BUILD_ORDERS, EVENT_BANNER_TEXT, EVENT_RATE_INFO)))
+
+    def on_rate_info(self):
+        return all(self._exact(button) for button in (
+            EVENT_RATE_INFO_HEADER, EVENT_BUILD_RATES_TITLE,
+            EVENT_RATE_INFO_CLOSE, EVENT_RATE_INFO_CONFIRM))
+
+    def _rate_scroll(self):
+        return Scroll(area=(930, 276, 936, 442), color=(245, 217, 90), name='EVENT_RATE_SCROLL')
+
+    def _rate_position(self, scroll):
+        mask = scroll.match_color(self)
+        if not np.any(mask) or not 0 < scroll.length < scroll.total:
+            return None
+        position = scroll.cal_position(self)
+        return float(position) if np.isfinite(position) else None
+
+    def _observe_rates(self, record, persist):
+        """Capture overlapping pages with one bounded scrollbar drag per page."""
+        scroll = self._rate_scroll()
+        for index in range(12):
+            if not self.on_rate_info():
+                record.update(status='blocked', reason='rate_info_page_unrecognized')
+                self._capture(record, 'rates_unrecognized')
+                return
+            position = self._rate_position(scroll)
+            if position is None or (index == 0 and position > .03):
+                record.update(status='blocked', reason='rate_scroll_top_unverified')
+                self._capture(record, 'rates_scroll_unverified')
+                return
+            captured = self._capture(record, f'rates_page_{index + 1:02}')
+            if not captured:
+                record.update(status='blocked', reason='rate_info_capture_failed')
+                return
+            record['rate_pages'].append(dict(path=captured, position=position))
+            persist()
+            if position >= .97:
+                record.update(status='observed', reason='rate_list_requires_roster_validation',
+                              rate_list_scrolled_complete=True)
+                return
+            target = min(1., position + .75 * scroll.length / (scroll.total - scroll.length))
+            p1 = random_rectangle_point(scroll.position_to_screen(position, random_range=(-.005, .005)))
+            p2 = random_rectangle_point(scroll.position_to_screen(target, random_range=(-.005, .005)))
+            # Preserve each scroll reservation before input. No unbounded
+            # Scroll.set()/next_page() loop can strand an unknown modal.
+            record['rate_scrolls'] += 1
+            persist()
+            self.device.swipe(p1, p2, duration=(.35, .45), name='EVENT_RATE_SCROLL', distance_check=False)
+            if not self._wait(lambda: self.on_rate_info()
+                              and self._rate_position(scroll) is not None
+                              and self._rate_position(scroll) > position + .005):
+                record.update(status='blocked', reason='rate_scroll_did_not_advance')
+                self._capture(record, 'rates_scroll_blocked')
+                return
+        record.update(status='blocked', reason='rate_page_budget_exhausted')
 
     def _wait(self, predicate, timeout=8):
         settled = Timer(1, count=2).start()
@@ -106,11 +192,18 @@ class EventBannerObserver(GachaUI):
         return path
 
     def _return_main(self):
+        # Close only the observed informational modal. Never use generic
+        # Confirm/Cancel, which could refer to an order or Exchange dialog.
+        for _ in range(2):
+            if not self.on_rate_info():
+                break
+            self.device.click(EVENT_RATE_INFO_CLOSE)
+            if self._wait(self.on_event_pool):
+                break
         if self.ui_page_appear(page_main):
             return True
-        # An unobserved info panel may overlay a valid background page. Its
-        # unknown Close/Confirm controls are never guessed. Only the fully
-        # recognized, unobscured current pool permits its normal Home route.
+        # Unknown panels are untouched. Only the fully recognized current
+        # pool permits its normal bounded Home route.
         if self.on_event_pool():
             return ensure_event_page(self, page_main)
         return False
@@ -124,12 +217,17 @@ class EventBannerObserver(GachaUI):
             record = dict(state[key], reused=True)
             if record.get('status') == 'observing':
                 record.update(status='blocked', reason='previous_banner_observation_interrupted')
+            record['returned_main'] = self._return_main()
+            state[key] = record
+            save_banner_state(account, state, folder)
             logger.attr('GachaBanner', record)
             return record
         record = dict(status='observing', reason='rate_info_requires_observation',
                       diagnostics=[], returned_main=False, reused=False,
                       info_clicks=0, orders_submitted=0, preferred_pool='event',
                       banner_ownership_verified=False,
+                      rate_pages=[], rate_scrolls=0, rate_list_scrolled_complete=False,
+                      roster=dict(event=CURRENT_EVENT, version=BANNER_VERSION, names=[], complete=False),
                       started=datetime.now().isoformat(timespec='seconds'))
         state[key] = record
         save_banner_state(account, state, folder)
@@ -144,11 +242,8 @@ class EventBannerObserver(GachaUI):
                 record['info_clicks'] = 1
                 save_banner_state(account, state, folder)
                 self.device.click(EVENT_RATE_INFO)
-                if self._wait(lambda: not self.on_event_pool(), timeout=12):
-                    captured = self._capture(record, 'rate_info_destination')
-                    record.update(status='observed' if captured else 'blocked',
-                                  reason='rate_info_destination_requires_assets' if captured
-                                  else 'rate_info_capture_failed')
+                if self._wait(self.on_rate_info, timeout=12):
+                    self._observe_rates(record, lambda: save_banner_state(account, state, folder))
                 else:
                     record.update(status='blocked', reason='rate_info_destination_not_observed')
                     self._capture(record, 'info_click_blocked')
