@@ -25,6 +25,8 @@ def controller():
                                     app_is_running=Mock(return_value=True), display_scale=1)
     helper.interval_clear = Mock()
     helper.collect_current_event_rewards = Mock(return_value=dict(status='unsupported', diagnostics=[]))
+    helper.collect_strict_maid_rewards = Mock(return_value=dict(status='unsupported', diagnostics=[]))
+    helper.collect_beckoning_tickets = Mock(return_value=dict(status='unsupported', story_complete=False))
     helper.observe_event_strict_maid = Mock(return_value=dict(status='observed'))
     return helper
 
@@ -44,6 +46,8 @@ def test_disabled_options_do_not_even_construct_story_or_navigate(monkeypatch):
     helper.observe_event_side_prepare.assert_not_called()
     helper.observe_event_side_choice.assert_not_called()
     helper.collect_current_event_rewards.assert_not_called()
+    helper.collect_strict_maid_rewards.assert_not_called()
+    helper.collect_beckoning_tickets.assert_not_called()
     helper.observe_event_strict_maid.assert_not_called()
 
 
@@ -62,6 +66,8 @@ def test_story_uses_the_requested_event_and_explicit_bounded_battle_skip(monkeyp
     helper.observe_event_side_prepare.assert_called_once_with('event_20261022_cn')
     helper.observe_event_side_choice.assert_called_once_with('event_20261022_cn')
     helper.observe_event_strict_maid.assert_called_once_with('event_20261022_cn')
+    helper.collect_beckoning_tickets.assert_called_once_with('event_20261022_cn')
+    helper.collect_strict_maid_rewards.assert_not_called()
     story.return_value.run.assert_called_once_with(event='event_20261022_cn', skip_battle=True)
 
 
@@ -89,6 +95,7 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     result = helper.run('event_20261022_cn')
     assert result == {'story': 'disabled', 'rewards': 'complete', 'event_hub_rewards': 'unsupported',
                       'event_hub_reward_collection': {'status': 'unsupported', 'diagnostics': []},
+                      'event_strict_maid_reward_collection': {'status': 'unsupported', 'diagnostics': []},
                       'event_main_observation': {'status': 'observed'},
                       'event_hub_observation': {'status': 'observed'},
                       'event_featured_observation': {'status': 'observed'},
@@ -103,6 +110,8 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     helper.observe_event_side_choice.assert_not_called()
     helper.observe_event_strict_maid.assert_not_called()
     helper.collect_current_event_rewards.assert_called_once_with('event_20261022_cn')
+    helper.collect_strict_maid_rewards.assert_called_once_with('event_20261022_cn')
+    helper.collect_beckoning_tickets.assert_not_called()
 
 
 @pytest.mark.parametrize('status,expected', [('complete', 'complete'), ('failed', 'failed'),
@@ -1273,3 +1282,105 @@ def test_unknown_reward_popup_expires_instead_of_resetting_forever():
         setattr(helper, method, Mock(return_value=False))
     assert helper._event_mission_receive() == 'timeout'
     helper.loop.assert_called_once_with(timeout=20)
+
+
+def rewards_controller():
+    helper = controller()
+    for name in ('main', 'hub', 'featured', 'rewards_panel', 'beckoning', 'foggy_supply', 'rewards', 'supplies'):
+        setattr(helper, 'observe_event_' + name, Mock(return_value={'status': 'observed'}))
+    helper.collect_event_missions = Mock(return_value=True)
+    return helper
+
+
+@pytest.mark.parametrize('account', ['alas', 'f2p'])
+def test_strict_maid_claims_follow_rewards_setting_for_both_accounts(account):
+    helper = rewards_controller()
+    helper.config.config_name = account
+    helper.run('event_20261022_cn', collect_rewards=True, complete_story=False)
+    helper.collect_strict_maid_rewards.assert_called_once_with('event_20261022_cn')
+    helper.collect_beckoning_tickets.assert_not_called()
+
+
+@pytest.mark.parametrize('pt,strict,expected', [
+    ('complete', 'complete', 'complete'), ('complete', 'failed', 'failed'),
+    ('failed', 'complete', 'failed'), ('unsupported', 'unsupported', 'unsupported'),
+    ('complete', 'unsupported', 'complete'), ('unsupported', 'complete', 'complete'),
+    ('complete', 'unknown', 'failed'), ('unknown', 'complete', 'failed')])
+def test_each_supported_free_collector_must_succeed_before_scheduler_completion(pt, strict, expected):
+    helper = rewards_controller()
+    helper.collect_current_event_rewards.return_value = dict(status=pt, returned_main=True)
+    helper.collect_strict_maid_rewards.return_value = dict(status=strict, returned_main=True)
+    result = helper.run('event_20261022_cn')
+    assert result['rewards'] == 'complete'
+    assert result['event_hub_rewards'] == expected
+    assert result['event_hub_reward_collection']['status'] == pt
+    assert result['event_strict_maid_reward_collection']['status'] == strict
+
+
+def test_failed_pt_return_stops_before_strict_claim_navigation(monkeypatch):
+    helper = rewards_controller()
+    helper.collect_current_event_rewards.return_value = dict(status='failed', returned_main=False)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=False))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock())
+    with pytest.raises(GamePageUnknownError, match='recognized controls'):
+        helper.run('event_20261022_cn')
+    helper.collect_strict_maid_rewards.assert_not_called()
+    completion.ensure_event_page.assert_called_once_with(helper, page_main, timeout=10, max_clicks=3)
+
+
+def test_failed_strict_return_cannot_reach_scheduler_as_success(monkeypatch):
+    helper = rewards_controller()
+    helper.collect_current_event_rewards.return_value = dict(status='complete', returned_main=True)
+    helper.collect_strict_maid_rewards.return_value = dict(status='failed', returned_main=False)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=False))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock())
+    with pytest.raises(GamePageUnknownError, match='recognized controls'):
+        helper.run('event_20261022_cn')
+    helper.collect_strict_maid_rewards.assert_called_once()
+
+
+@pytest.mark.parametrize('status,expected', [('observed', 'incomplete'), ('failed', 'failed'),
+                                          ('unsupported', 'unsupported'), ('unknown', 'failed')])
+def test_ticket_claim_or_unlock_capture_never_proves_side_story_completion(monkeypatch, status, expected):
+    helper = controller()
+    helper.observe_event_side_prepare = Mock(return_value=dict(status='observed'))
+    helper.observe_event_side_choice = Mock(return_value=dict(status='observed'))
+    helper.collect_beckoning_tickets.return_value = dict(status=status, returned_main=True, story_complete=False)
+    story = Mock()
+    story.return_value.run.return_value = True
+    monkeypatch.setattr(completion, 'EventStory', story)
+    result = helper.run('event_20261022_cn', collect_rewards=False, complete_story=True)
+    assert result['story'] == 'complete'  # Campaign dialogue is a separate objective.
+    assert result['event_side_story'] == expected
+    assert result['event_beckoning_ticket_collection']['story_complete'] is False
+    helper.collect_beckoning_tickets.assert_called_once_with('event_20261022_cn')
+    helper.collect_strict_maid_rewards.assert_not_called()
+
+
+def test_failed_choice_return_is_checked_immediately_after_the_ticket_step(monkeypatch):
+    helper = controller()
+    helper.observe_event_side_prepare = Mock(return_value=dict(status='observed'))
+    helper.observe_event_side_choice = Mock(return_value=dict(status='observed'))
+    helper.collect_beckoning_tickets.return_value = dict(status='observed', returned_main=False, story_complete=False)
+    story = Mock()
+    story.return_value.run.return_value = True
+    monkeypatch.setattr(completion, 'EventStory', story)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=False))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock())
+    with pytest.raises(GamePageUnknownError, match='recognized controls'):
+        helper.run('event_20261022_cn', collect_rewards=False, complete_story=True)
+    completion.ensure_event_page.assert_called_once_with(helper, page_main, timeout=10, max_clicks=3)
+
+
+@pytest.mark.parametrize('method,module,class_name', [
+    ('collect_beckoning_tickets', 'event_beckoning', 'BeckoningTickets'),
+    ('collect_strict_maid_rewards', 'event_strict_maid_rewards', 'StrictMaidRewards')])
+def test_new_collectors_are_lazy_and_receive_the_same_account_and_device(monkeypatch, method, module, class_name):
+    import sys
+
+    helper = controller()
+    collector = Mock()
+    monkeypatch.setitem(sys.modules, 'module.campaign.' + module, SimpleNamespace(**{class_name: collector}))
+    assert getattr(EventCompletion, method)(helper, 'event_20261022_cn') is collector.return_value.run.return_value
+    collector.assert_called_once_with(config=helper.config, device=helper.device)
+    collector.return_value.run.assert_called_once_with('event_20261022_cn')

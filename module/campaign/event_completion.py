@@ -652,6 +652,16 @@ class EventCompletion(Reward):
 
         return StrictMaidObserver(config=self.config, device=self.device).run(event)
 
+    def collect_strict_maid_rewards(self, event):
+        from module.campaign.event_strict_maid_rewards import StrictMaidRewards
+
+        return StrictMaidRewards(config=self.config, device=self.device).run(event)
+
+    def collect_beckoning_tickets(self, event):
+        from module.campaign.event_beckoning import BeckoningTickets
+
+        return BeckoningTickets(config=self.config, device=self.device).run(event)
+
     def ensure_completion_return(self, result):
         """Do not let a new unknown event destination reach campaign reservation."""
         if not any(isinstance(record, dict) and record.get('returned_main') is False
@@ -684,8 +694,15 @@ class EventCompletion(Reward):
                     self.ensure_completion_return(result)
                     result['event_strict_maid_observation'] = self.observe_event_strict_maid(event)
                     self.ensure_completion_return(result)
-                    result['event_side_story'] = 'unsupported'
-                    logger.warning('Side stories need supported destination assets; campaign story handled separately')
+                    tickets = self.collect_beckoning_tickets(event)
+                    result['event_beckoning_ticket_collection'] = tickets
+                    self.ensure_completion_return(result)
+                    # Receiving a ticket and capturing an unlock destination do
+                    # not prove the character story has been completed.
+                    ticket_status = tickets.get('status', 'failed')
+                    result['event_side_story'] = ('incomplete' if ticket_status == 'observed'
+                                                 else 'unsupported' if ticket_status == 'unsupported' else 'failed')
+                    logger.info('Side-story ticket/unlock step remains separate from story completion')
             else:
                 logger.warning(f'Automatic event story is not supported for {event}')
                 result['story'] = 'unsupported'
@@ -696,8 +713,15 @@ class EventCompletion(Reward):
             if event.startswith('event_'):
                 collection = self.collect_current_event_rewards(event)
                 result['event_hub_reward_collection'] = collection
-                status = collection.get('status', 'failed')
-                result['event_hub_rewards'] = status if status in ('complete', 'failed', 'unsupported') else 'failed'
+                self.ensure_completion_return(result)
+                strict = self.collect_strict_maid_rewards(event)
+                result['event_strict_maid_reward_collection'] = strict
+                self.ensure_completion_return(result)
+                statuses = [record.get('status', 'failed') for record in (collection, strict)]
+                if any(status not in ('complete', 'unsupported') for status in statuses):
+                    result['event_hub_rewards'] = 'failed'
+                else:
+                    result['event_hub_rewards'] = 'complete' if 'complete' in statuses else 'unsupported'
             self.ensure_completion_return(result)
         logger.attr('EventCompletion', result)
         return result
