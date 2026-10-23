@@ -21,6 +21,10 @@ _EX_MAP = './assets/en/event_completion/TEMPESTA_EX_MAP_20261022.png'
 EX_MAP_TIME_LIMIT = Button(
     area=(114, 12, 259, 46), color=(75, 85, 120), button=(114, 12, 259, 46),
     file=_EX_MAP, name='EX_MAP_TIME_LIMIT')
+EX_MAP_NO_TIME_LIMIT = Button(
+    area=(114, 12, 293, 46), color=(75, 85, 120), button=(114, 12, 293, 46),
+    file='./assets/en/event_completion/TEMPESTA_EX_NO_TIME_LIMIT_20261022.png',
+    name='EX_MAP_NO_TIME_LIMIT')
 EX_MAP_COLUMNS = Button(
     area=(517, 132, 768, 153), color=(75, 95, 106), button=(517, 132, 768, 153),
     file=_EX_MAP, name='EX_MAP_COLUMNS')

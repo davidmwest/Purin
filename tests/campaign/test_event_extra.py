@@ -624,6 +624,29 @@ def test_actual_ex_board_and_attack_wait_for_four_fresh_stable_frames_before_one
     helper._extra_capture.assert_called_once_with(record, 'settled_map_attack')
 
 
+def test_actual_no_time_limit_ex_board_allows_one_settled_attack(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    helper.device.image = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_no_time_limit.png').convert('RGB')).copy()
+    immediate_timers(monkeypatch)
+    assert helper._extra_map_appear()
+    reserve = Mock()
+    assert helper._launch_extra_map({}, reserve) is True
+    reserve.assert_called_once_with()
+    helper.device.click.assert_called_once_with(EX_MAP_ATTACK)
+
+
+def test_no_time_limit_title_alone_never_authorizes_attack(monkeypatch, english_assets):
+    helper = map_fixture_controller()
+    helper.device.image = np.asarray(Image.open(
+        'tests/campaign/data/ex_tactical_map_no_time_limit.png').convert('RGB')).copy()
+    x1, y1, x2, y2 = EX_MAP_COLUMNS.area
+    helper.device.image[y1:y2, x1:x2] = 0
+    immediate_timers(monkeypatch)
+    assert helper._launch_extra_map({}, Mock()) is False
+    helper.device.click.assert_not_called()
+
+
 @pytest.mark.parametrize('missing', [EX_MAP_TIME_LIMIT, EX_MAP_COLUMNS, EX_MAP_ATTACK, event_extra.IN_MAP])
 def test_missing_ex_map_witness_never_authorizes_attack(monkeypatch, english_assets, missing):
     helper = map_fixture_controller()

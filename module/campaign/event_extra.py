@@ -13,7 +13,8 @@ from module.campaign.campaign_ui import ASIDE_SWITCH_20241219, MODE_SWITCH_20241
 from module.campaign.event_completion import EventCompletion
 from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED
 from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
-                                               EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT)
+                                               EX_MAP_ATTACK, EX_MAP_COLUMNS, EX_MAP_TIME_LIMIT,
+                                               EX_MAP_NO_TIME_LIMIT)
 from module.combat.assets import AUTOMATION_ON, BATTLE_PREPARATION, DEFEAT_TIPS
 from module.combat.combat import Combat
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
@@ -294,8 +295,9 @@ class EventExtraRunner(EventExtraScout, Combat):
 
     def _extra_map_appear(self):
         return (self.appear(IN_MAP, offset=(5, 5))
-                and all(self.match_template_color(button, offset=(3, 3), similarity=.85)
-                        for button in (EX_MAP_TIME_LIMIT, EX_MAP_COLUMNS)))
+                and self.match_template_color(EX_MAP_COLUMNS, offset=(3, 3), similarity=.85)
+                and any(self.match_template_color(button, offset=(3, 3), similarity=.85)
+                        for button in (EX_MAP_TIME_LIMIT, EX_MAP_NO_TIME_LIMIT)))
 
     def _launch_extra_map(self, record, reserve):
         # The first map screenshot can precede drawing the fleets/enemies. Wait
