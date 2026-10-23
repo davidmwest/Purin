@@ -387,3 +387,59 @@ def test_unknown_owned_claim_panel_is_closed_but_never_accepted(observer, monkey
     assert result['claim_clicks'] == 0 and result['cancel_clicks'] == 1
     assert [call.args[0] for call in observer.device.click.call_args_list] == [
         p.PRIZE_ZUIKAKU, p.PRIZE_PANEL_CLOSE]
+
+
+def test_resume_without_journal_creates_nothing_and_does_not_inspect_ui(observer, tmp_path):
+    reader = p.ArchivePrizeProgress(observer)
+    observer.loop = Mock(side_effect=AssertionError('no UI without existing reservation'))
+    assert reader.resume(p.VISITORS, prize(), tmp_path) is None
+    assert not list(tmp_path.iterdir())
+    observer.loop.assert_not_called()
+    observer.device.click.assert_not_called()
+
+
+def test_resume_unstarted_claim_never_opens_or_dismisses_unowned_receipt(observer, monkeypatch, tmp_path):
+    reader = p.ArchivePrizeProgress(observer)
+    claim_mock(reader, observer, monkeypatch)
+    reader._count.return_value = 0
+    initial = reader.claim(p.VISITORS, prize(), tmp_path)
+    before = Path(initial['journal']).read_bytes()
+    observer.loop = Mock(side_effect=AssertionError('no UI for an unstarted claim'))
+    assert reader.resume(p.VISITORS, prize(), tmp_path) is None
+    assert Path(initial['journal']).read_bytes() == before
+    observer.loop.assert_not_called()
+    observer.device.click.assert_not_called()
+
+
+def test_resume_owned_receipt_after_crash_never_replays_accept(observer, monkeypatch, tmp_path):
+    reader = p.ArchivePrizeProgress(observer)
+    claim_mock(reader, observer, monkeypatch)
+    observer.device.click.side_effect = lambda button: (
+        (_ for _ in ()).throw(RuntimeError('interrupted Accept'))
+        if button is p.PRIZE_PANEL_ACCEPT else None)
+    with pytest.raises(RuntimeError, match='interrupted Accept'):
+        reader.claim(p.VISITORS, prize(), tmp_path)
+    observer.device.click.reset_mock(side_effect=True)
+    reader._receipt.side_effect = lambda: p.GET_ITEMS_1 if not observer.device.click.call_count else None
+    reader._claimed_source.side_effect = None
+    reader._claimed_source.return_value = True
+    result = reader.resume(p.VISITORS, prize(), tmp_path)
+    assert result['verified'] and result['claimed'] and result['returned_stage']
+    assert result['claim_clicks'] == 1 and result['open_clicks'] == 1
+    assert result['receipt_seen'] and not result['pending']
+    observer.device.click.assert_called_once_with(p.GET_ITEMS_1)
+
+
+def test_resume_corrupt_existing_claim_never_resets_or_inputs(observer, monkeypatch, tmp_path):
+    reader = p.ArchivePrizeProgress(observer)
+    claim_mock(reader, observer, monkeypatch)
+    reader._count.return_value = 0
+    record = reader.claim(p.VISITORS, prize(), tmp_path)
+    record.update(claim_clicks=2, pending=True)
+    path = Path(record['journal'])
+    path.write_text(json.dumps(record))
+    before = path.read_bytes()
+    with pytest.raises(ScriptError, match='journal'):
+        reader.resume(p.VISITORS, prize(), tmp_path)
+    assert path.read_bytes() == before
+    observer.device.click.assert_not_called()

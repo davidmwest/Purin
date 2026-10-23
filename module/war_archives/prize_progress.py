@@ -349,12 +349,32 @@ class ArchivePrizeProgress:
         except Timeout as exc:
             raise ScriptError('Archive prize claim is already running') from exc
 
-    def _claim_locked(self, definition, prize, path):
+    def resume(self, archive, prize, folder='./log/war_archives'):
+        """Settle an existing Accept reservation without ever starting a claim."""
+        definition = get_archive(archive)
+        account = self.config.config_name
+        if (account not in {'alas', 'f2p'} or definition is None or not definition.supported
+                or definition.prizes != (prize,)):
+            raise ScriptError('Invalid archive prize claim identity')
+        path = os.path.join(folder, account, 'prize-claims',
+                            f'{definition.id}-{prize.id}.json')
+        if not os.path.isfile(path):
+            return None
+        self.definition, self.prize = definition, prize
+        try:
+            with FileLock(path + '.lock', timeout=0):
+                return self._claim_locked(definition, prize, path, resume_only=True)
+        except Timeout as exc:
+            raise ScriptError('Archive prize claim is already running') from exc
+
+    def _claim_locked(self, definition, prize, path, resume_only=False):
         account = self.config.config_name
         try:
             with open(path, encoding='utf-8') as stream:
                 record = json.load(stream)
         except FileNotFoundError:
+            if resume_only:
+                return None
             record = dict(version=VERSION, account=account, archive=definition.id,
                           prize_id=prize.id, prize_name=prize.name, stage=prize.stage,
                           mode=prize.mode, status='blocked', reason='prize_claim_unverified',
@@ -366,6 +386,8 @@ class ArchivePrizeProgress:
             raise ScriptError('Unreadable archive prize claim journal') from exc
         if not self._valid_claim(record, account, definition, prize):
             raise ScriptError('Invalid archive prize claim journal')
+        if resume_only and not record['claim_clicks']:
+            return None
         persist = lambda: _save_record(path, record)
 
         def capture(name):

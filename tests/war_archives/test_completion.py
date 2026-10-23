@@ -20,7 +20,8 @@ def setup(tmp_path):
     archive = get_archive('war_archives_20181026_en')
     goal = StageGoal(archive.id, archive.normal_stages[0], 'normal', 'archive_clear')
     plan = ArchivePlan(archive, 'normal', (goal,), ())
-    observer = SimpleNamespace(proof_for_goal=lambda selected: dict(raw_keys=80),
+    observer = SimpleNamespace(config=config, device=Mock(),
+                               proof_for_goal=lambda selected: dict(raw_keys=80),
                                prepare_goal=lambda campaign, selected: {})
     return config, state, archive, goal, plan, observer
 
@@ -475,3 +476,78 @@ def test_diagnostic_preparation_uses_nonspending_inspection(setup, monkeypatch, 
     assert kwargs['inspect_fleet_only'] is (mode == 'hard')
     observer.observe_prize.assert_called_once_with(archive, archive.prizes[0])
     assert state.used(ArchiveCoordinator(config, state, observer, lambda: None).period) == 0
+
+
+def test_pending_claim_recovery_precedes_other_selected_archive(setup, monkeypatch):
+    from module.war_archives import completion
+    config, state, _, _, plan, observer = setup
+    archive = get_archive('war_archives_20190321_en')
+    prize = archive.prizes[0]
+    calls = []
+
+    def resume(selected, reward, folder):
+        calls.append((selected, reward.id, folder))
+        if selected == archive.id:
+            return dict(verified=True, returned_stage=True, count=60, total=60,
+                        claimed=True, proof_kind='owned_claim_receipt')
+        return None
+
+    monkeypatch.setattr(completion, 'ArchivePrizeProgress', lambda owner: SimpleNamespace(resume=resume))
+    observer.proof_for_goal = Mock(side_effect=lambda goal: (
+        dict(raw_keys=80) if state.record(prize_key(archive, prize)).get('claimed') is True
+        else pytest.fail('navigation before pending receipt recovery')))
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='complete', reserved=False, stage_complete=True)], []), prize_folder='owned-journals')
+    assert coordinator.run((plan,))['status'] == 'complete'
+    assert (archive.id, prize.id, 'owned-journals') in calls
+    assert state.record(prize_key(archive, prize))['claimed'] is True
+    assert state.used(coordinator.period) == 0
+
+
+def test_unknown_pending_claim_stops_before_counter_farming_or_navigation(setup, monkeypatch):
+    from module.war_archives import completion
+    config, state, _, _, plan, observer = setup
+    observer.proof_for_goal = Mock(side_effect=AssertionError('no navigation'))
+    observer.observe_prize = Mock(side_effect=AssertionError('no fresh counter first'))
+    resume = Mock(return_value=dict(verified=False, returned_stage=False,
+                                   reason='prize_claim_pending_unverified'))
+    monkeypatch.setattr(completion, 'ArchivePrizeProgress', lambda owner: SimpleNamespace(resume=resume))
+    coordinator = ArchiveCoordinator(config, state, observer,
+                                     lambda: pytest.fail('no farm while claim uncertain'))
+    result = coordinator.run((plan,))
+    assert result == dict(status='blocked', reason='prize_claim_pending_unverified',
+                          reserved=False, sorties=0)
+    assert not state.data['goals']
+    observer.proof_for_goal.assert_not_called()
+    observer.observe_prize.assert_not_called()
+    resume.assert_called_once()
+
+
+def test_job_recovers_pending_claim_before_list_census(setup, monkeypatch):
+    from module.war_archives import completion
+    config, state, _, _, plan, observer = setup
+    config.Archive_Target, config.Archive_Difficulty = 'all', 'normal'
+    config.Archive_Goal, config.Archive_Prize, config.Archive_ObserveOnly = 'stories', 'auto', False
+    config.task_delay = Mock()
+    observer.run_observe = Mock(side_effect=AssertionError('no census through owned receipt'))
+    monkeypatch.setattr(completion, 'build_plan', lambda *args: ((plan,), ()))
+    monkeypatch.setattr(completion, 'ArchiveProgress', lambda **kwargs: observer)
+    monkeypatch.setattr(completion, 'ArchiveState', lambda *args: state)
+    monkeypatch.setattr(completion, 'ArchivePrizeProgress', lambda owner: SimpleNamespace(
+        resume=lambda *args, **kwargs: dict(verified=False, returned_stage=False,
+                                          reason='prize_claim_pending_unverified')))
+    job = object.__new__(completion.WarArchivesComplete)
+    job.config, job.device = config, observer.device
+    job.run()
+    observer.run_observe.assert_not_called()
+    config.task_delay.assert_called_once_with(success=False)
+
+
+def test_observe_only_never_resumes_or_dismisses_pending_claim(setup, monkeypatch):
+    from module.war_archives import completion
+    config, state, _, _, plan, observer = setup
+    monkeypatch.setattr(completion, 'ArchivePrizeProgress',
+                        lambda owner: pytest.fail('diagnostic cannot resume a claim'))
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='incomplete', reserved=False)], []))
+    assert coordinator.run((plan,), observe_only=True)['status'] == 'observed'

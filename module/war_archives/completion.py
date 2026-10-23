@@ -6,10 +6,11 @@ from module.campaign.campaign_stars import StageGoal
 from module.config.utils import get_server_last_update
 from module.exception import HardNotSatisfied
 from module.logger import logger
-from module.war_archives.catalog import get_archive
+from module.war_archives.catalog import ARCHIVES, get_archive
 from module.war_archives.execution import WarArchivesExecution
 from module.war_archives.planner import build_plan, next_prize, next_story, prize_key, story_key
 from module.war_archives.progress import ArchiveProgress
+from module.war_archives.prize_progress import ArchivePrizeProgress
 from module.war_archives.state import ArchiveState
 
 
@@ -38,9 +39,10 @@ def verified_prize(value, prize):
 class ArchiveCoordinator:
     """One bounded scheduler chunk, with injected UI and execution adapters."""
 
-    def __init__(self, config, state, observer, runner_factory):
+    def __init__(self, config, state, observer, runner_factory, prize_folder='./log/war_archives'):
         self.config, self.state, self.observer = config, state, observer
         self.runner_factory = runner_factory
+        self.prize_folder = prize_folder
         self.period = get_server_last_update(config.Scheduler_ServerUpdate).isoformat()
 
     def sync_list(self, observation, plans):
@@ -151,7 +153,33 @@ class ArchiveCoordinator:
             self.state.update(key, **refreshed)
         return result
 
+    def resume_prizes(self):
+        """Recover owned receipts before any list or target navigation.
+
+        Recovery is account-wide so changing the selected archive cannot strand
+        a previous Accept. The adapter cannot open or accept a new claim here.
+        """
+        reader = ArchivePrizeProgress(self.observer)
+        for archive in ARCHIVES:
+            if not archive.supported:
+                continue
+            for prize in archive.prizes:
+                key = prize_key(archive, prize)
+                if self.state.record(key).get('claimed') is True:
+                    continue
+                recovered = reader.resume(archive.id, prize, folder=self.prize_folder)
+                if recovered is None:
+                    continue
+                if not verified_prize(recovered, prize) or recovered.get('claimed') is not True:
+                    return self._prize_failure(recovered, 'prize_claim_recovery_unverified')
+                self.state.update(key, **recovered)
+        return None
+
     def run(self, plans, observe_only=False):
+        if not observe_only:
+            recovery = self.resume_prizes()
+            if recovery is not None:
+                return dict(recovery, sorties=0)
         # Inspections do not consume the daily budget, but remain bounded so a
         # mature account cannot monopolize the scheduler while skipping old maps.
         sortie_limit = max(1, min(int(self.config.Archive_StagesPerRun), 20))
@@ -246,7 +274,8 @@ class WarArchivesComplete(ModuleBase):
                     logger.attr('WarArchivesPrizeProbe', observer.observe_prize(plans[0].archive, prize))
             self.config.task_delay(success=False)
             return
-        if state.record('_list_scan').get('period') != coordinator.period:
+        recovery = coordinator.resume_prizes()
+        if recovery is None and state.record('_list_scan').get('period') != coordinator.period:
             observation = observer.run_observe()
             coordinator.sync_list(observation, plans)
             if observation.get('status') != 'observed':
@@ -254,7 +283,8 @@ class WarArchivesComplete(ModuleBase):
                                + str(observation.get('reason')))
             else:
                 state.update('_list_scan', period=coordinator.period, journal=observation.get('journal'))
-        result = coordinator.run(plans, observe_only=self.config.Archive_ObserveOnly)
+        result = (dict(recovery, sorties=0) if recovery is not None else
+                  coordinator.run(plans, observe_only=self.config.Archive_ObserveOnly))
         if unsupported:
             result['unsupported_archives'] = unsupported
         logger.attr('WarArchivesResult', result)
