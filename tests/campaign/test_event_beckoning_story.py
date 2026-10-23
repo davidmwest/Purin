@@ -117,18 +117,17 @@ def test_remaining_locked_cards_match_actual_post_third_story_screen():
     for name, title, lock in STORY_CARDS[3:]:
         assert BeckoningStoryContinuation.visible(helper, title), name
         assert BeckoningStoryContinuation.visible(helper, lock), name
-        assert name not in STORY_UNLOCKED_TITLES
 
 
-def actual_card3_return(frames=5):
-    state = {EVENT + ':beckoning_stories_v1': dict(cards={
-        '1': dict(clicks=2, complete=True, pending=False),
-        '2': dict(clicks=1, complete=True, pending=False),
-        '3': dict(clicks=1, complete=False, pending=True, story_seen=True,
-                  tickets_before=3, handler_calls=3)}, milestones={})}
+def actual_card_return(card='3', frames=5):
+    cards = {str(index): dict(clicks=1, complete=True, pending=False)
+             for index in range(1, int(card))}
+    cards[card] = dict(clicks=1, complete=False, pending=True, story_seen=True,
+                      tickets_before=3, handler_calls=3)
+    state = {EVENT + ':beckoning_stories_v1': dict(cards=cards, milestones={})}
     helper, owner, record, state, saved = controller(frames=frames, state=state)
     owner.device.image = np.asarray(Image.open(
-        'tests/campaign/data/beckoning_card3_unlocked.png').convert('RGB')).copy()
+        f'tests/campaign/data/beckoning_card{card}_unlocked.png').convert('RGB')).copy()
     owner._matches = lambda button: button.match_template_color(
         owner.device.image, offset=(3, 3), similarity=.85)
     owner._on_choice = lambda: BeckoningTickets._on_choice(owner)
@@ -137,61 +136,75 @@ def actual_card3_return(frames=5):
     return helper, owner, record, state, saved
 
 
-def test_actual_card3_unlocked_title_needs_its_observed_alternative():
-    helper, owner, *_ = actual_card3_return()
+@pytest.mark.parametrize('card', ['3', '4'])
+def test_actual_unlocked_title_needs_its_observed_alternative(card):
+    helper, owner, *_ = actual_card_return(card)
+    index = int(card) - 1
     assert owner._on_choice() and owner._tickets() == 2
-    assert not helper.visible(STORY_CARDS[2][1])
-    assert helper.visible(STORY_UNLOCKED_TITLES['3'])
-    assert helper.card_title_visible('3')
-    assert not helper.visible(STORY_CARDS[2][2])
+    assert not helper.visible(STORY_CARDS[index][1])
+    assert helper.visible(STORY_UNLOCKED_TITLES[card])
+    assert helper.card_title_visible(card)
+    assert not helper.visible(STORY_CARDS[index][2])
     owner.device.image[:] = 0
-    assert not helper.card_title_visible('3')
+    assert not helper.card_title_visible(card)
     owner.device.click.assert_not_called()
 
 
-def test_actual_paid_story_return_finishes_without_another_input(immediate):
-    helper, owner, _, _, saved = actual_card3_return()
-    assert helper.finish_story('3') is True
-    assert helper.cards['3']['complete'] and not helper.cards['3']['pending']
-    assert helper.cards['3']['clicks'] == 1
-    assert helper.cards['3']['tickets_after'] == 2
-    assert saved[-1][0][EVENT + ':beckoning_stories_v1']['cards']['3']['complete']
+@pytest.mark.parametrize('card', ['3', '4'])
+def test_actual_paid_story_return_finishes_without_another_input(immediate, card):
+    helper, owner, _, _, saved = actual_card_return(card)
+    assert helper.finish_story(card) is True
+    assert helper.cards[card]['complete'] and not helper.cards[card]['pending']
+    assert helper.cards[card]['clicks'] == 1
+    assert helper.cards[card]['tickets_after'] == 2
+    assert saved[-1][0][EVENT + ':beckoning_stories_v1']['cards'][card]['complete']
     owner.device.click.assert_not_called()
     owner.story_skip.assert_not_called()
 
 
 @pytest.mark.parametrize('missing', [None, 'title', 'lock_removed', 'payment', 'viewer', 'choice'])
-def test_interrupted_actual_return_verifies_only_paid_seen_unlocked_card(immediate, missing):
-    helper, owner, *_ = actual_card3_return()
+@pytest.mark.parametrize('card', ['3', '4'])
+def test_interrupted_actual_return_verifies_only_paid_seen_unlocked_card(immediate, missing, card):
+    helper, owner, *_ = actual_card_return(card)
+    index = int(card) - 1
     if missing == 'title':
-        x1, y1, x2, y2 = STORY_CARDS[2][1].area
+        x1, y1, x2, y2 = STORY_CARDS[index][1].area
         owner.device.image[y1-4:y2+4, x1-4:x2+4] = 0
     elif missing == 'lock_removed':
         locked = np.asarray(Image.open(
             'tests/campaign/data/beckoning_escalating_missions.png').convert('RGB'))
-        x1, y1, x2, y2 = STORY_CARDS[2][2].area
+        x1, y1, x2, y2 = STORY_CARDS[index][2].area
         owner.device.image[y1-4:y2+4, x1-4:x2+4] = locked[y1-4:y2+4, x1-4:x2+4]
     elif missing == 'payment':
         owner._tickets = lambda: 3
     elif missing == 'viewer':
-        helper.cards['3']['story_seen'] = False
+        helper.cards[card]['story_seen'] = False
     elif missing == 'choice':
         owner._on_choice = lambda: False
     helper.observe_unlock_payment()
-    assert helper.cards['3'].get('complete', False) is (missing is None)
-    assert helper.cards['3']['clicks'] == 1
+    assert helper.cards[card].get('complete', False) is (missing is None)
+    assert helper.cards[card]['clicks'] == 1
     assert helper.cards['1']['complete'] and helper.cards['2']['complete']
     owner.device.click.assert_not_called()
     owner.story_skip.assert_not_called()
 
 
 def test_interrupted_return_cannot_verify_from_unstable_ticket_readings(immediate):
-    helper, owner, *_ = actual_card3_return(frames=5)
+    helper, owner, *_ = actual_card_return(frames=5)
     owner._tickets = Mock(side_effect=[2, 1, 2, 1, 2])
     assert helper.observe_unlock_payment() is False
     assert not helper.cards['3']['complete']
     owner.device.click.assert_not_called()
     owner.story_skip.assert_not_called()
+
+
+def test_actual_fourth_story_return_preserves_remaining_locked_cards():
+    helper, owner, *_ = actual_card_return('4')
+    assert owner._on_choice() and owner._tickets() == 2
+    for name, title, lock in STORY_CARDS[4:]:
+        assert helper.card_title_visible(name), name
+        assert helper.visible(lock), name
+    owner.device.click.assert_not_called()
 
 
 @pytest.mark.parametrize('missing', [None, STORY_VIEWER_LOG, STORY_VIEWER_SKIP])

@@ -5,6 +5,7 @@ from module.ocr.ocr import DigitCounter
 _CARDS = './assets/en/event_completion/TEMPESTA_BECKONING_STORIES_20261023.png'
 _VIEWER = './assets/en/event_completion/TEMPESTA_BECKONING_VIEWER_20261023.png'
 _UNLOCKED = './assets/en/event_completion/TEMPESTA_BECKONING_UNLOCKED_20261023.png'
+_UNLOCKED4 = './assets/en/event_completion/TEMPESTA_BECKONING_UNLOCKED4_20261023.png'
 
 
 def _button(name, area, file, click=None):
@@ -24,10 +25,11 @@ STORY_CARDS = tuple(
         ((43, 602, 336, 632), (156, 499, 208, 561)),
         ((406, 592, 702, 620), (538, 476, 589, 538)),
     )))
-# The third label changes contrast/background after its ticket is spent. Keep
-# its separately observed unlocked appearance instead of weakening all matches.
+# These labels change contrast/background after their ticket is spent. Keep
+# their separately observed unlocked appearance instead of weakening matches.
 STORY_UNLOCKED_TITLES = {
     '3': _button('BECKONING_CARD_3_UNLOCKED', (649, 276, 914, 302), _UNLOCKED),
+    '4': _button('BECKONING_CARD_4_UNLOCKED', (995, 254, 1168, 296), _UNLOCKED4),
 }
 STORY_VIEWER_LOG = _button('BECKONING_STORY_LOG', (27, 19, 57, 55), _VIEWER)
 STORY_VIEWER_SKIP = _button('BECKONING_STORY_SKIP', (1172, 24, 1255, 52), _VIEWER)
