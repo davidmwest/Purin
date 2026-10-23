@@ -165,7 +165,12 @@ class ArchiveProgress(CampaignUI):
         for _ in self.loop(skip_first=False, timeout=timeout):
             if monotonic() >= deadline:
                 break
-            if not self._list_page() or (category is not None and self._category() != category):
+            if not self._list_page():
+                previous = None
+                settled.reset()
+                continue
+            current_category = self._category()
+            if category is not None and current_category != category:
                 previous = None
                 settled.reset()
                 continue
@@ -180,12 +185,33 @@ class ArchiveProgress(CampaignUI):
                 # Matching all identities is expensive. Do it once, on the final
                 # fresh settled frame; actions still reread their exact identity.
                 cards = self.read_cards()
-                if not cards:
+                # Recent unsupported archives can fill a whole page. Exact list,
+                # selected category, full Files cards and a known scrollbar still
+                # permit bounded scrolling; they never prove any card identity.
+                if not cards and (scroll is None or current_category is None):
+                    self._archive_scroll_pending = None
                     return None
-                # Only an exact, recognized list refreshes the global idle watchdog.
-                self.device.stuck_record_clear()
+                self._confirm_scroll_progress(current_category, scroll)
+                if cards:
+                    # Unknown identities alone do not refresh the idle watchdog.
+                    self.device.stuck_record_clear()
                 return cards, scroll
+        self._archive_scroll_pending = None
         return None
+
+    def _confirm_scroll_progress(self, category, scroll):
+        """Forget only our swipe history after a fresh settled directional move."""
+        pending = getattr(self, '_archive_scroll_pending', None)
+        self._archive_scroll_pending = None
+        if pending is None or scroll is None or category != pending[0]:
+            return
+        _, before_top, before_bottom, to_top = pending
+        delta = scroll['top'] - before_top
+        same_thumb = abs((scroll['bottom'] - scroll['top']) - (before_bottom - before_top)) <= 2
+        if same_thumb and (delta <= -2 if to_top else delta >= 2):
+            # The global detector otherwise counts a long, progressing census
+            # as repeated clicks. Other buttons' history remains intact.
+            self.device.click_record_remove('ARCHIVE_OBSERVE_SCROLL')
 
     def _select_category(self, category, record, persist):
         settled = Timer(2, count=2).start()
@@ -213,8 +239,10 @@ class ArchiveProgress(CampaignUI):
         return False
 
     def _drag_scroll(self, info, to_top, record, persist):
+        self._archive_scroll_pending = None
         if not self._list_page() or self._scroll_info() != info:
             return False
+        category = self._category()
         left, top, right, bottom = ARCHIVE_SCROLL.area
         middle = (info['top'] + info['bottom']) / 2
         half = (info['bottom'] - info['top']) / 2
@@ -228,6 +256,8 @@ class ArchiveProgress(CampaignUI):
         record['scroll_drags'] += 1
         persist()  # One bounded drag, never Scroll.set's retry loop.
         self.device.swipe(start, end, duration=(.3, .5), name='ARCHIVE_OBSERVE_SCROLL', distance_check=False)
+        if category is not None:
+            self._archive_scroll_pending = (category, info['top'], info['bottom'], to_top)
         return True
 
     def _capture(self, directory, name, record):
@@ -263,7 +293,8 @@ class ArchiveProgress(CampaignUI):
                        and card.get('card_area') is not None and card.get('completion') is not None]
             if len(matches) == 1:
                 return matches[0]
-            signature = tuple((card['archive'], tuple(card['identity_area'])) for card in cards)
+            signature = (tuple((card['archive'], tuple(card['identity_area'])) for card in cards),
+                         None if scroll is None else (scroll['top'], scroll['bottom']))
             if signature in seen or scroll is None or self._scroll_at_bottom(scroll):
                 break
             seen.add(signature)
