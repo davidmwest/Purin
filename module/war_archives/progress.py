@@ -143,23 +143,45 @@ class ArchiveProgress(CampaignUI):
         travel = len(mask) - (bottom - top)
         return dict(top=top, bottom=bottom, position=round(top / travel, 3))
 
+    def _list_geometry(self):
+        """Cheap settling witnesses; these never authorize an archive entrance."""
+        return tuple(sorted(tuple(int(value) for value in header.area)
+                            for header in FILES_HEADER.match_multi(self.device.image, similarity=.90)
+                            if (75 <= header.area[0] and header.area[0] + 470 <= 1245
+                                and 110 <= header.area[1] and header.area[1] + 249 <= 700)))
+
+    @staticmethod
+    def _scroll_at_top(info):
+        return info['top'] <= 1
+
+    @staticmethod
+    def _scroll_at_bottom(info):
+        return info['bottom'] >= ARCHIVE_SCROLL.area[3] - ARCHIVE_SCROLL.area[1] - 1
+
     def _settled_list(self, category=None, timeout=8):
         previous = None
         settled = Timer(1, count=2).start()
+        deadline = monotonic() + timeout
         for _ in self.loop(skip_first=False, timeout=timeout):
+            if monotonic() >= deadline:
+                break
             if not self._list_page() or (category is not None and self._category() != category):
                 previous = None
                 settled.reset()
                 continue
-            cards = self.read_cards()
+            headers = self._list_geometry()
             scroll = self._scroll_info()
-            signature = (tuple((card['archive'], tuple(card['identity_area'])) for card in cards),
-                         None if scroll is None else (scroll['top'], scroll['bottom']))
-            if signature != previous or not cards:
+            signature = (headers, None if scroll is None else (scroll['top'], scroll['bottom']))
+            if signature != previous or not headers:
                 previous = signature
                 settled.reset()
                 continue
             if settled.reached():
+                # Matching all identities is expensive. Do it once, on the final
+                # fresh settled frame; actions still reread their exact identity.
+                cards = self.read_cards()
+                if not cards:
+                    return None
                 # Only an exact, recognized list refreshes the global idle watchdog.
                 self.device.stuck_record_clear()
                 return cards, scroll
@@ -189,7 +211,9 @@ class ArchiveProgress(CampaignUI):
         left, top, right, bottom = ARCHIVE_SCROLL.area
         middle = (info['top'] + info['bottom']) / 2
         half = (info['bottom'] - info['top']) / 2
-        target = half if to_top else min(bottom - top - half, middle + half * 1.32)
+        # Half a viewport overlaps by >=282px on the captured 565px list,
+        # enough for each 249px card to be fully visible on at least one page.
+        target = half if to_top else min(bottom - top - half, middle + half)
         if abs(target - middle) < 2:
             return False
         start = (int((left + right) / 2), int(top + middle))
@@ -207,23 +231,25 @@ class ArchiveProgress(CampaignUI):
 
     def _find_archive(self, archive, category, record, persist, deadline):
         """Search known list pages; never use legacy Scroll.set/search loops."""
+        if monotonic() >= deadline:
+            return None
         if not self._select_category(category, record, persist):
             return None
         result = self._settled_list(category)
         if result is None:
             return None
         cards, scroll = result
-        if scroll and scroll['position'] > .05:
+        if scroll and not self._scroll_at_top(scroll):
             if not self._drag_scroll(scroll, True, record, persist):
                 return None
             result = self._settled_list(category)
             if result is None:
                 return None
             cards, scroll = result
-            if scroll and scroll['position'] > .05:
+            if scroll and not self._scroll_at_top(scroll):
                 return None
         seen = set()
-        for _ in range(20):
+        for index in range(20):
             if monotonic() >= deadline:
                 break
             matches = [card for card in cards if card['archive'] == archive
@@ -231,9 +257,11 @@ class ArchiveProgress(CampaignUI):
             if len(matches) == 1:
                 return matches[0]
             signature = tuple((card['archive'], tuple(card['identity_area'])) for card in cards)
-            if signature in seen or scroll is None or scroll['position'] >= .95:
+            if signature in seen or scroll is None or self._scroll_at_bottom(scroll):
                 break
             seen.add(signature)
+            if index == 19 or monotonic() >= deadline:
+                break
             if not self._drag_scroll(scroll, False, record, persist):
                 break
             result = self._settled_list(category)
@@ -525,20 +553,22 @@ class ArchiveProgress(CampaignUI):
         return ArchivePrizeProgress(self).claim(archive_id, prize, folder=folder, request_id=request_id)
 
     def _observe_category(self, category, directory, record, persist, max_pages, deadline):
+        if monotonic() >= deadline:
+            return 'observation_deadline'
         if not self._select_category(category, record, persist):
             return 'selector_unrecognized'
         result = self._settled_list(category)
         if result is None:
             return 'list_unrecognized'
         cards, scroll = result
-        if scroll and scroll['position'] > .05:
+        if scroll and not self._scroll_at_top(scroll):
             if not self._drag_scroll(scroll, True, record, persist):
                 return 'scroll_top_unverified'
             result = self._settled_list(category)
             if result is None:
                 return 'scroll_top_unrecognized'
             cards, scroll = result
-            if scroll and scroll['position'] > .05:
+            if scroll and not self._scroll_at_top(scroll):
                 return 'scroll_top_not_reached'
         seen = set()
         for index in range(max_pages):
@@ -560,8 +590,12 @@ class ArchiveProgress(CampaignUI):
             persist()
             if scroll is None:
                 return 'scroll_not_visible'
-            if scroll['position'] >= .95:
+            if self._scroll_at_bottom(scroll):
                 return 'bottom_observed'
+            if index + 1 >= max_pages:
+                return 'page_limit'
+            if monotonic() >= deadline:
+                return 'observation_deadline'
             if not self._drag_scroll(scroll, False, record, persist):
                 return 'scroll_not_moved'
             result = self._settled_list(category)

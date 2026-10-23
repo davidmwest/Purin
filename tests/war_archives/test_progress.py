@@ -138,6 +138,7 @@ def test_settled_list_requires_known_cards_and_matching_category(owner):
     owner._list_page = Mock(return_value=True)
     owner._category = Mock(return_value='ex')
     owner._scroll_info = Mock(return_value=None)
+    owner._list_geometry = Mock(return_value=((88, 126, 148, 145),))
     owner.read_cards = Mock(return_value=[])
     assert owner._settled_list('ex') is None
     owner.device.stuck_record_clear.assert_not_called()
@@ -185,7 +186,143 @@ def test_page_limit_is_bounded(owner, monkeypatch, tmp_path):
     current = record()
     assert owner._observe_category('ex', tmp_path, current, Mock(), 3, float('inf')) == 'page_limit'
     assert len(current['pages']) == 3
-    assert owner._drag_scroll.call_count == 3
+    assert owner._drag_scroll.call_count == 2
+    assert owner._settled_list.call_count == 3
+
+
+def test_settling_reads_identities_once_on_the_final_fresh_frame(owner, monkeypatch):
+    class ThreeReadsTimer(ReadyTimer):
+        def reset(self):
+            self.reads = 0
+            return self
+
+        def reached(self):
+            self.reads += 1
+            return self.reads == 3
+
+    monkeypatch.setattr(p, 'Timer', ThreeReadsTimer)
+    owner._list_page = Mock(return_value=True)
+    owner._category = Mock(return_value='ex')
+    owner._list_geometry = Mock(return_value=((88, 126, 148, 145),))
+    owner._scroll_info = Mock(return_value=None)
+    def frames(**kwargs):
+        for frame in range(5):
+            owner.device.image[0, 0, 0] = frame
+            yield
+    owner.loop = frames
+    owner.read_cards = Mock(side_effect=lambda: [dict(card(), frame=int(owner.device.image[0, 0, 0]))])
+    cards, scroll = owner._settled_list('ex')
+    assert cards[0]['frame'] == 3 and scroll is None
+    assert owner._list_geometry.call_count == 4
+    owner.read_cards.assert_called_once()
+
+
+def test_header_or_scroll_motion_resets_settling_before_identity_read(owner):
+    owner._list_page = Mock(return_value=True)
+    owner._category = Mock(return_value='ex')
+    first, moved = ((88, 126, 148, 145),), ((88, 120, 148, 139),)
+    owner._list_geometry = Mock(side_effect=[first, moved, moved, moved])
+    owner._scroll_info = Mock(side_effect=[None, None, dict(top=1, bottom=82), dict(top=1, bottom=82)])
+    owner.read_cards = Mock(return_value=[card()])
+    assert owner._settled_list('ex') == ([card()], dict(top=1, bottom=82))
+    assert owner._list_geometry.call_count == 4
+    owner.read_cards.assert_called_once()
+
+
+def test_missing_full_card_headers_does_not_scan_identities_or_refresh_watchdog(owner):
+    owner._list_page = Mock(return_value=True)
+    owner._category = Mock(return_value='ex')
+    owner._list_geometry = Mock(return_value=())
+    owner._scroll_info = Mock(return_value=None)
+    owner.read_cards = Mock()
+    assert owner._settled_list('ex') is None
+    owner.read_cards.assert_not_called()
+    owner.device.stuck_record_clear.assert_not_called()
+
+
+def test_list_settle_has_a_wall_clock_deadline_even_when_loop_timer_has_frames_left(owner, monkeypatch):
+    owner._list_page = Mock(return_value=True)
+    owner._category = Mock(return_value='ex')
+    owner._list_geometry = Mock(return_value=((88, 126, 148, 145),))
+    owner._scroll_info = Mock(return_value=None)
+    owner.read_cards = Mock(return_value=[card()])
+    monkeypatch.setattr(p, 'monotonic', Mock(side_effect=[0, 0, 9]))
+    assert owner._settled_list('ex', timeout=8) is None
+    owner.read_cards.assert_not_called()
+
+
+def test_census_reaches_actual_bottom_instead_of_stopping_five_percent_early(owner, monkeypatch, tmp_path):
+    owner._select_category = Mock(return_value=True)
+    owner._settled_list = Mock(side_effect=[
+        ([card('first')], dict(top=0, bottom=100, position=0)),
+        ([card('near_bottom')], dict(top=450, bottom=550, position=.968)),
+        ([card('last')], dict(top=465, bottom=565, position=1)),
+    ])
+    owner._drag_scroll = Mock(return_value=True)
+    owner._capture = Mock(return_value='list.png')
+    monkeypatch.setattr(p.ARCHIVE_KEYS, 'ocr', Mock(return_value='80/300'))
+    current = record()
+    assert owner._observe_category('ex', tmp_path, current, Mock(), 20, float('inf')) == 'bottom_observed'
+    assert current['pages'][-1]['cards'][0]['archive'] == 'last'
+    assert owner._drag_scroll.call_count == 2
+
+
+def test_census_first_returns_to_actual_top_when_within_five_percent(owner, monkeypatch, tmp_path):
+    owner._select_category = Mock(return_value=True)
+    almost_top = dict(top=20, bottom=120, position=.043)
+    owner._settled_list = Mock(side_effect=[([card()], almost_top), ([card('first')], None)])
+    owner._drag_scroll = Mock(return_value=True)
+    owner._capture = Mock(return_value='list.png')
+    monkeypatch.setattr(p.ARCHIVE_KEYS, 'ocr', Mock(return_value='80/300'))
+    current, persist = record(), Mock()
+    assert owner._observe_category('ex', tmp_path, current, persist, 20, float('inf')) == 'scroll_not_visible'
+    owner._drag_scroll.assert_called_once_with(almost_top, True, current, persist)
+    assert current['pages'][0]['cards'][0]['archive'] == 'first'
+
+
+def test_full_catalog_half_steps_cover_every_whole_card_within_shared_deadline(owner, monkeypatch, tmp_path):
+    # A physical scrollbar model with the captured card height/296px row pitch.
+    # Identity/OCR and settling cost a conservative 4.5s per final fresh page.
+    clock = [0.0]
+    state = {}
+    monkeypatch.setattr(p, 'monotonic', lambda: clock[0])
+    owner._list_page = Mock(return_value=True)
+    def select(category, *args):
+        rows = 15 if category == 'ex' else 11  # 30 EX + 22 SP catalog cards.
+        extent = 126 + (rows - 1) * 296 + 249 - 675
+        state.update(category=category, rows=rows, extent=extent,
+                     thumb=round(565 * 565 / (565 + extent)), top=0)
+        return True
+    owner._select_category = select
+    def info():
+        return dict(top=state['top'], bottom=state['top'] + state['thumb'],
+                    position=state['top'] / (565 - state['thumb']))
+    owner._scroll_info = info
+    def settled(category):
+        clock[0] += 4.5
+        offset = info()['position'] * state['extent']
+        cards = []
+        for row in range(state['rows']):
+            top = round(126 + row * 296 - offset)
+            if 110 <= top and top + 249 <= 675:
+                for column in range(2):
+                    cards.append(dict(archive=f'{category}-{row}-{column}',
+                                      identity_area=[88 + column * 634, top + 20, 200 + column * 634, top + 40]))
+        assert cards  # Each fresh page has at least one whole row to identify.
+        return cards, info()
+    owner._settled_list = settled
+    def swipe(start, end, **kwargs):
+        state['top'] += end[1] - start[1]
+    owner.device.swipe.side_effect = swipe
+    owner._capture = Mock(return_value='page.png')
+    monkeypatch.setattr(p.ARCHIVE_KEYS, 'ocr', Mock(return_value='80/300'))
+    current = record()
+    for category in ('ex', 'sp'):
+        assert owner._observe_category(category, tmp_path, current, Mock(), 20, 180) == 'bottom_observed'
+    observed = {card['archive'] for page in current['pages'] for card in page['cards']}
+    assert len(observed) == 52
+    assert clock[0] < 180
+    assert current['scroll_drags'] == len(current['pages']) - 2
 
 
 def test_observation_is_durable_before_navigation_and_same_request_never_replays(owner, monkeypatch, tmp_path):
