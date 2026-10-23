@@ -1,5 +1,6 @@
 from collections import Counter
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 import module.retire.common as common
+from module.base.utils import load_image
 from module.dock.policy import Card
 from module.exception import RequestHumanTakeover
 from module.retire.assets import IN_RETIREMENT_CHECK, SHIP_CONFIRM, SHIP_CONFIRM_2
@@ -74,7 +76,7 @@ def task(monkeypatch, cards=None, dry_run=False):
     obj._common_retire_candidate = Mock(return_value=candidate)
     for name in ('ui_ensure', 'retire_page_enter', 'handle_dock_cards_loading', 'dock_favourite_set',
                  'dock_sort_method_dsc_set', 'dock_filter_set', '_retirement_confirm', '_retirement_quit',
-                 '_common_retire_recover'):
+                 '_common_retire_recover', '_common_retire_prepare'):
         setattr(obj, name, Mock())
     obj._common_retire_recover.return_value = False
     monkeypatch.setattr(common, 'load_ship_data', Mock(return_value={}))
@@ -184,11 +186,28 @@ def test_changed_candidate_fails_before_selection(monkeypatch):
     obj.device.click.assert_not_called()
 
 
-@pytest.mark.parametrize('read, expected', [('0', 0), ('1', 1), (' 1 ', 1), ('', None),
-                                         ('None', None), ('Selected: 1', None), ('111', None)])
-def test_selection_counter_does_not_turn_unknown_ocr_into_zero(monkeypatch, read, expected):
+@pytest.mark.parametrize('reads, expected', [
+    (['Selected: 0', 'ters to:'], 0), (['Obtainable: X14', 'Selected:1'], 1),
+    (['obainablesi', ' selected: 2 '], 2), (['0', '1'], None), (['', ''], None),
+    (['Selected: 0', 'Selected:1'], None), (['Selected: 1', ''], None),
+    (['', 'Selected:0'], None), (['', 'Selected:111'], None), (['Selected:', 'None'], None),
+])
+def test_selection_counter_requires_exact_label_and_matching_layout(monkeypatch, reads, expected):
     obj = task(monkeypatch)
-    monkeypatch.setattr(common, 'Ocr', Mock(return_value=SimpleNamespace(ocr=lambda image: read)))
+    ocr = Mock(side_effect=reads)
+    monkeypatch.setattr(common, 'Ocr', Mock(return_value=SimpleNamespace(ocr=ocr)))
+
+    assert common.CommonDuplicates._common_retire_count(obj) == expected
+
+
+@pytest.mark.parametrize('image, expected', [('common_before_f2p.png', 0),
+                                          ('common_selected_karlsruhe_f2p.png', 1),
+                                          ('common_selected_aoba_f2p.png', 1)])
+def test_actual_retirement_images_read_selected_label_instead_of_coin_rewards(monkeypatch, image, expected):
+    obj = task(monkeypatch)
+    obj.device.image = load_image(str(Path(__file__).parent / 'data' / image))
+    # OCR models use project-relative paths; this test does not run the retirement task.
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
 
     assert common.CommonDuplicates._common_retire_count(obj) == expected
 
@@ -334,11 +353,95 @@ def test_scheduled_common_pass_runs_after_the_conservative_selection_and_quit(mo
     obj.quick_retire_setting_set = Mock()
     obj.retire_common_duplicates = Mock(return_value=2)
     events = Mock()
+    events.attach_mock(obj._common_retire_prepare, 'prepare')
     events.attach_mock(obj.retire_ships_one_click, 'quick')
     events.attach_mock(obj._retirement_quit, 'quit')
     events.attach_mock(obj.retire_common_duplicates, 'common')
 
     obj.run()
 
-    assert [call[0] for call in events.mock_calls] == ['quick', 'quit', 'common']
+    assert [call[0] for call in events.mock_calls] == ['prepare', 'quick', 'quit', 'common']
     obj.config.task_delay.assert_called_once_with(server_update=True)
+
+
+def test_startup_cancels_stale_selection_before_any_confirmation(monkeypatch):
+    obj = task(monkeypatch)
+    obj._common_retire_recover = lambda: common.CommonDuplicates._common_retire_recover(obj)
+    obj._common_retire_count = Mock(side_effect=[1, 0])
+
+    common.CommonDuplicates._common_retire_prepare(obj)
+
+    obj.device.click.assert_called_once_with(IN_RETIREMENT_CHECK)
+    obj._retirement_quit.assert_called_once_with()
+    obj._retirement_confirm.assert_not_called()
+
+
+def test_startup_cannot_continue_if_stale_selection_does_not_clear(monkeypatch):
+    obj = task(monkeypatch)
+    obj._common_retire_recover = lambda: common.CommonDuplicates._common_retire_recover(obj)
+    obj._common_retire_count = Mock(return_value=1)
+
+    with pytest.raises(RequestHumanTakeover, match='safely clear the previous selection'):
+        common.CommonDuplicates._common_retire_prepare(obj)
+
+    assert obj.device.click.call_count == 3
+    obj._retirement_confirm.assert_not_called()
+
+
+def test_startup_on_ordinary_page_does_not_click_or_recover(monkeypatch):
+    obj = task(monkeypatch)
+    obj.appear = Mock(return_value=False)
+
+    common.CommonDuplicates._common_retire_prepare(obj)
+
+    obj.device.click.assert_not_called()
+    obj._common_retire_recover.assert_not_called()
+
+
+def test_atomic_audit_exists_before_confirm_and_after_every_verified_removal(monkeypatch, tmp_path):
+    obj = task(monkeypatch, cards=[card(locked=True), card(), card()])
+    obj._common_retire_count = Mock(side_effect=[0, 0, 1, 0] * 2)
+    obj._common_retire_amount = Mock(side_effect=[(151, 160), (150, 160), (149, 160)])
+    observed = []
+
+    def confirm():
+        reports = list((tmp_path / 'config/retire/f2p').glob('*-common/common.json'))
+        report = json.loads(reports[0].read_text())
+        observed.append(report)
+        assert report['pending']['ship'] == 'Downes'
+        assert not report['complete']
+        assert not reports[0].with_name('common.json.tmp').exists()
+
+    obj._retirement_confirm = Mock(side_effect=confirm)
+
+    assert obj.retire_common_duplicates() == 2
+
+    assert [len(report['retired']) for report in observed] == [0, 1]
+    assert observed[1]['dock_after'] == [150, 160]
+    assert observed[1]['remaining'] == {'Downes': 1}
+
+
+def test_interruption_before_second_confirmation_keeps_first_verified_retirement(monkeypatch, tmp_path):
+    obj = task(monkeypatch, cards=[card(locked=True), card(), card()])
+    obj._common_retire_count = Mock(side_effect=[0, 0, 1, 0] * 2)
+    obj._common_retire_amount = Mock(side_effect=[(151, 160), (150, 160)])
+    obj._retirement_confirm = Mock(side_effect=[None, KeyboardInterrupt()])
+
+    with pytest.raises(KeyboardInterrupt):
+        obj.retire_common_duplicates()
+
+    report = json.loads(next((tmp_path / 'config/retire/f2p').glob('*-common/common.json')).read_text())
+    assert report['retired'] == [dict(ship='Downes', level=1, dock_before=[151, 160], dock_after=[150, 160])]
+    assert report['pending'] == dict(ship='Downes', level=1, dock_before=[150, 160])
+    assert not report['complete']
+
+
+def test_failed_pending_audit_cancels_before_confirming(monkeypatch):
+    obj = task(monkeypatch)
+    obj._common_retire_audit = Mock(side_effect=[None, None, OSError('audit unavailable'), None])
+
+    with pytest.raises(OSError, match='audit unavailable'):
+        obj.retire_common_duplicates()
+
+    obj._common_retire_recover.assert_called_once_with()
+    obj._retirement_confirm.assert_not_called()

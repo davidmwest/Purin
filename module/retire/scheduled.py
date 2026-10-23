@@ -68,6 +68,8 @@ class RetireShips(CommonDuplicates, Retirement, GachaUI):
             self.config.task_delay(server_update=True)
             return
 
+        if getattr(self.config, 'Retirement_CommonDuplicates', False):
+            self._common_retire_prepare()
         dry_run = getattr(self.config, 'Retirement_DryRun', False)
         # A full dock may have interrupted a sortie with the settings popup still open.
         if dry_run and self.appear(RETIRE_SETTING_QUIT, offset=(30, 100)):

@@ -8,6 +8,7 @@ from collections import Counter
 from datetime import datetime
 import json
 from pathlib import Path
+import re
 
 from module.base.utils import save_image
 from module.dock.census import card_level, card_rarity, card_status
@@ -24,8 +25,11 @@ from module.retire.assets import DOCK_CHECK, IN_RETIREMENT_CHECK, SHIP_CONFIRM, 
 from module.retire.dock_walk import DockWalker
 from module.ui.page import page_build, page_dock, page_main
 
-# The Selected number on the EN retirement page, not DOCK_SELECTED (a fleet picker).
-SELECTED_NUMBER = area_button((530, 657, 570, 694), 'COMMON_RETIRE_SELECTED')
+# EN moves the Selected label left when a card is selected, replacing its old
+# position with coin rewards. Read the whole label so reward digits cannot pass
+# the selection guard. The centered layout is valid only for zero selections.
+SELECTED_LABELS = ((area_button((400, 656, 571, 694), 'COMMON_RETIRE_SELECTED_EMPTY'), False),
+                   (area_button((184, 656, 355, 694), 'COMMON_RETIRE_SELECTED_ACTIVE'), True))
 MAX_RETIRE = 50
 
 
@@ -50,6 +54,21 @@ def common_duplicate_fits(card, remaining):
 
 
 class CommonDuplicates:
+    @staticmethod
+    def _common_retire_audit(directory, report):
+        temporary = directory / 'common.json.tmp'
+        temporary.write_text(json.dumps(report, indent=2), encoding='utf-8')
+        temporary.replace(directory / 'common.json')
+
+    def _common_retire_prepare(self):
+        """Cancel an interrupted selection before the scheduled quick-retire step."""
+        self.device.screenshot()
+        if self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)) \
+                or self.appear(SHIP_CONFIRM_2, offset=(30, 30)) \
+                or self.appear(POPUP_CANCEL, offset=(30, 100)):
+            if not self._common_retire_recover():
+                raise RequestHumanTakeover('Common retirement could not safely clear the previous selection')
+
     def _common_retire_recover(self):
         """Only recognized Cancel controls are used after a failed verification."""
         for _ in range(3):
@@ -90,10 +109,18 @@ class CommonDuplicates:
         return cards
 
     def _common_retire_count(self):
-        """An unread counter is different from a verified zero selection."""
-        read = str(Ocr(SELECTED_NUMBER, lang='azur_lane', letter=(255, 255, 255), threshold=128,
-                       alphabet='0123456789', name='COMMON_RETIRE_SELECTED').ocr(self.device.image)).strip()
-        return int(read) if read.isdigit() and len(read) <= 2 else None
+        """Verify one complete Selected label in its matching zero/nonzero layout."""
+        counts = []
+        for button, active in SELECTED_LABELS:
+            read = str(Ocr(button, lang='cnocr', letter=(255, 255, 255), threshold=128,
+                           name=button.name).ocr(self.device.image)).strip()
+            match = re.fullmatch(r'selected:\s*(0|[1-9][0-9]?)', read, flags=re.IGNORECASE)
+            if match:
+                count = int(match.group(1))
+                if bool(count) != active:
+                    return None
+                counts.append(count)
+        return counts[0] if len(counts) == 1 else None
 
     def _common_retire_amount(self):
         current, _, total = OCR_DOCK_AMOUNT.ocr(self.device.image)
@@ -148,6 +175,7 @@ class CommonDuplicates:
         # If audit storage cannot be created, stop before selecting any ship.
         directory.mkdir(parents=True, exist_ok=False)
         try:
+            self._common_retire_audit(directory, report)
             if not remaining or report['dry_run']:
                 logger.info('Common duplicate retirement: census only, no cards selected')
                 report['complete'] = True
@@ -158,6 +186,7 @@ class CommonDuplicates:
             self.device.screenshot()
             before = self._common_retire_amount()
             report['dock_before'] = before
+            self._common_retire_audit(directory, report)
             for _ in range(min(sum(remaining.values()), MAX_RETIRE)):
                 self.ui_ensure(page_build)
                 self.retire_page_enter()
@@ -186,6 +215,8 @@ class CommonDuplicates:
                         or not self.match_template_color(SHIP_CONFIRM, offset=(30, 30)) \
                         or self.appear(SHIP_CONFIRM_2, offset=(30, 30)):
                     raise RequestHumanTakeover('Common retirement could not verify exactly one selected card')
+                report['pending'] = dict(ship=read.ship, level=1, dock_before=before)
+                self._common_retire_audit(directory, report)
                 # The existing central DryRun guard remains authoritative. No quick-retire selection is invoked.
                 self._retirement_confirm()
                 self.handle_dock_cards_loading()
@@ -197,11 +228,16 @@ class CommonDuplicates:
                 self.handle_dock_cards_loading()
                 self.device.screenshot()
                 after = self._common_retire_amount()
-                report['retired'].append(dict(ship=read.ship, level=1, dock_before=before, dock_after=after))
+                report['pending']['dock_after_read'] = after
                 if after != (before[0] - 1, before[1]):
                     raise RequestHumanTakeover('Common retirement did not verify exactly one ship removed')
+                report['retired'].append(dict(ship=read.ship, level=1, dock_before=before, dock_after=after))
+                del report['pending']
                 before = after
                 remaining[read.ship] -= 1
+                report['dock_after'] = before
+                report['remaining'] = dict(remaining)
+                self._common_retire_audit(directory, report)
             self.dock_sort_method_dsc_set(True, wait_loading=False)
             self.dock_filter_set()
             report['dock_after'] = before
@@ -218,5 +254,5 @@ class CommonDuplicates:
                 report['recovered'] = False
             raise
         finally:
-            (directory / 'common.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+            self._common_retire_audit(directory, report)
             logger.info(f'Common duplicate retirement audit saved to {directory}')
