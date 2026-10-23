@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -121,7 +122,7 @@ def test_crash_cannot_reset_reserved_ex_attempt(tmp_path):
     resumed.assert_called_once_with(goal, inspect_only=True)
 
 
-@pytest.mark.parametrize('result', ['stopped', 'unavailable', 'already_complete'])
+@pytest.mark.parametrize('result', ['stopped', 'unavailable', 'deferred', 'already_complete'])
 def test_oil_or_locked_stage_does_not_consume_battle_budget(tmp_path, result):
     goal = StageGoal('campaign_main', '5-1')
     progress = StarProgress('f2p', 'CampaignStars', tmp_path)
@@ -269,6 +270,181 @@ def test_explicit_scheduler_deferral_refunds_only_before_campaign_run(monkeypatc
     resume.assert_called_once_with(goal, inspect_only=started)
 
 
+@pytest.mark.parametrize('complete,inspect_only,expected', [
+    (True, False, 'already_complete'), (False, True, 'capped'), (False, False, 'ran')])
+def test_star_inspection_precedes_morale_check_but_new_sortie_still_checks_it(
+        monkeypatch, complete, inspect_only, expected):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    order = []
+    check = Mock(side_effect=lambda count: order.append('morale'))
+    campaign = SimpleNamespace(
+        triggered_map_stop=lambda: order.append('stars') or complete,
+        handle_chapter_additional=Mock(), ensure_campaign_ui=Mock(), combat_status=Mock(),
+        enter_map_cancel=Mock(), emotion=SimpleNamespace(check_reduce=check), _map_battle=6, run_lost=False)
+
+    def run_campaign():
+        campaign.emotion.check_reduce(campaign._map_battle)
+        assert not order  # CampaignBase's preflight is deferred to the preparation read.
+        if campaign.triggered_map_stop():
+            raise ScriptEnd('Reach condition')
+        order.append('start')
+
+    campaign.run = run_campaign
+    monkeypatch.setattr(CampaignRun, 'load_campaign',
+                        lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+
+    def run(*args, **kwargs):
+        runner.load_campaign('t5', 'event_20261022_cn')
+        runner.run_count = 0
+        try:
+            campaign.run()
+        except ScriptEnd:
+            pass
+        else:
+            runner.run_count = 1
+
+    monkeypatch.setattr(runner, 'run', run)
+    assert runner.run_goal(StageGoal('event_20261022_cn', 'T5'), inspect_only=inspect_only) == expected
+    if complete or inspect_only:
+        check.assert_not_called()
+        assert order == ['stars']
+    else:
+        check.assert_called_once_with(6)
+        assert order == ['stars', 'morale', 'start']
+
+
+@pytest.mark.parametrize('goal_name,goal_type,prior_attempts', [('T5', 'three_stars', 1), ('SP', 'clear', 0)])
+def test_morale_deferral_preserves_copied_config_delay_dormrest_and_battle_budget(
+        monkeypatch, tmp_path, goal_name, goal_type, prior_attempts):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    original_time = datetime.now() - timedelta(minutes=1)
+    recovered = datetime.now() + timedelta(minutes=3)
+    runner.config.Scheduler_NextRun = original_time
+    # CampaignRun deep-copies task config; its persisted delay does not refresh
+    # the coordinator's cached Scheduler_NextRun value.
+    stage_config = SimpleNamespace(Scheduler_NextRun=original_time, task_call=Mock())
+
+    def delay_for_morale(count):
+        stage_config.Scheduler_NextRun = recovered
+        stage_config.task_call('DormRest', force_call=False)
+        raise ScriptEnd('Emotion control')
+
+    campaign = SimpleNamespace(
+        config=stage_config, triggered_map_stop=Mock(return_value=False),
+        handle_chapter_additional=Mock(), ensure_campaign_ui=Mock(), combat_status=Mock(),
+        emotion=SimpleNamespace(check_reduce=delay_for_morale), _map_battle=6,
+        enter_map_cancel=Mock(), run_lost=False)
+    start = Mock()
+
+    def run_campaign():
+        campaign.emotion.check_reduce(6)
+        campaign.triggered_map_stop()
+        start()
+
+    campaign.run = run_campaign
+    monkeypatch.setattr(CampaignRun, 'load_campaign',
+                        lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+
+    def run(*args, **kwargs):
+        runner.load_campaign(goal_name, 'event_20261022_cn')
+        runner.run_count = 0
+        try:
+            campaign.run()
+        except ScriptEnd:
+            pass
+
+    monkeypatch.setattr(runner, 'run', run)
+    goal = StageGoal('event_20261022_cn', goal_name, goal=goal_type)
+    progress = StarProgress('alas', 'EventStars', tmp_path)
+    progress.save(goal, attempts=prior_attempts, status='ran')
+    assert complete_stage(goal, progress, runner.run_goal) == 'deferred'
+    assert progress.record(goal) == dict(attempts=prior_attempts, status='deferred')
+    assert stage_config.Scheduler_NextRun == recovered
+    assert runner.config.Scheduler_NextRun == original_time
+    stage_config.task_call.assert_called_once_with('DormRest', force_call=False)
+    campaign.enter_map_cancel.assert_called_once_with()
+    start.assert_not_called()
+
+
+def test_oil_delay_before_campaign_run_is_a_deferred_result(monkeypatch, tmp_path):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    runner.config.Scheduler_NextRun = datetime.now() - timedelta(minutes=1)
+    runner.campaign = SimpleNamespace(run_lost=False)
+    next_run = datetime.now() + timedelta(hours=3)
+
+    def run(*args, **kwargs):
+        runner.run_count = 0
+        runner.config.Scheduler_NextRun = next_run
+
+    monkeypatch.setattr(runner, 'run', run)
+    goal = StageGoal('campaign_main', '2-3')
+    progress = StarProgress('f2p', 'CampaignStars', tmp_path)
+    assert complete_stage(goal, progress, runner.run_goal) == 'deferred'
+    assert progress.record(goal) == dict(attempts=0, status='deferred')
+    assert runner.config.Scheduler_NextRun == next_run
+
+
+def test_reused_campaign_checks_morale_again_before_its_second_sortie(monkeypatch):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    check = Mock(side_effect=[None, ScriptEnd('Emotion control')])
+    campaign = SimpleNamespace(
+        triggered_map_stop=Mock(return_value=False), handle_chapter_additional=Mock(),
+        ensure_campaign_ui=Mock(), combat_status=Mock(), enter_map_cancel=Mock(),
+        emotion=SimpleNamespace(check_reduce=check), _map_battle=6, run_lost=False)
+    start = Mock()
+
+    def run_campaign():
+        campaign.emotion.check_reduce(6)
+        campaign.triggered_map_stop()
+        start()
+
+    campaign.run = run_campaign
+    monkeypatch.setattr(CampaignRun, 'load_campaign',
+                        lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+    runner.load_campaign('t5', 'event_20261022_cn')
+
+    def run(*args, **kwargs):
+        # CampaignRun reuses the same loaded module for another attempt.
+        runner.run_count = 0
+        try:
+            campaign.run()
+        except ScriptEnd:
+            pass
+        else:
+            runner.run_count = 1
+
+    monkeypatch.setattr(runner, 'run', run)
+    goal = StageGoal('event_20261022_cn', 'T5')
+    assert runner.run_goal(goal) == 'ran'
+    assert runner.run_goal(goal) == 'deferred'
+    assert check.call_count == 2
+    start.assert_called_once_with()
+    campaign.enter_map_cancel.assert_called_once_with()
+
+
+def test_entered_campaign_interruption_keeps_its_durable_attempt(monkeypatch, tmp_path):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    runner.campaign = SimpleNamespace(run_lost=False)
+
+    def run(*args, **kwargs):
+        runner.attempt_started = True
+        runner.run_count = 0
+
+    monkeypatch.setattr(runner, 'run', run)
+    goal = StageGoal('event_20261022_cn', 'SP', goal='clear')
+    progress = StarProgress('alas', 'EventStars', tmp_path)
+    assert complete_stage(goal, progress, runner.run_goal) == 'interrupted'
+    assert progress.record(goal) == dict(attempts=1, status='interrupted')
+    resume = Mock(return_value='capped')
+    assert complete_stage(goal, progress, resume) == 'capped'
+    resume.assert_called_once_with(goal, inspect_only=True)
+
+
 @pytest.mark.parametrize('boss_cleared,result', [(False, 'blocked'), (True, 'complete')])
 def test_one_clear_goal_rejects_early_emotion_withdrawal(monkeypatch, boss_cleared, result):
     runner = StageStarsRunner.__new__(StageStarsRunner)
@@ -383,11 +559,28 @@ def test_completed_or_held_job_dispatches_farming_task(monkeypatch, tmp_path, re
         job.config.task_delay.assert_called_once()
 
 
-def test_final_reward_failure_retries_without_replaying_completed_stages(monkeypatch, tmp_path):
+def test_deferred_job_preserves_handler_delay_and_does_not_dispatch_or_collect(monkeypatch, tmp_path):
+    goal = StageGoal('event_20261022_cn', 'T5')
+    job, progress, runner, _ = make_job(monkeypatch, tmp_path, [goal], 'deferred')
+    recovered = datetime.now() + timedelta(minutes=3)
+    job.config.Scheduler_NextRun = recovered
+    progress.save(goal, attempts=1, status='ran')
+    job.run()
+    assert progress.record(goal) == dict(attempts=1, status='deferred')
+    assert job.config.Scheduler_NextRun == recovered
+    assert job.config.Scheduler_Enable
+    job.config.task_delay.assert_not_called()
+    job.config.task_call.assert_not_called()
+    job.collect.assert_called_once_with(before=True)
+    job.extra_objectives.assert_not_called()
+
+
+@pytest.mark.parametrize('reward_key', ['rewards', 'event_hub_rewards'])
+def test_final_reward_failure_retries_without_replaying_completed_stages(monkeypatch, tmp_path, reward_key):
     goal = StageGoal('campaign_main', '1-1')
     job, progress, runner, factory = make_job(monkeypatch, tmp_path, [goal])
     job.collect.side_effect = [dict(story='disabled', rewards='complete'),
-                               dict(story='disabled', rewards='failed'),
+                               dict(story='disabled', **{reward_key: 'failed'}),
                                dict(story='disabled', rewards='complete'),
                                dict(story='disabled', rewards='complete')]
 

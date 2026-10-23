@@ -9,6 +9,7 @@ import os
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 
 from module.base.timer import Timer
 from module.campaign.run import CampaignRun
@@ -147,6 +148,9 @@ class StageStarsRunner(CampaignRun):
         original_ensure = campaign.ensure_campaign_ui
         original_combat_status = campaign.combat_status
         original_run = getattr(campaign, 'run', None)
+        emotion = getattr(campaign, 'emotion', None)
+        original_check_reduce = getattr(emotion, 'check_reduce', None)
+        emotion_checked = False
         deadline = None
 
         def chapter_additional():
@@ -178,16 +182,29 @@ class StageStarsRunner(CampaignRun):
                 raise StageUnavailable(f'Event chapter selector did not reach {chapter}')
 
         def run_campaign(*args, **kwargs):
+            nonlocal emotion_checked
             # Commission notices and event expiry stop CampaignRun before this
             # call. Once map execution begins, any interruption keeps the budget.
             self.attempt_started = True
+            emotion_checked = False
             return original_run(*args, **kwargs)
 
         def map_stop():
+            nonlocal emotion_checked
             self.goal_complete = original_stop()
             if not self.goal_complete and self.inspect_only:
                 campaign.enter_map_cancel()
                 raise ScriptEnd('Final star inspection: stage still incomplete')
+            if not self.goal_complete and original_check_reduce is not None and not emotion_checked:
+                # Inspect the preparation stars before requiring another sortie's
+                # morale. The same preflight check still gates its Start click.
+                try:
+                    original_check_reduce(campaign._map_battle)
+                except ScriptEnd:
+                    self.scheduler_deferred = True
+                    campaign.enter_map_cancel()
+                    raise
+                emotion_checked = True
             return self.goal_complete
 
         def combat_status(drop=None, expected_end=None):
@@ -213,6 +230,8 @@ class StageStarsRunner(CampaignRun):
             campaign.run = run_campaign
         campaign.triggered_map_stop = map_stop
         campaign.combat_status = combat_status
+        if original_check_reduce is not None:
+            emotion.check_reduce = lambda battle: None
         # CampaignRun catches ScriptEnd after this call. The job, not the map,
         # owns progression, scheduler state and the next task.
         campaign.handle_map_stop = lambda: None
@@ -221,6 +240,8 @@ class StageStarsRunner(CampaignRun):
     def run_goal(self, goal, inspect_only=False):
         self.inspect_only, self.goal_complete, self.boss_cleared = inspect_only, False, False
         self.attempt_started = False
+        self.scheduler_deferred = False
+        next_run_before = getattr(self.config, 'Scheduler_NextRun', None)
         with stage_overrides(self.config, goal):
             try:
                 self.run(goal.stage, folder=goal.event, mode=goal.mode, total=1)
@@ -237,12 +258,16 @@ class StageStarsRunner(CampaignRun):
                 return 'blocked'
         if self.goal_complete:
             return 'already_complete'
+        next_run = getattr(self.config, 'Scheduler_NextRun', None)
+        if self.scheduler_deferred or (not self.attempt_started and
+                isinstance(next_run, datetime) and next_run != next_run_before and next_run > datetime.now()):
+            return 'deferred'
         if getattr(self.campaign, 'run_lost', False):
             return 'lost'
         if inspect_only:
             return 'capped'
         if not self.run_count:
-            return 'stopped'
+            return 'interrupted' if self.attempt_started else 'stopped'
         if goal.goal == 'clear':
             # An emotion/fleet withdrawal can end a run without defeating the boss.
             return 'complete' if self.boss_cleared else 'blocked'
@@ -270,7 +295,7 @@ def complete_stage(goal, progress, attempt, max_runs=6):
                 progress.save(goal, attempts=runs - 1, status='deferred')
             raise
         # Navigation/oil deferral did not run combat. Return its reservation.
-        if result in ('unavailable', 'stopped', 'already_complete') and not inspecting:
+        if result in ('unavailable', 'stopped', 'deferred', 'already_complete') and not inspecting:
             runs -= 1
         if result == 'already_complete':
             result = 'complete'
@@ -317,6 +342,10 @@ class CampaignStars(CampaignRun):
             runner = StageStarsRunner(config=self.config, device=self.device)
             result = complete_stage(goal, progress, runner.run_goal, self.config.StarPass_MaxRunsPerStage)
             logger.attr('Star_pass_stage', f'{goal.key}: {result}')
+            if result == 'deferred':
+                # The stage's own oil/morale handler already scheduled its retry
+                # and any DormRest work. Do not replace that time or dispatch farm.
+                return
             if result != 'complete':
                 break
             if self.config.task_switched():
@@ -325,8 +354,8 @@ class CampaignStars(CampaignRun):
                 return
         completion = self.collect()
         if all(progress.record(goal).get('status') == 'complete' for goal in plan):
-            if completion and completion.get('rewards') == 'failed':
-                logger.warning('Star pass stages complete; retry pending mission reward collection')
+            if completion and any(completion.get(key) == 'failed' for key in ('rewards', 'event_hub_rewards')):
+                logger.warning('Star pass stages complete; retry pending reward collection')
                 self.config.task_delay(success=False)
                 self.call_then_task()
                 return
@@ -339,7 +368,7 @@ class CampaignStars(CampaignRun):
             logger.warning('Star pass held for fleet/progress review; saved attempts will not reset')
             self.config.task_delay(minute=360)
             self.call_then_task()
-        elif result in ('stopped', 'unavailable'):
+        elif result in ('stopped', 'unavailable', 'interrupted'):
             self.config.task_delay(minute=120)
             self.call_then_task()
         else:
