@@ -6,7 +6,11 @@ the exact archive/stage from captured UI. Unknown observations never authorize
 navigation or combat. The provider is responsible for bounding its own controls.
 """
 from contextlib import contextmanager
+import re
 from time import monotonic
+
+import cv2
+import numpy as np
 
 from module.base.timer import Timer
 from module.campaign.run import CampaignRun
@@ -19,8 +23,36 @@ from module.handler.assets import POPUP_CANCEL, POPUP_CONFIRM, USE_DATA_KEY
 from module.handler.fast_forward import to_map_file_name
 from module.logger import logger
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_CANCEL, MAP_PREPARATION_HARD
+from module.map.assets import FLEET_1_ADVICE, FLEET_1_CLEAR, FLEET_2_ADVICE, FLEET_2_CLEAR
+from module.ocr.ocr import Ocr
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 from module.war_archives.catalog import get_archive
+from module.war_archives.execution_assets import (
+    ARCHIVE_DISABLED_SUB, ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_GO, ARCHIVE_HARD_SURFACE)
+
+
+_REQUIREMENT = re.compile(r'(AverageLevel|Total(?:HP|FP|TRP|AVI|AA|RLD|EVA|HIT|ASW))>(0|[1-9][0-9]{0,5})\((0|[1-9][0-9]{0,5})\)')
+
+
+def parse_hard_requirements(lines):
+    """Accept only fully read, satisfied known comparisons, never OCR defaults."""
+    result = []
+    for line in lines:
+        text = re.sub(r'\s+', '', str(line)).replace('（', '(').replace('）', ')')
+        cursor = 0
+        for match in _REQUIREMENT.finditer(text):
+            if match.start() != cursor:
+                return None
+            name, threshold, current = match.groups()
+            if int(current) <= int(threshold):
+                return None
+            result.append((name, int(threshold), int(current)))
+            cursor = match.end()
+        if cursor != len(text):
+            return None
+    if not 1 <= len(result) <= 6 or len({row[0] for row in result}) != len(result):
+        return None
+    return tuple(result)
 
 
 class ArchiveBlocked(ScriptEnd):
@@ -148,6 +180,69 @@ class WarArchivesExecution(CampaignRun):
                 and type(value.get('key_capacity')) is int
                 and type(value.get('raw_keys')) is int
                 and 5 <= value['raw_keys'] <= 300)
+
+    def _hard_fleet_witness(self, campaign):
+        """Only the captured two-surface-row layout, with every stat satisfied.
+
+        Hard fleets belong to the stage. Common fleet numbers must never be
+        applied to their rows. Unknown layouts/requirements need another capture.
+        """
+        if not all(campaign.match_template_color(button, offset=(3, 3), similarity=.85)
+                   for button in (ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_SURFACE,
+                                  ARCHIVE_DISABLED_SUB, ARCHIVE_HARD_GO)):
+            return None
+        if not all(campaign.match_template_color(button, offset=(-20, -80, 20, 5), similarity=.85)
+                   for button in (FLEET_1_ADVICE, FLEET_1_CLEAR, FLEET_2_ADVICE, FLEET_2_CLEAR)):
+            return None
+        image = campaign.device.image
+        # Lower portrait strips avoid the empty slot's central plus sign. Each
+        # surface row needs a backline and a frontline ship, independently of
+        # the global stat comparisons or the enabled Go button.
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        for y in (242, 356):
+            occupied = [np.std(gray[y:y + 18, x:x + 72], ddof=1) > 27
+                        for x in (377, 482, 587, 696, 800, 905)]
+            if not occupied[0] or not any(occupied[3:]):
+                return None
+        area = image[559:607, 106:976]
+        red, green, blue = [area[:, :, index].astype(float) for index in range(3)]
+        bright = np.max(area, axis=2) > 180
+        gold = ((red > 150) & (green > 130) & (blue < 180)
+                & (red >= green * .85) & (green >= red * .7))
+        # The OCR is gold-filtered. Reject other bright text first so an unmet
+        # red/white comparison cannot disappear from OCR and falsely pass.
+        if np.count_nonzero(bright & ~gold) or np.count_nonzero(bright & gold) < 100:
+            return None
+        crops = [cv2.resize(image[y1:y2, 106:976], None, fx=2, fy=2,
+                            interpolation=cv2.INTER_CUBIC) for y1, y2 in ((559, 582), (582, 607))]
+        reader = Ocr([(0, 0, 1, 1)] * 2, lang='cnocr', letter=(250, 240, 126),
+                     threshold=128, name='ARCHIVE_HARD_REQUIREMENTS')
+        return parse_hard_requirements(reader.ocr(crops, direct_ocr=True))
+
+    def _prepare_hard_fleet(self, campaign):
+        previous, frames = None, 0
+        stable = Timer(1, count=2).start()
+        for _ in campaign.loop(skip_first=False, timeout=12):
+            self._check_switch()
+            witness = self._hard_fleet_witness(campaign)
+            if witness is None or witness != previous:
+                previous, frames = witness, 0
+                stable.reset()
+            if witness is not None:
+                frames += 1
+                if frames >= 3 and stable.reached():
+                    campaign.map_is_hard_mode = True
+                    campaign.config.SUBMARINE = 0  # Exact disabled row above.
+                    from module.mood.lineup import record_lineup
+                    record_lineup(campaign)
+                    campaign.device.screenshot()
+                    if self._hard_fleet_witness(campaign) == witness:
+                        logger.info('Archive Hard stage-owned fleets and every stat requirement verified')
+                        return False
+                    break
+        self.diagnostic = str(save_event_diagnostic(
+            campaign.device, f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_hard_unverified') or '')
+        raise ArchiveBlocked('hard_lineup_or_requirements_unverified')
 
     def _prepare(self):
         self._check_switch()
@@ -283,7 +378,8 @@ class WarArchivesExecution(CampaignRun):
             campaign.device = _FleetPreparationDevice(original_device, entry_guard, deadline=deadline)
             try:
                 entry_guard()
-                result = original_fleet(*args, **kwargs)
+                result = (self._prepare_hard_fleet(campaign) if self.goal.mode == 'hard'
+                          else original_fleet(*args, **kwargs))
                 campaign.device._check()
                 entry_guard()
                 return result

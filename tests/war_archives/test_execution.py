@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
+from pathlib import Path
 
+import numpy as np
+from PIL import Image
 import pytest
 
 from module.campaign.campaign_stars import StageGoal
@@ -659,4 +662,112 @@ def test_cancel_rejects_receipt_or_unknown_dialog_above_recognizable_stage(monke
     campaign.appear.side_effect = lambda button, **kwargs: button is overlay
     with pytest.raises(ex.ArchiveBlocked, match='preparation_return_unrecognized'):
         ex.WarArchivesExecution._cancel_preparation(owner, campaign)
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('lines,expected', [
+    (['Average Level>70(124）TotalTRP>700（2477)', 'TotalEVA>400(1293)'],
+     (('AverageLevel', 70, 124), ('TotalTRP', 700, 2477), ('TotalEVA', 400, 1293))),
+    (['Total AVI > 1200 (2200)', 'AverageLevel>90(110)'],
+     (('TotalAVI', 1200, 2200), ('AverageLevel', 90, 110))),
+    (['AverageLevel>70(70)'], None), (['TotalTRP>700(699)'], None),
+    (['UnknownStat>1(2)'], None), (['TotalTRP>0(0)'], None),
+    (['TotalTRP>700(2477) unreadable'], None),
+    (['TotalTRP>700(2477)', 'TotalTRP>100(2477)'], None),
+    (['TotalTRP>700'], None), ([''], None), ([], None)])
+def test_hard_requirement_grammar_requires_every_known_comparison_satisfied(lines, expected):
+    assert ex.parse_hard_requirements(lines) == expected
+
+
+def real_hard_fleet():
+    from module.config.server import set_server
+    set_server('en')
+    image = np.array(Image.open(Path(__file__).parent / 'data' / 'archive_hard_fleet.png').convert('RGB'))
+    device = SimpleNamespace(image=image, screenshot=Mock(), click=Mock())
+    campaign = SimpleNamespace(device=device, config=SimpleNamespace())
+    campaign.match_template_color = lambda button, **kwargs: button.match_template_color(device.image, **kwargs)
+    return campaign
+
+
+def test_real_hard_fleet_fixture_has_satisfied_generic_requirements_unmocked_ocr():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_hard_fleet()
+    assert owner._hard_fleet_witness(campaign) == (
+        ('AverageLevel', 70, 124), ('TotalTRP', 700, 2477), ('TotalEVA', 400, 1293))
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('area', [
+    (108, 108, 319, 144), (115, 170, 168, 384), (431, 435, 986, 516),
+    (989, 559, 1144, 605), (995, 186, 1074, 257), (1080, 190, 1158, 252),
+    (1000, 305, 1080, 362), (1080, 305, 1158, 365),
+    (370, 235, 665, 265), (690, 235, 983, 265),
+    (370, 350, 665, 380), (690, 350, 983, 380), (106, 559, 976, 607)])
+def test_hard_fleet_rejects_missing_layout_controls_rows_or_requirements(area):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_hard_fleet()
+    x1, y1, x2, y2 = area
+    campaign.device.image[y1:y2, x1:x2] = 0
+    assert owner._hard_fleet_witness(campaign) is None
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('color', [(255, 40, 40), (255, 255, 255), (40, 255, 40)])
+def test_hard_fleet_rejects_bright_nongold_requirement_before_filtered_ocr(monkeypatch, color):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_hard_fleet()
+    campaign.device.image[589:601, 500:550] = color
+    reader = Mock()
+    monkeypatch.setattr(ex, 'Ocr', reader)
+    assert owner._hard_fleet_witness(campaign) is None
+    reader.assert_not_called()
+
+
+def hard_preparation_controller(monkeypatch, witnesses):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    owner.config = SimpleNamespace(config_name='alas', check_task_switch=Mock())
+    owner.goal = StageGoal(EVENT, 'C1', 'hard', 'archive_clear')
+    campaign = SimpleNamespace(device=SimpleNamespace(screenshot=Mock(), click=Mock()),
+                               config=SimpleNamespace())
+    campaign.loop = lambda **kwargs: iter([None] * len(witnesses))
+    owner._hard_fleet_witness = Mock(side_effect=witnesses)
+    monkeypatch.setattr(ex, 'Timer', ReadyTimer)
+    from module.mood import lineup
+    record = Mock()
+    monkeypatch.setattr(lineup, 'record_lineup', record)
+    monkeypatch.setattr(ex, 'save_event_diagnostic', Mock(return_value='/tmp/hard.png'))
+    return owner, campaign, record
+
+
+def test_hard_preparation_requires_three_equal_fresh_frames_and_final_recheck(monkeypatch):
+    proof = (('AverageLevel', 70, 124),)
+    owner, campaign, record = hard_preparation_controller(monkeypatch, [proof] * 4)
+    assert owner._prepare_hard_fleet(campaign) is False
+    assert owner._hard_fleet_witness.call_count == 4
+    assert campaign.map_is_hard_mode is True and campaign.config.SUBMARINE == 0
+    record.assert_called_once_with(campaign)
+    campaign.device.screenshot.assert_called_once()
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('witnesses', [[None] * 4, [(('TotalTRP', 10, 20),)] * 3 + [None],
+    [(('TotalTRP', 10, 20),), None, (('TotalTRP', 10, 20),)]])
+def test_hard_unknown_unstable_or_changed_final_frame_never_permits_go(monkeypatch, witnesses):
+    owner, campaign, _ = hard_preparation_controller(monkeypatch, witnesses)
+    with pytest.raises(ex.ArchiveBlocked, match='hard_lineup_or_requirements_unverified'):
+        owner._prepare_hard_fleet(campaign)
+    campaign.device.click.assert_not_called()
+    assert owner.diagnostic == '/tmp/hard.png'
+
+
+def test_hard_stage_bypasses_common_fleet_number_selection(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    monkeypatch.setattr(ex, 'stage_names', Mock(return_value=['c1']))
+    proof.update(stage='C1', mode='hard')
+    original = campaign.fleet_preparation
+    owner._prepare_hard_fleet = Mock(return_value=False)
+    result = invoke(owner, proof, prepare, reserve, goal=StageGoal(EVENT, 'C1', 'hard', 'archive_clear'))
+    assert result['status'] == 'complete' and state.starts == 1
+    owner._prepare_hard_fleet.assert_called_once_with(campaign)
+    original.assert_not_called()
     campaign.device.click.assert_not_called()
