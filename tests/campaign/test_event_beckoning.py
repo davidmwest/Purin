@@ -127,6 +127,10 @@ def test_unrecognized_start_cannot_attempt_the_choice_entry(immediate):
 
 
 def test_observer_departure_without_exact_choice_cannot_authorize_collection(immediate, monkeypatch, tmp_path):
+    from module.campaign import event_beckoning_story
+    stories = Mock()
+    stories.resume_viewer.return_value = True
+    monkeypatch.setattr(event_beckoning_story, 'BeckoningStoryContinuation', Mock(return_value=stories))
     helper = controller()
     helper._on_choice.return_value = False
     navigator = Mock()
@@ -351,6 +355,11 @@ def test_closed_game_does_not_spend_any_budget(tmp_path):
 
 
 def test_run_preserves_row_audits_and_returns_through_known_helper(immediate, monkeypatch, tmp_path):
+    from module.campaign import event_beckoning_story
+    stories = Mock()
+    stories.resume_viewer.return_value = True
+    stories.collect_milestones.return_value = True
+    monkeypatch.setattr(event_beckoning_story, 'BeckoningStoryContinuation', Mock(return_value=stories))
     previous = dict(monthly=dict(clicks=1, pending=False, verified=True))
     save_reward_observations('f2p', {EVENT + ':beckoning_ticket_collection': dict(rows=previous)}, folder=tmp_path)
     helper = controller()
@@ -366,10 +375,12 @@ def test_run_preserves_row_audits_and_returns_through_known_helper(immediate, mo
     navigator._return_event_hub_main.return_value = True
     monkeypatch.setattr(beckoning, 'EventCompletion', Mock(return_value=navigator))
     helper._collect = Mock(return_value=True)
-    helper._inspect_first_unlock = Mock()
     audit = helper.run(EVENT, folder=tmp_path)
     assert audit['returned_main'] is True and audit['story_complete'] is False
     assert audit['rows'] == previous
-    helper._inspect_first_unlock.assert_called_once()
+    stories.resume_viewer.assert_called_once_with()
+    stories.observe_unlock_payment.assert_called_once_with()
+    stories.collect_milestones.assert_called_once_with()
+    stories.run_cards.assert_called_once_with()
     assert navigator._return_event_hub_main.call_count == 2
     assert load_reward_observations('f2p', folder=tmp_path)[EVENT + ':beckoning_ticket_collection']['returned_main'] is True

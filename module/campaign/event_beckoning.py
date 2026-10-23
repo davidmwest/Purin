@@ -1,8 +1,4 @@
-"""Receive two observed free tickets, then inspect one locked character story.
-
-This is not a side-story completion runner. Unknown unlock confirmations are
-captured without action, and each mission/card action has a durable budget.
-"""
+"""Collect observed free tickets and complete the six Beckoning stories."""
 from datetime import datetime
 
 from module.base.timer import Timer
@@ -210,14 +206,21 @@ class BeckoningTickets(Reward):
 
         persist()
         helper = EventCompletion(config=self.config, device=self.device)
+        from module.campaign.event_beckoning_story import BeckoningStoryContinuation
+        stories = BeckoningStoryContinuation(self, record, state, event, persist)
         try:
-            if not self._enter_choice(helper, record):
+            self.device.screenshot()
+            if not stories.resume_viewer():
+                pass
+            elif not self._enter_choice(helper, record):
                 record.update(status='failed', reason=record.get('reason', 'choice_page_unavailable'))
-            elif self._collect(record, persist):
-                self._inspect_first_unlock(record, state, event + ':beckoning_first_unlock', persist)
+            elif stories.observe_unlock_payment() and self._collect(record, persist):
+                if stories.collect_milestones():
+                    stories.run_cards()
             self._capture(record, 'ticket_step_finished')
         except Exception:
             record.update(status='failed', reason='beckoning_ticket_exception')
+            self._capture(record, 'ticket_exception')
             raise
         finally:
             try:
