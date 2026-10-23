@@ -6,7 +6,7 @@ import pytest
 
 from module.campaign import event_extra
 from module.campaign.event_extra import EventExtraScout, load_extra_state, save_extra_state
-from module.exception import ScriptError
+from module.exception import GameNotRunningError, ScriptError
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION
 
 EVENT = 'event_20261022_cn'
@@ -15,7 +15,8 @@ EVENT = 'event_20261022_cn'
 def controller():
     helper = EventExtraScout.__new__(EventExtraScout)
     helper.config = SimpleNamespace(config_name='f2p', STAGE_ENTRANCE=['old'], override=Mock())
-    helper.device = SimpleNamespace(screenshot=Mock(), click=Mock(), image='screen')
+    helper.device = SimpleNamespace(screenshot=Mock(), click=Mock(), image='screen',
+                                    app_is_running=Mock(return_value=True))
     helper._extra_capture = Mock()
     helper._observe_rewards = Mock(return_value={'status': 'observed', 'diagnostics': ['/tmp/event_list.png']})
     return helper
@@ -84,6 +85,17 @@ def test_unsupported_event_has_no_budget_or_device_actions(tmp_path):
     assert helper.run('event_unknown', folder=tmp_path)['status'] == 'unsupported'
     assert list(tmp_path.iterdir()) == []
     helper._inspect_extra.assert_not_called()
+
+
+def test_closed_game_never_spends_scout_or_reward_observation_budget(tmp_path):
+    helper = controller()
+    helper.device.app_is_running.return_value = False
+    helper._inspect_extra = Mock()
+    with pytest.raises(GameNotRunningError):
+        helper.run(EVENT, folder=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+    helper._inspect_extra.assert_not_called()
+    helper._observe_rewards.assert_not_called()
 
 
 def test_preparation_is_captured_but_no_fleet_or_battle_start_is_tapped(monkeypatch):

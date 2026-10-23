@@ -12,7 +12,7 @@ from time import monotonic
 
 from module.base.timer import Timer
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
-from module.eventstory.eventstory import EventStory, ensure_event_page, save_event_diagnostic
+from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
 from module.logger import logger
 from module.reward.assets import MISSION_EMPTY, MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
@@ -65,6 +65,7 @@ class EventCompletion(Reward):
         """Capture the recognized activity list once; never open an unknown event banner."""
         if event not in REWARD_OBSERVATION_EVENTS:
             return dict(status='unsupported', diagnostics=[])
+        ensure_event_running(self)
         account = self.config.config_name
         state = load_reward_observations(account, folder=folder)
         if event in state:
@@ -168,7 +169,9 @@ class EventCompletion(Reward):
         if not ensure_event_page(self, page_mission):
             save_event_diagnostic(self.device, 'mission_page_blocked')
             return False
-        self.reward_side_navbar_ensure(upper=1)
+        if not self.reward_side_navbar_ensure(upper=1):
+            save_event_diagnostic(self.device, 'mission_navbar_blocked')
+            return False
         state = self._reward_wait_mission_list()
         deadline = monotonic() + MISSION_TIMEOUT
         for _ in range(MISSION_CLAIMS_MAX):

@@ -9,7 +9,7 @@ from module.campaign.campaign_stars import (CampaignStars, EventExtra, EventStar
                                             StarProgress, campaign_plan, complete_stage, event_plan,
                                             stage_overrides)
 from module.campaign.run import CampaignRun
-from module.exception import ScriptEnd
+from module.exception import CampaignEnd, GameNotRunningError, ScriptEnd
 
 
 def test_main_plan_is_ordered_and_has_an_explicit_upper_bound():
@@ -178,7 +178,7 @@ def test_stage_runner_reuses_map_stop_without_disabling_job(monkeypatch):
     runner = StageStarsRunner.__new__(StageStarsRunner)
     campaign = SimpleNamespace(triggered_map_stop=Mock(return_value=True),
                                handle_map_stop=Mock(), handle_chapter_additional=Mock(),
-                               ensure_campaign_ui=Mock(), enter_map_cancel=Mock(), combat=Mock())
+                               ensure_campaign_ui=Mock(), enter_map_cancel=Mock(), combat_status=Mock())
     def load(self, name, folder):
         self.campaign = campaign
         return True
@@ -194,7 +194,7 @@ def test_final_inspection_cancels_incomplete_map_before_fleet_or_battle(monkeypa
     runner.inspect_only = True
     campaign = SimpleNamespace(triggered_map_stop=Mock(return_value=False),
                                handle_map_stop=Mock(), handle_chapter_additional=Mock(),
-                               ensure_campaign_ui=Mock(), enter_map_cancel=Mock(), combat=Mock())
+                               ensure_campaign_ui=Mock(), enter_map_cancel=Mock(), combat_status=Mock())
     monkeypatch.setattr(CampaignRun, 'load_campaign', lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
     runner.load_campaign('campaign_1_1')
     with pytest.raises(ScriptEnd, match='still incomplete'):
@@ -211,7 +211,7 @@ def test_chapter_navigation_timeout_terminates_unlocked_stage_search(monkeypatch
     monkeypatch.setattr(stars, 'Timer', Mock(return_value=timer))
     additional = Mock()
     campaign = SimpleNamespace(triggered_map_stop=Mock(return_value=False), handle_map_stop=Mock(),
-                               handle_chapter_additional=additional, enter_map_cancel=Mock(), combat=Mock())
+                               handle_chapter_additional=additional, enter_map_cancel=Mock(), combat_status=Mock())
     campaign.ensure_campaign_ui = lambda: campaign.handle_chapter_additional()
     monkeypatch.setattr(CampaignRun, 'load_campaign', lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
     runner.load_campaign('campaign_1_1')
@@ -238,11 +238,37 @@ def test_only_won_boss_combat_returning_to_campaign_proves_one_clear(
     runner = StageStarsRunner.__new__(StageStarsRunner)
     runner.boss_cleared = False
     campaign = SimpleNamespace(triggered_map_stop=Mock(return_value=False), handle_chapter_additional=Mock(),
-                               ensure_campaign_ui=Mock(), combat=Mock(return_value=True),
-                               combat_won=won, combat_lost=lost)
+                               ensure_campaign_ui=Mock(), combat_status=Mock(return_value=True),
+                               combat_won=won, combat_lost=lost, run_lost=False,
+                               is_in_stage=Mock(return_value=True))
     monkeypatch.setattr(CampaignRun, 'load_campaign', lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
     runner.load_campaign('sp', 'event_test')
-    assert campaign.combat(expected_end=expected_end) is True
+    assert campaign.combat_status(expected_end=expected_end) is True
+    assert runner.boss_cleared is complete
+
+
+@pytest.mark.parametrize('won_before,won_cleanup,in_stage,run_lost,complete', [
+    (True, False, True, False, True), (False, True, True, False, True),
+    (True, False, False, False, False), (False, False, True, False, False),
+    (True, False, True, True, False)])
+def test_boss_victory_survives_cleanup_flag_reset_and_campaign_end(
+        monkeypatch, won_before, won_cleanup, in_stage, run_lost, complete):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.boss_cleared = False
+    campaign = SimpleNamespace(triggered_map_stop=Mock(return_value=False), handle_chapter_additional=Mock(),
+                               ensure_campaign_ui=Mock(), combat_won=won_before, combat_lost=False,
+                               run_lost=run_lost, is_in_stage=Mock(return_value=in_stage))
+
+    def cleanup(drop=None, expected_end=None):
+        campaign.combat_won = won_cleanup
+        campaign.combat_lost = False
+        raise CampaignEnd('In stage.' if in_stage else 'Main page')
+
+    campaign.combat_status = cleanup
+    monkeypatch.setattr(CampaignRun, 'load_campaign', lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+    runner.load_campaign('sp', 'event_test')
+    with pytest.raises(CampaignEnd):
+        campaign.combat_status(expected_end='in_stage')
     assert runner.boss_cleared is complete
 
 
@@ -254,6 +280,7 @@ def make_job(monkeypatch, tmp_path, goals, result='already_complete'):
     monkeypatch.setattr(stars, 'StageStarsRunner', factory)
     job = CampaignStars.__new__(CampaignStars)
     job.device = Mock()
+    job.ui_get_current_page = Mock()
     job.config = SimpleNamespace(
         config_name='f2p', task=SimpleNamespace(command='CampaignStars'),
         StarPass_StagesPerRun=4, StarPass_MaxRunsPerStage=6, StopCondition_ThenTask='Event',
@@ -305,12 +332,32 @@ def test_extra_inspection_runs_once_then_disables_without_stage_runner(monkeypat
     monkeypatch.setattr(event_extra, 'EventExtraScout', factory)
     job = EventExtra.__new__(EventExtra)
     job.device = Mock()
+    job.ui_get_current_page = Mock()
     job.config = SimpleNamespace(Campaign_Event='event_20261022_cn', Scheduler_Enable=True,
                                  StopCondition_ThenTask='EventStars', task_call=Mock())
     job.run()
     factory.return_value.run.assert_called_once_with('event_20261022_cn')
     assert not job.config.Scheduler_Enable
     job.config.task_call.assert_called_once_with('EventStars', force_call=True)
+
+
+@pytest.mark.parametrize('job_class', [CampaignStars, EventStars, EventExtra])
+def test_new_jobs_detect_closed_game_before_navigation_or_progress_budget(monkeypatch, job_class):
+    from module.campaign import event_extra
+    job = job_class.__new__(job_class)
+    job.ui_get_current_page = Mock(side_effect=GameNotRunningError('Game not running'))
+    job.make_plan = Mock()
+    job.collect = Mock()
+    progress = Mock()
+    scout = Mock()
+    monkeypatch.setattr(stars, 'StarProgress', progress)
+    monkeypatch.setattr(event_extra, 'EventExtraScout', scout)
+    with pytest.raises(GameNotRunningError):
+        job.run()
+    job.make_plan.assert_not_called()
+    job.collect.assert_not_called()
+    progress.assert_not_called()
+    scout.assert_not_called()
 
 
 def test_story_failure_dispatches_farming_without_stage_navigation(monkeypatch, tmp_path):

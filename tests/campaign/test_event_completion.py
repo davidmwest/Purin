@@ -5,7 +5,7 @@ import pytest
 
 from module.campaign import event_completion as completion
 from module.campaign.event_completion import EventCompletion, load_reward_observations, save_reward_observations
-from module.exception import ScriptError
+from module.exception import GameNotRunningError, ScriptError
 from module.reward.assets import MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
 from module.ui.page import page_event_list, page_main, page_mission
 
@@ -13,7 +13,8 @@ from module.ui.page import page_event_list, page_main, page_mission
 def controller():
     helper = EventCompletion.__new__(EventCompletion)
     helper.config = SimpleNamespace(config_name='f2p')
-    helper.device = SimpleNamespace(stuck_record_clear=Mock(), click_record_clear=Mock(), click=Mock())
+    helper.device = SimpleNamespace(stuck_record_clear=Mock(), click_record_clear=Mock(), click=Mock(),
+                                    app_is_running=Mock(return_value=True))
     helper.interval_clear = Mock()
     return helper
 
@@ -145,12 +146,20 @@ def test_unreadable_observation_budget_fails_closed(monkeypatch, tmp_path, conte
     navigate.assert_not_called()
 
 
+def test_closed_game_does_not_spend_activity_observation_budget(tmp_path):
+    helper = controller()
+    helper.device.app_is_running.return_value = False
+    with pytest.raises(GameNotRunningError):
+        helper.observe_event_rewards('event_20261022_cn', folder=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
 def mission_controller(monkeypatch, state):
     helper = controller()
     monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
     monkeypatch.setattr(completion, 'save_event_diagnostic', Mock())
     helper.reward_mission_notice = Mock(return_value=True)
-    helper.reward_side_navbar_ensure = Mock()
+    helper.reward_side_navbar_ensure = Mock(return_value=True)
     helper._reward_wait_mission_list = Mock(return_value=state)
     helper._event_mission_click = Mock(return_value=True)
     helper._event_mission_receive = Mock(return_value=MISSION_UNFINISH)
@@ -192,6 +201,15 @@ def test_missing_notice_does_not_enter_the_mission_screen(monkeypatch):
     assert helper.collect_event_missions() is True
     completion.ensure_event_page.assert_called_once_with(helper, page_main)
     helper.reward_side_navbar_ensure.assert_not_called()
+
+
+def test_failed_all_missions_navbar_does_not_claim_another_tabs_empty_state(monkeypatch):
+    helper = mission_controller(monkeypatch, MISSION_UNFINISH)
+    helper.reward_side_navbar_ensure.return_value = False
+    assert helper.collect_event_missions() is False
+    helper._reward_wait_mission_list.assert_not_called()
+    helper._event_mission_click.assert_not_called()
+    completion.save_event_diagnostic.assert_called_once()
 
 
 def test_claim_button_is_never_tapped_off_the_mission_page():

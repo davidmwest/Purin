@@ -141,7 +141,7 @@ class StageStarsRunner(CampaignRun):
         original_stop = campaign.triggered_map_stop
         original_additional = campaign.handle_chapter_additional
         original_ensure = campaign.ensure_campaign_ui
-        original_combat = campaign.combat
+        original_combat_status = campaign.combat_status
         deadline = None
 
         def chapter_additional():
@@ -161,19 +161,25 @@ class StageStarsRunner(CampaignRun):
                 raise ScriptEnd('Final star inspection: stage still incomplete')
             return self.goal_complete
 
-        def combat(*args, **kwargs):
-            result = original_combat(*args, **kwargs)
-            # Normal boss combat explicitly waits for the campaign page. Counting
-            # battles alone could mistake a withdrawal after several escorts for a clear.
-            if (kwargs.get('expected_end') == 'in_stage' and
-                    campaign.combat_won and not campaign.combat_lost):
-                self.boss_cleared = True
-            return result
+        def combat_status(drop=None, expected_end=None):
+            # combat_execute may consume the victory screen before combat_status
+            # resets these flags. Keep that evidence through cleanup, which normally
+            # raises CampaignEnd once the stage page has been recognized.
+            won_before = campaign.combat_won
+            lost_before = campaign.combat_lost
+            try:
+                return original_combat_status(drop=drop, expected_end=expected_end)
+            finally:
+                if (expected_end == 'in_stage' and
+                        (won_before or campaign.combat_won) and
+                        not (lost_before or campaign.combat_lost or campaign.run_lost) and
+                        campaign.is_in_stage()):
+                    self.boss_cleared = True
 
         campaign.handle_chapter_additional = chapter_additional
         campaign.ensure_campaign_ui = ensure_ui
         campaign.triggered_map_stop = map_stop
-        campaign.combat = combat
+        campaign.combat_status = combat_status
         # CampaignRun catches ScriptEnd after this call. The job, not the map,
         # owns progression, scheduler state and the next task.
         campaign.handle_map_stop = lambda: None
@@ -248,6 +254,9 @@ class CampaignStars(CampaignRun):
             self.config.task_call(task, force_call=True)
 
     def run(self):
+        # Let dispatch restart a closed/logged-out game before consuming any
+        # durable stage/inspection budget or navigating event-only screens.
+        self.ui_get_current_page()
         plan = self.make_plan()
         if not plan:
             raise ValueError('No implemented stages in star pass')
@@ -316,6 +325,7 @@ class EventStars(CampaignStars):
 class EventExtra(CampaignStars):
     """One scheduler-driven EX inspection, separate from the regular stage pass."""
     def run(self):
+        self.ui_get_current_page()
         from module.campaign.event_extra import EventExtraScout
         event = self.config.Campaign_Event
         if not event.startswith('event_'):

@@ -5,12 +5,14 @@ from time import monotonic
 from module.base.timer import Timer
 from module.base.utils import rgb2gray, save_image
 from module.campaign.campaign_ui import CampaignUI, MODE_SWITCH_20241219
+from module.combat.assets import BATTLE_PREPARATION
 from module.combat.combat import Combat
 from module.eventstory.assets import *
+from module.exception import GameNotRunningError
 from module.handler.login import LoginHandler
 from module.logger import logger
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_CANCEL, MAP_PREPARATION_HARD
-from module.ui.assets import GOTO_MAIN
+from module.ui.assets import BACK_ARROW, GOTO_MAIN
 from module.ui.page import Page, page_event, page_main, page_sp
 
 STORY_TIMEOUT = 90
@@ -21,8 +23,15 @@ EVENT_DIAGNOSTIC_DIR = './log/event_completion'
 EVENT_DIAGNOSTIC_KEEP = 40
 
 
+def ensure_event_running(main):
+    """Let the scheduler start a closed game before spending a one-shot budget."""
+    if not main.device.app_is_running():
+        raise GameNotRunningError('Game not running')
+
+
 def ensure_event_page(main, destination, timeout=30, max_clicks=12):
     """Use the normal page graph with a finite budget and recognized screens only."""
+    ensure_event_running(main)
     Page.init_connection(destination)
     main.interval_clear(list(Page.iter_check_buttons()))
     clicks = 0
@@ -44,6 +53,11 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
                     clicks += 1
                     break
             else:
+                # The established campaign withdrawal path backs out of this screen.
+                if main.appear(BATTLE_PREPARATION, offset=(20, 20), interval=3):
+                    main.device.click(BACK_ARROW)
+                    clicks += 1
+                    continue
                 # The common campaign runner may leave a recognized preparation screen.
                 if any(main.appear(button, offset=(20, 50), interval=3) for button in (
                         MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION)):

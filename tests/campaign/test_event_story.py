@@ -5,6 +5,9 @@ import pytest
 
 from module.eventstory import eventstory
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_switch
+from module.combat.assets import BATTLE_PREPARATION
+from module.exception import GameNotRunningError
+from module.ui.assets import BACK_ARROW
 from module.ui.page import Page, page_main
 
 
@@ -95,7 +98,27 @@ def test_unknown_page_never_uses_a_page_graph_coordinate():
     main = SimpleNamespace(
         loop=Mock(return_value=iter(range(3))), interval_clear=Mock(),
         ui_page_appear=Mock(return_value=False), appear=Mock(return_value=False),
-        device=SimpleNamespace(click=Mock()), ui_button_interval_reset=Mock())
+        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)), ui_button_interval_reset=Mock())
     assert ensure_event_page(main, page_main) is False
     main.device.click.assert_not_called()
     assert all(page.parent is None for page in Page.iter_pages())
+
+
+def test_closed_game_raises_before_page_navigation_or_stale_image_detection():
+    main = SimpleNamespace(device=SimpleNamespace(app_is_running=Mock(return_value=False)),
+                           loop=Mock(), ui_page_appear=Mock(return_value=True))
+    with pytest.raises(GameNotRunningError):
+        ensure_event_page(main, page_main)
+    main.loop.assert_not_called()
+    main.ui_page_appear.assert_not_called()
+
+
+def test_recognized_battle_preparation_uses_existing_back_arrow_exit():
+    main = SimpleNamespace(
+        loop=Mock(return_value=iter(range(2))), interval_clear=Mock(),
+        ui_page_appear=Mock(side_effect=[False, True]),
+        appear=Mock(side_effect=lambda button, **kwargs: button is BATTLE_PREPARATION),
+        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    assert ensure_event_page(main, page_main) is True
+    main.device.click.assert_called_once_with(BACK_ARROW)

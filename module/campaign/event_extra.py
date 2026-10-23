@@ -13,7 +13,7 @@ from datetime import datetime
 from module.campaign.campaign_ui import ASIDE_SWITCH_20241219, MODE_SWITCH_20241219, CampaignUI
 from module.campaign.event_completion import EventCompletion
 from module.combat.assets import BATTLE_PREPARATION
-from module.eventstory.eventstory import ensure_event_page, ensure_event_switch, save_event_diagnostic
+from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
 from module.exception import CampaignNameError, ScriptError
 from module.logger import logger
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_HARD
@@ -114,6 +114,7 @@ class EventExtraScout(CampaignUI):
     def run(self, event, folder=EX_SCOUT_DIR):
         if event not in EX_SCOUT_EVENTS:
             return dict(status='unsupported', combat_attempted=False, diagnostics=[])
+        ensure_event_running(self)
         account = self.config.config_name
         state = load_extra_state(account, folder=folder)
         if event in state:
