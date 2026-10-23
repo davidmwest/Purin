@@ -1,21 +1,20 @@
 """Collect only already-earned Strict Maid mission rewards."""
 from datetime import datetime
 
-import numpy as np
-
 from module.base.timer import Timer
 from module.campaign.event_completion import (
     EventCompletion, load_reward_observations, save_reward_observations)
 from module.campaign.event_rewards import EventRewards, SUPPORTED_EVENTS
 from module.campaign.event_strict_maid import STRICT_MAID_TAB
 from module.campaign.event_strict_maid_rewards_assets import (
-    STRICT_MAID_COLLECT_ALL, STRICT_MAID_EARNED, STRICT_MAID_HOME,
-    STRICT_MAID_PAGE, STRICT_MAID_PROCEED)
+    OCR_STRICT_MAID_TOTAL, STRICT_MAID_COLLECT_ALL, STRICT_MAID_HOME,
+    STRICT_MAID_PAGE, STRICT_MAID_PROCEED, STRICT_MAID_ROW_COLLECT,
+    STRICT_MAID_ROW_COLLECTED, STRICT_MAID_ROW_OFFSETS)
 from module.eventstory.eventstory import ensure_event_running, save_event_diagnostic
 from module.logger import logger
 from module.ui.page import page_main
 
-CLAIMS_MAX = 2
+CLAIMS_MAX = 16
 REWARD_DIALOGS_MAX = 24
 
 
@@ -24,41 +23,94 @@ class StrictMaidRewards(EventRewards):
         return all(self.match_template_color(button, offset=(3, 3), similarity=.85)
                    for button in (STRICT_MAID_PAGE, STRICT_MAID_HOME))
 
-    def _strict_state(self):
+    def _strict_rows(self):
         if not self._strict_page():
-            return 'unknown'
+            return None
         # The local collection deadline owns this verified page, including a
         # changed/disabled action. Unknown screens retain the device watchdog.
         self.device.stuck_record_clear()
         if not self.match_template_color(STRICT_MAID_COLLECT_ALL, offset=(3, 3), similarity=.85):
+            return None
+        rows = []
+        for index, (dx, dy) in enumerate(STRICT_MAID_ROW_OFFSETS):
+            offset = (dx - 3, dy - 3, dx + 3, dy + 3)
+            if self.match_template_color(STRICT_MAID_ROW_COLLECT[index], offset=offset, similarity=.9):
+                rows.append('claimable')
+            elif self.match_template_color(STRICT_MAID_ROW_COLLECTED[index], offset=offset, similarity=.9):
+                rows.append('collected')
+            elif self.match_template_color(
+                    STRICT_MAID_PROCEED,
+                    offset=(dx - 476, dy - 78, dx - 470, dy - 72), similarity=.9):
+                rows.append('proceed')
+            else:
+                rows.append('unknown')
+        return rows
+
+    def _strict_state(self, rows=None):
+        rows = self._strict_rows() if rows is None else rows
+        if rows is None:
             return 'unknown'
-        # Search only the four captured mission-control locations, using the
-        # distinctive pink earned Collect heart. The orange Proceed cannot match.
-        if self.match_template_color(STRICT_MAID_EARNED, offset=(0, 0, 480, 80), similarity=.9):
+        if 'claimable' in rows:
             return 'claimable'
-        # An animated or partly unreadable pink heart is not an empty state.
-        for left, right in ((657, 735), (1131, 1208)):
-            control = self.device.image[511:654, left:right].astype(np.int16)
-            red, green, blue = control[:, :, 0], control[:, :, 1], control[:, :, 2]
-            pink = (red > 200) & (blue > 160) & (green < 235) & (red > green + 10) & (blue > green + 6)
-            if np.count_nonzero(pink) >= 80:
-                return 'unknown'
-        # Keep a known, fully rendered unfinished-row control as positive proof
-        # of the mission list. A new empty/grey layout needs its own observation.
-        if self.match_template_color(STRICT_MAID_PROCEED, offset=(-480, -80, 0, 0), similarity=.9):
+        # Every visible row must positively be Collected or unfinished Proceed.
+        # A missing/animated control never proves that rewards were received.
+        if all(row in ('collected', 'proceed') for row in rows):
             return 'empty'
         return 'unknown'
+
+    def _strict_total(self):
+        value = OCR_STRICT_MAID_TOTAL.ocr(self.device.image)
+        if isinstance(value, str) and value.isdigit():
+            value = int(value)
+            if 0 <= value <= 100000 and value % 100 == 0:
+                return value
+        return None
 
     def _collect_strict(self, record, persist):
         settled = Timer(2, count=3).start()
         click_wait = Timer(2, count=3)
+        total_wait = Timer(1, count=2).start()
+        total_value, total_reads = None, 0
         empty_frames = dialogs = 0
         for _ in self.loop(skip_first=False, timeout=90):
-            state = self._strict_state()
+            rows = self._strict_rows()
+            state = self._strict_state(rows) if rows is not None else 'unknown'
+            total = self._strict_total() if rows is not None else None
+            if total is None or total != total_value:
+                total_value, total_reads = total, 1
+                total_wait.reset()
+                total_stable = False
+            else:
+                total_reads += 1
+                total_stable = total_reads >= 2 and total_wait.reached()
+            if record['pending_claim'] and total_stable:
+                pending = record['claim_audit'][-1]
+                if total > pending['total_before']:
+                    pending.update(verified=True, total_after=total)
+                    record.update(pending_claim=False,
+                                  verified_claims=record.get('verified_claims', 0) + 1)
+                    persist()
+            # Never repeat a claim until stable total growth proves receipt.
+            # Exact Collected and a disappeared Collect alone are insufficient.
+            if record['pending_claim']:
+                settled.reset()
+                empty_frames = 0
+                if not click_wait.reached():
+                    continue
+                dialog = self._reward_dialog()
+                if dialog is not None:
+                    if dialogs >= REWARD_DIALOGS_MAX:
+                        record.update(status='failed', reason='reward_dialog_limit')
+                        return
+                    self.device.click(dialog)
+                    dialogs += 1
+                    record['reward_dialogs'] = dialogs
+                    click_wait.reset()
+                continue
             if state == 'empty':
                 empty_frames += 1
-                if empty_frames >= 3 and settled.reached():
-                    record.update(status='complete', reason='earned_missions_verified', pending_claim=False)
+                if empty_frames >= 3 and settled.reached() and total_stable:
+                    record.update(status='complete', reason='earned_missions_verified', total=total)
                     return
                 continue
             empty_frames = 0
@@ -66,24 +118,21 @@ class StrictMaidRewards(EventRewards):
             if not click_wait.reached():
                 continue
             if state == 'claimable':
+                if not total_stable:
+                    continue
                 if record['claims'] >= CLAIMS_MAX:
-                    record.update(status='failed', reason='collect_all_did_not_clear')
+                    record.update(status='failed', reason='earned_mission_claim_limit')
                     return
+                index = rows.index('claimable')
                 record['claims'] += 1
                 record['pending_claim'] = True
+                record.setdefault('claim_audit', []).append(
+                    dict(row=index, total_before=total, verified=False))
                 persist()
-                self.device.click(STRICT_MAID_COLLECT_ALL)
+                self.device.click(STRICT_MAID_ROW_COLLECT[index])
                 click_wait.reset()
-                continue
-            dialog = self._reward_dialog() if record['pending_claim'] else None
-            if dialog is not None:
-                if dialogs >= REWARD_DIALOGS_MAX:
-                    record.update(status='failed', reason='reward_dialog_limit')
-                    return
-                self.device.click(dialog)
-                dialogs += 1
-                record['reward_dialogs'] = dialogs
-                click_wait.reset()
+                total_reads = 0
+                total_wait.reset()
         record.update(status='failed', reason='earned_mission_collection_timeout')
 
     def _return_strict_main(self, helper):
@@ -112,6 +161,7 @@ class StrictMaidRewards(EventRewards):
         key = event + ':strict_maid_collection'
         previous = state.get(key, {})
         record = dict(status='collecting', diagnostics=[], returned_main=False, claims=0,
+                      verified_claims=0, claim_audit=[],
                       pending_claim=False, invocations=previous.get('invocations', 0) + 1,
                       started=datetime.now().isoformat(timespec='seconds'))
         state[key] = record

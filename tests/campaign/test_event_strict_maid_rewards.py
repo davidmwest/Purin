@@ -9,8 +9,9 @@ from module.campaign import event_strict_maid_rewards as rewards
 from module.campaign.event_completion import load_reward_observations
 from module.campaign.event_strict_maid_rewards import StrictMaidRewards
 from module.campaign.event_strict_maid_rewards_assets import (
-    STRICT_MAID_COLLECT_ALL, STRICT_MAID_EARNED, STRICT_MAID_HOME,
-    STRICT_MAID_PAGE, STRICT_MAID_PROCEED)
+    OCR_STRICT_MAID_TOTAL, STRICT_MAID_COLLECT_ALL, STRICT_MAID_EARNED, STRICT_MAID_HOME,
+    STRICT_MAID_PAGE, STRICT_MAID_PROCEED, STRICT_MAID_ROW_COLLECT,
+    STRICT_MAID_ROW_COLLECTED)
 from module.combat.assets import GET_ITEMS_1, GET_SHIP
 from module.exception import GameNotRunningError
 
@@ -19,6 +20,16 @@ EVENT = 'event_20261022_cn'
 
 def captured():
     return np.asarray(Image.open('tests/campaign/data/strict_maid_rewards.png').convert('RGB')).copy()
+
+
+def actual(account):
+    return np.asarray(Image.open(f'tests/campaign/data/strict_maid_{account}_failed.png').convert('RGB')).copy()
+
+
+def all_collected():
+    image = actual('alas')
+    image[519:570, 1138:1201] = image[519:570, 665:728]
+    return image
 
 
 def controller(frames=10, image=None):
@@ -59,15 +70,25 @@ def test_actual_screen_recognizes_page_home_all_and_earned_but_proceed_is_detect
     assert controller(image=image)._strict_state() == 'claimable'
 
 
-def test_earned_template_searches_each_captured_slot_without_matching_orange_proceed():
-    image = captured()
-    image[511:578, 657:735] = (245, 242, 236)
-    helper = controller(image=image)
-    assert helper._strict_state() == 'claimable'  # Lower left or upper right.
-    image[585:654, 657:735] = (245, 242, 236)
-    assert helper._strict_state() == 'claimable'  # Upper right alone.
-    image[511:578, 1131:1208] = (245, 242, 236)
-    assert helper._strict_state() == 'empty'  # Remaining orange Proceed is never earned.
+@pytest.mark.parametrize('account,expected,total', [
+    ('f2p', ['claimable', 'claimable', 'claimable', 'proceed'], 0),
+    ('alas', ['collected', 'claimable', 'collected', 'collected'], 2100)])
+def test_actual_failure_frames_recognize_each_row_and_total(account, expected, total):
+    helper = controller(image=actual(account))
+    assert helper._strict_rows() == expected
+    assert helper._strict_total() == total
+    for index, state in enumerate(expected):
+        if state != 'claimable':
+            continue
+        left, top, right, bottom = STRICT_MAID_ROW_COLLECT[index].button
+        assert right - left < 35 and bottom - top < 25
+        assert 510 < top < bottom < 655
+        assert (665 <= left < right <= 729) if index % 2 == 0 else (1138 <= left < right <= 1202)
+
+
+def test_missing_rows_do_not_prove_empty_and_all_gray_is_positive_empty():
+    assert controller(image=remove_pink_controls(captured()))._strict_state() == 'unknown'
+    assert controller(image=all_collected())._strict_state() == 'empty'
 
 
 @pytest.mark.parametrize('missing', [STRICT_MAID_PAGE, STRICT_MAID_HOME, STRICT_MAID_COLLECT_ALL])
@@ -88,26 +109,55 @@ def test_unmatched_pink_control_is_unknown_and_absent_rows_do_not_prove_empty():
     assert helper._strict_state() == 'unknown'  # No known unfinished/empty-row witness.
 
 
-def test_claim_is_persisted_first_then_known_receipt_and_stable_empty(immediate):
-    helper = controller(5)
-    helper._strict_state = Mock(side_effect=['claimable', 'unknown', 'empty', 'empty', 'empty'])
-    helper._reward_dialog = Mock(return_value=GET_ITEMS_1)
+def test_actual_main_claim_is_persisted_then_verified_by_total_growth(immediate):
+    helper = controller(8, image=actual('alas'))
+    helper._strict_total = Mock(side_effect=lambda: 2300 if helper.device.click.called else 2100)
+    helper._reward_dialog = Mock(return_value=None)
     state = record()
     audit = []
 
     def persist():
-        assert not helper.device.click.called
+        if not audit:
+            assert not helper.device.click.called
         audit.append(dict(state))
 
+    def click(button):
+        assert button is STRICT_MAID_ROW_COLLECT[1]
+        helper.device.image = all_collected()
+
+    helper.device.click.side_effect = click
     helper._collect_strict(state, persist)
     assert audit[0]['claims'] == 1 and audit[0]['pending_claim'] is True
     assert state['status'] == 'complete' and state['pending_claim'] is False
-    assert helper.device.click.call_args_list == [call(STRICT_MAID_COLLECT_ALL), call(GET_ITEMS_1)]
+    assert state['verified_claims'] == 1
+    assert state['claim_audit'] == [dict(row=1, total_before=2100, verified=True, total_after=2300)]
+    assert helper.device.click.call_args_list == [call(STRICT_MAID_ROW_COLLECT[1])]
     helper.loop.assert_called_once_with(skip_first=False, timeout=90)
 
 
+def test_actual_f2p_three_earned_rows_claim_once_each_never_proceed(immediate):
+    helper = controller(14, image=actual('f2p'))
+    helper._strict_total = Mock(side_effect=lambda: 100 * helper.device.click.call_count)
+    helper._reward_dialog = Mock(return_value=None)
+    gray = actual('alas')[519:570, 665:728]
+
+    def click(button):
+        index = STRICT_MAID_ROW_COLLECT.index(button)
+        left, top = ((665, 519), (1138, 519), (665, 594))[index]
+        helper.device.image[top:top + 51, left:left + 63] = gray
+
+    helper.device.click.side_effect = click
+    state = record()
+    helper._collect_strict(state, Mock())
+    assert state['status'] == 'complete' and state['verified_claims'] == 3
+    assert state['total'] == 300 and state['pending_claim'] is False
+    assert helper.device.click.call_args_list == [call(button) for button in STRICT_MAID_ROW_COLLECT[:3]]
+    assert all(audit['verified'] for audit in state['claim_audit'])
+
+
 def test_no_earned_rewards_requires_three_frames_and_never_clicks_proceed(immediate):
-    helper = controller(3, image=remove_pink_controls(captured()))
+    helper = controller(3, image=all_collected())
+    helper._strict_total = Mock(return_value=2300)
     state = record()
     helper._collect_strict(state, Mock())
     assert state['status'] == 'complete'
@@ -116,7 +166,9 @@ def test_no_earned_rewards_requires_three_frames_and_never_clicks_proceed(immedi
 
 def test_transient_empty_does_not_report_complete(immediate):
     helper = controller(3)
+    helper._strict_rows = Mock(return_value=['collected'] * 4)
     helper._strict_state = Mock(side_effect=['empty', 'unknown', 'empty'])
+    helper._strict_total = Mock(return_value=2300)
     helper._reward_dialog = Mock()
     state = record()
     helper._collect_strict(state, Mock())
@@ -125,18 +177,53 @@ def test_transient_empty_does_not_report_complete(immediate):
     helper.device.click.assert_not_called()
 
 
-def test_rejected_collect_all_stops_after_two_free_claim_clicks(immediate):
+def test_rejected_row_click_is_not_repeated_without_verified_growth(immediate):
     helper = controller()
-    helper._strict_state = Mock(return_value='claimable')
+    helper._strict_total = Mock(return_value=0)
+    helper._reward_dialog = Mock(return_value=None)
     state = record()
     helper._collect_strict(state, Mock())
-    assert state['reason'] == 'collect_all_did_not_clear'
-    assert helper.device.click.call_args_list == [call(STRICT_MAID_COLLECT_ALL)] * 2
+    assert state['reason'] == 'earned_mission_collection_timeout'
+    assert state['pending_claim'] is True and not state.get('verified_claims')
+    assert helper.device.click.call_args_list == [call(STRICT_MAID_ROW_COLLECT[0])]
+
+
+@pytest.mark.parametrize('totals', [[0] * 8, [0, 0, 100, 0, 100, 0, 100, 0],
+                                  [0, 0, None, None, None, None, None, None]])
+def test_disappearing_collect_or_transient_total_never_verifies_claim(immediate, totals):
+    helper = controller(8)
+    helper._strict_total = Mock(side_effect=totals)
+    helper._reward_dialog = Mock(return_value=None)
+    helper.device.click.side_effect = lambda button: setattr(helper.device, 'image', all_collected())
+    state = record()
+    helper._collect_strict(state, Mock())
+    assert state['status'] == 'failed' and state['pending_claim'] is True
+    assert state['claims'] == 1 and not state.get('verified_claims')
+    helper.device.click.assert_called_once_with(STRICT_MAID_ROW_COLLECT[0])
+
+
+@pytest.mark.parametrize('raw', ['', 'bad', '1400/1400', '999999', '2301'])
+def test_invalid_total_is_unknown_and_never_authorizes_claim(immediate, monkeypatch, raw):
+    monkeypatch.setattr(OCR_STRICT_MAID_TOTAL, 'ocr', Mock(return_value=raw))
+    helper = controller()
+    assert helper._strict_total() is None
+    helper._collect_strict(record(), Mock())
+    helper.device.click.assert_not_called()
+
+
+def test_claim_limit_is_checked_before_action(immediate, monkeypatch):
+    monkeypatch.setattr(rewards, 'CLAIMS_MAX', 0)
+    helper = controller()
+    helper._strict_total = Mock(return_value=0)
+    state = record()
+    helper._collect_strict(state, Mock())
+    assert state['reason'] == 'earned_mission_claim_limit'
+    helper.device.click.assert_not_called()
 
 
 def test_known_receipts_are_not_dismissed_before_claim_and_are_capped_after(immediate, monkeypatch):
     helper = controller()
-    helper._strict_state = Mock(return_value='unknown')
+    helper._strict_rows = Mock(return_value=None)
     helper._reward_dialog = Mock(return_value=GET_SHIP)
     state = record()
     helper._collect_strict(state, Mock())
@@ -144,12 +231,14 @@ def test_known_receipts_are_not_dismissed_before_claim_and_are_capped_after(imme
     helper.device.click.assert_not_called()
 
     helper.loop = Mock(return_value=iter(range(8)))
-    helper._strict_state.side_effect = ['claimable'] + ['unknown'] * 7
+    helper._strict_rows.side_effect = [['claimable'] * 4] * 2 + [None] * 6
+    helper._strict_state = Mock(return_value='claimable')
+    helper._strict_total = Mock(return_value=0)
     monkeypatch.setattr(rewards, 'REWARD_DIALOGS_MAX', 2)
     state = record()
     helper._collect_strict(state, Mock())
     assert state['reason'] == 'reward_dialog_limit'
-    assert helper.device.click.call_args_list == [call(STRICT_MAID_COLLECT_ALL), call(GET_SHIP), call(GET_SHIP)]
+    assert helper.device.click.call_args_list == [call(STRICT_MAID_ROW_COLLECT[0]), call(GET_SHIP), call(GET_SHIP)]
 
 
 def test_exact_strict_page_home_is_bounded_and_requires_verified_main(immediate):
