@@ -262,12 +262,24 @@ def test_resource_shortage_never_opens_or_buys_anything(monkeypatch):
     assert record['reason']=='insufficient_or_unreadable_build_resources'
 
 
-def test_positive_owned_banner_cannot_silently_place_more_event_orders(monkeypatch):
+@pytest.mark.parametrize('pool', ['light', 'heavy', 'special'])
+@pytest.mark.parametrize('folder', ['./config/gacha', 'custom-gacha-state'])
+def test_positive_owned_banner_delegates_only_to_authorized_ordinary_pool(monkeypatch, pool, folder):
+    from module.gacha import mission_fallback_orders
+
     helper=executor(monkeypatch)
-    banner.resolve_mission_pool.return_value='light'
+    banner.resolve_mission_pool.return_value=pool
+    ordinary = Mock()
+    factory = Mock(return_value=ordinary)
+    monkeypatch.setattr(mission_fallback_orders, 'OrdinaryMissionOrders', factory)
     record=audit()
-    helper._submit_order(record,Mock())
-    assert record['reason']=='fallback_pool_controls_unobserved'
+    persist=Mock()
+    helper._submit_order(record,persist,folder=folder)
+    factory.assert_called_once_with(config=helper.config,device=helper.device)
+    ordinary.submit.assert_called_once_with(record,persist,pool,folder=folder)
+    banner.resolve_mission_pool.assert_called_once_with('alas',fallback='light',folder=folder)
+    banner.EventBannerObserver.assert_not_called()
+    assert record['preferred_pool']==pool
     helper._open_order_dialog.assert_not_called()
     helper.device.click.assert_not_called()
 

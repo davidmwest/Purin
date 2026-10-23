@@ -275,14 +275,15 @@ class GachaMissionOrders(GachaMissionOrderObserver):
         if self._pool_after_dialog(banner):
             record['order_dialog_open'] = False
 
-    def _submit_order(self, record, persist):
+    def _submit_order(self, record, persist, folder='./config/gacha'):
         from module.gacha.banner import EventBannerObserver, resolve_mission_pool
         record['preferred_pool'] = resolve_mission_pool(
-            self.config.config_name, fallback=getattr(self.config, 'Gacha_FallbackPool', 'light'))
-        # Current evidence proves the Limited Build dialog only. An owned-banner
-        # fallback must never silently place duplicate Event orders.
+            self.config.config_name, fallback=getattr(self.config, 'Gacha_FallbackPool', 'light'),
+            folder=folder)
         if record['preferred_pool'] != 'event':
-            record.update(status='blocked', reason='fallback_pool_controls_unobserved')
+            from module.gacha.mission_fallback_orders import OrdinaryMissionOrders
+            OrdinaryMissionOrders(config=self.config, device=self.device).submit(
+                record, persist, record['preferred_pool'], folder=folder)
             return
         banner = EventBannerObserver(config=self.config, device=self.device)
         if not banner.enter_event_pool():
@@ -327,7 +328,8 @@ class GachaMissionOrders(GachaMissionOrderObserver):
                 or not resources_cover_order(resources, final['count'])
                 or self._period() != record['period']
                 or resolve_mission_pool(self.config.config_name,
-                    fallback=getattr(self.config, 'Gacha_FallbackPool', 'light')) != 'event'):
+                    fallback=getattr(self.config, 'Gacha_FallbackPool', 'light'),
+                    folder=folder) != 'event'):
             record.update(status='blocked', reason='fresh_count_cost_or_period_unverified')
             self._capture_mission(record, 'count_unverified')
             self._cancel_order(record, persist, banner)
@@ -445,7 +447,7 @@ class GachaMissionOrders(GachaMissionOrderObserver):
                     # counter is still visible or credit verification fails.
                     record.update(status='blocked', reason='reserved_order_credit_unverified')
                 else:
-                    self._submit_order(record, persist)
+                    self._submit_order(record, persist, folder=folder)
                     if record.get('submit_click_performed') and not record.get('order_dialog_open'):
                         fresh = self._authorization(record)
                         if fresh is not None and fresh['current'] == 3 and self._period() == period:
