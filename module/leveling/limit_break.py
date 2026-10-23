@@ -58,6 +58,7 @@ SELECT_WAIT = 3
 BREAK_TIMEOUT = 30
 # Screens of a limit break that did not go through, for a look at what held it
 STUCK_DIR = './log/limit_break'
+STUCK_KEEP = 20
 
 
 # The Bulin that stands in for a copy of a ship, by her rarity before a retrofit (wiki: Dockyard)
@@ -132,6 +133,9 @@ class LimitBreak(FleetEnhance):
             file = os.path.join(STUCK_DIR, f'{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}_{tag}.png')
             save_image(self.device.image, file)
             logger.info(f'Screen saved: {file}')
+            # The same cause stuck run after run: the newest screens are enough
+            for old in sorted(name for name in os.listdir(STUCK_DIR) if name.endswith('.png'))[:-STUCK_KEEP]:
+                os.remove(os.path.join(STUCK_DIR, old))
         except Exception as e:
             logger.warning(f'Screen not saved: {e}')
 
