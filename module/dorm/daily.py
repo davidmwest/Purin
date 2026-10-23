@@ -25,6 +25,9 @@ from module.ui.page import page_dorm, page_main, page_mission
 
 VERSION = 'restock-one-v1'
 DIALOGS_MAX = 8
+# OCR validation domain, not a game storage cap. Upgraded stores can exceed
+# the old 90000 slash-repair heuristic in OcrDormFood (captured: 0/102000).
+OCR_COUNT_MAX = 999999
 
 
 def state_path(account, folder):
@@ -63,7 +66,7 @@ def save_state(account, state, folder):
 def choose_food(amounts, capacity):
     """Prefer one Secret Coolant (2000), then the smallest fitting owned food."""
     if (not isinstance(amounts, (tuple, list)) or len(amounts) != 6
-            or type(capacity) is not int or not 0 <= capacity <= 90000
+            or type(capacity) is not int or not 0 <= capacity <= OCR_COUNT_MAX
             or any(type(amount) is not int or not 0 <= amount <= 999999 for amount in amounts)):
         return None
     # The local tutorial's second Snacks2000 canister matches the mission's
@@ -302,7 +305,7 @@ class DormDaily(RewardDorm, Reward):
                 or any(type(value) is not int for value in fill)):
             return None
         current, capacity, total = fill
-        if not (0 <= current <= total <= 90000 and total > 0
+        if not (0 <= current <= total <= OCR_COUNT_MAX and total > 0
                 and 0 <= capacity <= total and current + capacity == total):
             return None
         amounts = tuple(value if self._dorm_has_food(button) else 0

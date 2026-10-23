@@ -131,12 +131,14 @@ def test_exact_earned_target_controls_share_its_row():
 
 @pytest.mark.parametrize('amounts,capacity,expected', [
     ([9, 2, 3, 4, 5, 6], 2000, 1),  # Secret Coolant before Oxy-cola.
+    ([4105, 2294, 276, 57, 52, 54], 102000, 1),
     ([9, 2, 3, 4, 5, 6], 1999, 0),
     ([0, 0, 1, 2, 3, 4], 3000, 2),
     ([0, 1, 0, 0, 0, 0], 1999, None),
     ([0, 0, 0, 0, 0, 0], 90000, None),
     ([1, 2, 3, 4, 5, 6], 0, None),
     ([1, 2, 3, 4, 5, 6], -1, None),
+    ([1, 2, 3, 4, 5, 6], 1000000, None),
     ([1, 2, 3, 4, 5, 6], 0.5, None),
     ([1, 2, 3, 4, 5, True], 90000, None),
     ([1, 2, -1, 4, 5, 6], 90000, None),
@@ -266,7 +268,8 @@ def test_unowned_receipt_precedes_summary_shop_and_background_panel_detection(mo
     owner.device.click.assert_not_called()
 
 
-@pytest.mark.parametrize('fill', [(0, 0, 0), (40000, 1, 40000), (0, 100000, 100000), (1, 2), ('0', 40000, 40000)])
+@pytest.mark.parametrize('fill', [(0, 0, 0), (40000, 1, 40000), (0, 1000000, 1000000),
+                                 (102000, 2000, 102000), (1, 2), ('0', 40000, 40000)])
 def test_unknown_or_invalid_capacity_fails_closed(monkeypatch, fill):
     owner = controller(monkeypatch)
     owner._dorm_food_ocr = SimpleNamespace(ocr=Mock(return_value=[1] * 6))
@@ -280,6 +283,42 @@ def test_food_counts_filter_grayed_empty_slots_and_validate_total(monkeypatch):
     owner._dorm_has_food = Mock(side_effect=[True, True, False, False, False, False])
     monkeypatch.setattr(daily.OCR_FILL, 'ocr', Mock(return_value=(38000, 2000, 40000)))
     assert owner._food_values() == ((4, 2, 0, 0, 0, 0), 2000)
+
+
+def test_actual_upgraded_store_ocr_and_single_coolant_click(monkeypatch):
+    owner = controller(monkeypatch)
+    owner.device.image = np.array(Image.open(DATA / 'dorm_food_102000.png').convert('RGB'))
+    assert owner._food_values() == ((4105, 2294, 276, 57, 52, 54), 102000)
+    owner._feed_panel = Mock(return_value=True)
+    owner.appear = Mock(side_effect=lambda button, **kwargs: button is DORM_FEED_CHECK)
+    value, saved = record(), []
+    def persist():
+        saved.append(dict(value))
+    def click(button):
+        assert saved[-1]['food_clicks'] == 1
+        assert saved[-1]['capacity_before'] == 102000
+        assert saved[-1]['food_before'] == [4105, 2294, 276, 57, 52, 54]
+        assert button is owner._dorm_food.buttons[1]
+    owner.device.click.side_effect = click
+    owner._feed_one(value, persist)
+    assert value['food_identity'] == 'Secret Coolant'
+    assert value['food_feed'] == 2000
+    owner.device.click.assert_called_once()
+    owner._feed_one(value, persist)
+    owner.device.click.assert_called_once()
+
+
+@pytest.mark.parametrize('fill,expected', [
+    ((102000, 0, 102000), 0),
+    ((100000, 2000, 102000), 2000),
+])
+def test_upgraded_store_full_and_partially_filled_capacity(monkeypatch, fill, expected):
+    owner = controller(monkeypatch)
+    owner._dorm_food_ocr = SimpleNamespace(ocr=Mock(return_value=[1] * 6))
+    owner._dorm_has_food = Mock(return_value=True)
+    monkeypatch.setattr(daily.OCR_FILL, 'ocr', Mock(return_value=fill))
+    assert owner._food_values() == ((1, 1, 1, 1, 1, 1), expected)
+    assert daily.choose_food((1, 1, 1, 1, 1, 1), expected) == (None if expected == 0 else 1)
 
 
 def test_list_scan_is_bounded_and_only_proven_daily_list_can_scroll(monkeypatch):
