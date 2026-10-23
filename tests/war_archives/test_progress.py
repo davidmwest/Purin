@@ -244,3 +244,108 @@ def test_corrupt_or_cross_account_request_fails_closed_before_device(owner, tmp_
     with pytest.raises(ScriptError):
         owner.run_observe(folder=tmp_path, request_id='same')
     owner.device.app_is_running.assert_not_called()
+
+
+def actual_image(account):
+    from module.base.utils import load_image
+    return load_image(f'tests/war_archives/data/{account}_archive_list.png')
+
+
+def use_en_identities(monkeypatch):
+    monkeypatch.setattr(p, 'dic_archives_template', {
+        name: Template(original.raw_file['en']) for name, original in p.dic_archives_template.items()})
+
+
+@pytest.mark.parametrize('text,expected', [('0%', 0), ('100%', 100), ('53%', 53),
+                                         ('', None), ('0', None), ('101%', None),
+                                         ('00%', None), ('O%', None), ('-1%', None)])
+def test_strict_completion_keeps_unknown_distinct(text, expected):
+    assert p.parse_completion(text) == expected
+
+
+@pytest.mark.parametrize('account,expected,keys', [('alas', 100, 300), ('f2p', 0, 80)])
+def test_actual_both_account_lists_identify_selected_ex_and_read_relative_completion(owner, monkeypatch,
+                                                                                   account, expected, keys):
+    owner.device.image = actual_image(account)
+    use_en_identities(monkeypatch)
+    # Local EN clones make this test independent of the global server cache.
+    selected = {}
+    for name, original in p.CATEGORY_BUTTONS.items():
+        selected[name] = Button(area=original.raw_area['en'], color=original.raw_color['en'],
+                                button=original.raw_button['en'], file=original.raw_file['en'], name=name)
+    monkeypatch.setattr(p, 'CATEGORY_BUTTONS', selected)
+    owner.match_template_color = lambda button, **kwargs: button.match_template_color(owner.device.image, **kwargs)
+    assert all(button.match(owner.device.image, offset=(3, 3)) for button in selected.values())
+    assert owner._category() == 'ex'  # Shape-only matching falsely recognized both.
+    owner._list_page = Mock(return_value=True)
+    observed = owner.read_cards()
+    assert len(observed) == 4
+    assert {item['completion'] for item in observed} == {expected}
+    assert all(item['completion_verified'] and item['card_area'] for item in observed)
+    assert not any(item['fully_observed'] for item in observed)  # Prize/lock status still unknown.
+    assert p.parse_key_counter(p.ARCHIVE_KEYS.ocr(owner.device.image)) == dict(raw_keys=keys, key_capacity=300)
+
+
+def test_percentage_without_identity_or_visible_header_never_becomes_completion(owner, monkeypatch):
+    owner.device.image = actual_image('f2p')
+    use_en_identities(monkeypatch)
+    owner._list_page = Mock(return_value=True)
+    owner.device.image[126:145, 88:148] = 0
+    observed = {item['archive']: item for item in owner.read_cards()}
+    assert observed['war_archives_20190321_en']['completion'] is None
+    assert not observed['war_archives_20190321_en']['completion_verified']
+    monkeypatch.setattr(p, 'dic_archives_template', {})
+    assert owner.read_cards() == []
+
+
+def full_card():
+    return dict(card(), card_area=[88, 146, 558, 375], completion=0, completion_verified=True)
+
+
+def test_archive_card_enter_is_once_durable_and_never_stage_or_claim_input(owner, monkeypatch, tmp_path):
+    import json
+    monkeypatch.setattr(p, 'ensure_event_page', Mock(return_value=True))
+    monkeypatch.setattr(p.ARCHIVE_KEYS, 'ocr', Mock(return_value='80/300'))
+    owner._find_archive = Mock(return_value=full_card())
+    owner.read_cards = Mock(return_value=[full_card()])
+    owner._list_page = Mock(return_value=True)
+    owner._archive_stage_page = Mock(return_value=True)
+    owner._capture = Mock(return_value='stage.png')
+    def click(button):
+        journal = json.loads((tmp_path / 'alas' / 'one' / 'archive.json').read_text())
+        assert journal['entrance_clicks'] == 1 and not journal['verified_for_execution']
+        assert button.name == 'ARCHIVE_CARD_ENTRANCE'
+    owner.device.click.side_effect = click
+    first = owner.observe_archive('war_archives_20190321_en', folder=tmp_path, request_id='one')
+    second = owner.observe_archive('war_archives_20190321_en', folder=tmp_path, request_id='one')
+    assert first['status'] == 'observed' and first['raw_keys'] == 80 and first['key_capacity'] == 300
+    assert not first['verified_for_navigation'] and not first['verified_for_execution']
+    assert second['reused'] and owner.device.click.call_count == 1
+    assert owner._capture.call_count == 2
+
+
+def test_changed_card_and_unknown_entry_never_receive_repeat_click(owner, monkeypatch, tmp_path):
+    monkeypatch.setattr(p, 'ensure_event_page', Mock(return_value=True))
+    monkeypatch.setattr(p.ARCHIVE_KEYS, 'ocr', Mock(return_value='300/300'))
+    owner._find_archive = Mock(return_value=full_card())
+    owner.read_cards = Mock(return_value=[])
+    owner._list_page = Mock(return_value=True)
+    owner._capture = Mock(return_value='unknown.png')
+    blocked = owner.observe_archive('war_archives_20190321_en', folder=tmp_path, request_id='changed')
+    assert blocked['reason'] == 'archive_card_changed'
+    owner.device.click.assert_not_called()
+    owner.read_cards.return_value = [full_card()]
+    owner._archive_stage_page = Mock(return_value=False)
+    blocked = owner.observe_archive('war_archives_20190321_en', folder=tmp_path, request_id='unknown')
+    assert blocked['reason'] == 'archive_entrance_unrecognized'
+    owner.device.click.assert_called_once()
+
+
+def test_goal_and_prize_unknowns_cannot_authorize_execution(owner):
+    from module.campaign.campaign_stars import StageGoal
+    with pytest.raises(ScriptError):
+        owner.proof_for_goal(StageGoal('war_archives_20190321_en', 'd3', 'normal'))
+    prize = SimpleNamespace(clears=60)
+    assert owner.claim_prize('war_archives_20190321_en', prize) == dict(
+        verified=False, count=None, total=60, claimed=None, reason='prize_reader_unverified')
+    owner.device.click.assert_not_called()

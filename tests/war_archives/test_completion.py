@@ -1,0 +1,249 @@
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+from module.campaign.campaign_stars import StageGoal
+from module.exception import HardNotSatisfied, RequestHumanTakeover
+from module.war_archives.catalog import ARCHIVES, get_archive
+from module.war_archives.completion import ArchiveCoordinator, verified_prize
+from module.war_archives.planner import ArchivePlan, prize_key, story_key
+from module.war_archives.state import ArchiveState
+
+
+@pytest.fixture
+def setup(tmp_path):
+    config = SimpleNamespace(Scheduler_ServerUpdate='00:00', Archive_DailyTickets=4,
+                             Archive_ExtraOilReserve=5000, Archive_StagesPerRun=4,
+                             task_switched=lambda: False)
+    state = ArchiveState('f2p', str(tmp_path))
+    archive = get_archive('war_archives_20181026_en')
+    goal = StageGoal(archive.id, archive.normal_stages[0], 'normal', 'archive_clear')
+    plan = ArchivePlan(archive, 'normal', (goal,), ())
+    observer = SimpleNamespace(proof_for_goal=lambda selected: dict(raw_keys=80),
+                               prepare_goal=lambda campaign, selected: {})
+    return config, state, archive, goal, plan, observer
+
+
+def factory(outcomes, calls, oil=6000):
+    def create():
+        runner = SimpleNamespace(proof=dict(raw_keys=80), get_oil=lambda **kwargs: oil)
+
+        def run(goal, proof, reserve, prepare, **kwargs):
+            calls.append((goal, kwargs))
+            result = dict(outcomes.pop(0))
+            if result.get('reserved'):
+                if not reserve(goal, raw_keys=5, key_mode='per_entry',
+                               attempt_kind=kwargs['attempt_kind']):
+                    return dict(status='blocked', reason='reservation_rejected', reserved=False)
+            if result.pop('raise_error', False):
+                raise RuntimeError('after reservation')
+            return result
+        runner.run_once = run
+        return runner
+    return create
+
+
+def test_completed_inspection_never_uses_budget(setup):
+    config, state, archive, goal, plan, observer = setup
+    calls = []
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='complete', reserved=False, stage_complete=True)], calls))
+    assert coordinator.run((plan,))['status'] == 'complete'
+    assert state.record(goal.key)['complete'] is True
+    assert state.record(story_key(archive))['complete'] is True
+    assert state.used(coordinator.period) == 0
+
+
+def test_four_daily_sorties_then_surplus_policy(setup):
+    config, state, _, _, plan, observer = setup
+    calls = []
+    results = [dict(status='won', reserved=True, boss_won=True)] * 4
+    coordinator = ArchiveCoordinator(config, state, observer, factory(results, calls))
+    assert coordinator.run((plan,)) == dict(status='pending', sorties=4)
+    assert state.used(coordinator.period) == 4
+    assert all(item[1]['attempt_kind'] == 'daily' for item in calls)
+    second = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='won', reserved=True, boss_won=True)], calls, oil=4999))
+    result = second.run((plan,))
+    assert result['status'] == 'blocked'
+    assert calls[-1][1]['attempt_kind'] == 'extra'
+    assert state.used(second.period) == 4
+
+
+def test_crash_preserves_spent_reservation(setup):
+    config, state, _, goal, plan, observer = setup
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='won', reserved=True, raise_error=True)], []))
+    with pytest.raises(RuntimeError):
+        coordinator.run((plan,))
+    assert state.entries(coordinator.period)[0]['status'] == 'uncertain'
+    assert not state.record(goal.key).get('complete')
+
+
+def test_observe_only_cannot_reserve(setup):
+    config, state, _, _, plan, observer = setup
+    calls = []
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='incomplete', reserved=False)], calls))
+    assert coordinator.run((plan,), observe_only=True)['status'] == 'observed'
+    assert calls[0][1]['inspect_only'] is True
+    assert state.used(coordinator.period) == 0
+
+
+def test_prize_requires_live_increment_and_claim(setup):
+    config, state, archive, _, _, observer = setup
+    prize = archive.prizes[0]
+    plan = ArchivePlan(archive, prize.mode, (), (prize,))
+    counters = iter([dict(verified=True, count=59, total=60, claimed=False),
+                     dict(verified=True, count=60, total=60, claimed=False),
+                     dict(verified=True, count=60, total=60, claimed=False)])
+    observer.observe_prize = lambda archive, prize: next(counters)
+    observer.claim_prize = lambda archive, prize: dict(verified=True, count=60, total=60, claimed=True)
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='won', reserved=True, boss_won=True)], []))
+    assert coordinator.run((plan,))['status'] == 'complete'
+    assert state.record(prize_key(archive, prize))['claimed'] is True
+    assert state.used(coordinator.period) == 1
+
+
+def test_unknown_counter_never_farms_or_claims(setup):
+    config, state, archive, _, _, observer = setup
+    prize = archive.prizes[0]
+    observer.observe_prize = lambda archive, prize: dict(verified=False, count=None)
+    coordinator = ArchiveCoordinator(config, state, observer, lambda: pytest.fail('must not enter'))
+    result = coordinator.run((ArchivePlan(archive, prize.mode, (), (prize,)),))
+    assert result['reason'] == 'prize_counter_unverified'
+
+
+def test_only_identity_bound_100_percent_skips_route(setup):
+    config, state, archive, _, plan, observer = setup
+    coordinator = ArchiveCoordinator(config, state, observer, lambda: None)
+    for card in [dict(archive=archive.id, completion=100),
+                 dict(archive=archive.id, completion=99, completion_verified=True),
+                 dict(archive='unknown', completion=100, completion_verified=True)]:
+        coordinator.sync_list(dict(pages=[dict(cards=[card])]), (plan,))
+        assert state.record(story_key(archive)).get('complete') is not True
+    card = dict(archive=archive.id, completion=100, completion_verified=True)
+    coordinator.sync_list(dict(pages=[dict(cards=[card])]), (plan,))
+    assert state.record(story_key(archive))['complete'] is True
+
+
+def test_stale_prize_counter_stops_farming(setup):
+    config, state, archive, _, _, observer = setup
+    prize = archive.prizes[0]
+    observer.observe_prize = lambda archive, prize: dict(verified=True, count=10, total=60, claimed=False)
+    calls = []
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='won', reserved=True, boss_won=True)], calls))
+    result = coordinator.run((ArchivePlan(archive, prize.mode, (), (prize,)),))
+    assert result['reason'] == 'prize_increment_unverified'
+    assert len(calls) == 1
+    assert state.used(coordinator.period) == 1
+
+
+def test_loss_is_spent_and_stops_chunk(setup):
+    config, state, _, goal, plan, observer = setup
+    calls = []
+    coordinator = ArchiveCoordinator(config, state, observer, factory([
+        dict(status='lost', reserved=True, boss_won=False)], calls))
+    assert coordinator.run((plan,))['status'] == 'lost'
+    assert state.entries(coordinator.period)[0]['status'] == 'lost'
+    assert not state.record(goal.key).get('complete')
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('value', [None, {}, dict(verified=True, count=True, total=60, claimed=False),
+                                  dict(verified=True, count=61, total=60, claimed=False),
+                                  dict(verified=True, count=5, total=60, claimed=None)])
+def test_prize_proof_rejects_unknown(value, setup):
+    assert not verified_prize(value, setup[2].prizes[0])
+
+
+@pytest.mark.parametrize('reserved', [False, True])
+def test_hard_lineup_defers_only_affected_archive_and_preserves_budget(setup, reserved):
+    config, state, archive, goal, plan, observer = setup
+    second_archive = next(item for item in ARCHIVES if item.supported and item.id != archive.id)
+    second_goal = StageGoal(second_archive.id, second_archive.normal_stages[0], 'normal', 'archive_clear')
+    second_plan = ArchivePlan(second_archive, 'normal', (second_goal,), ())
+    calls = []
+
+    def create():
+        runner = SimpleNamespace(proof=dict(raw_keys=80), get_oil=lambda **kwargs: 6000)
+
+        def run(selected, proof, reserve, prepare, **kwargs):
+            calls.append(selected)
+            if selected == goal:
+                if reserved:
+                    assert reserve(selected, raw_keys=5, key_mode='per_entry', attempt_kind='daily')
+                raise HardNotSatisfied('missing DD ' + 'x' * 600)
+            return dict(status='complete', reserved=False, stage_complete=True)
+        runner.run_once = run
+        return runner
+
+    coordinator = ArchiveCoordinator(config, state, observer, create)
+    result = coordinator.run((plan, second_plan))
+    assert result['status'] == 'blocked' and result['reason'] == 'hard_lineup'
+    assert calls == [goal, second_goal]
+    assert len(result['deferred_archives'][0]['diagnostic']) == 500
+    assert not state.record(goal.key).get('complete')
+    assert not state.record(story_key(archive)).get('complete')
+    assert state.record(story_key(second_archive))['complete'] is True
+    assert state.used(coordinator.period) == int(reserved)
+    if reserved:
+        assert state.entries(coordinator.period)[0]['status'] == 'uncertain'
+        assert state.entries(coordinator.period)[0]['evidence']['reason'] == 'hard_lineup'
+
+
+def test_all_hard_lineups_blocked_never_report_complete_or_retry_same_archive(setup):
+    config, state, archive, goal, plan, observer = setup
+    calls = []
+
+    def proof(selected):
+        calls.append(selected)
+        raise HardNotSatisfied('missing fleet')
+    observer.proof_for_goal = proof
+    result = ArchiveCoordinator(config, state, observer, lambda: pytest.fail('no runner')).run((plan,))
+    assert result['status'] == 'blocked' and result['reason'] == 'hard_lineup'
+    assert result['sorties'] == 0 and calls == [goal]
+    assert not state.record(story_key(archive)).get('complete')
+
+
+def test_other_takeover_errors_are_not_mistaken_for_hard_lineup(setup):
+    config, state, _, _, plan, observer = setup
+    observer.proof_for_goal = Mock(side_effect=RequestHumanTakeover('unknown UI'))
+    with pytest.raises(RequestHumanTakeover, match='unknown UI'):
+        ArchiveCoordinator(config, state, observer, lambda: None).run((plan,))
+
+
+@pytest.mark.parametrize('observed,observe_only', [(False, False), (False, True), (True, False)])
+def test_list_scan_cache_and_fresh_target_probe(setup, monkeypatch, observed, observe_only):
+    from module.war_archives import completion
+    config, state, _, goal, plan, observer = setup
+    config.config_name = 'f2p'
+    config.Archive_Target = 'all'
+    config.Archive_Difficulty = 'hard'
+    config.Archive_Goal = 'stories'
+    config.Archive_Prize = 'auto'
+    config.Archive_ObserveOnly = observe_only
+    config.task_delay = Mock()
+    observer.run_observe = Mock(return_value=dict(
+        status='observed' if observed else 'blocked', reason='partial_list', pages=[], journal='capture.json'))
+    observer.proof_for_goal = Mock(return_value=dict(raw_keys=80))
+    monkeypatch.setattr(completion, 'build_plan', lambda *args: ((plan,), ()))
+    monkeypatch.setattr(completion, 'ArchiveProgress', lambda **kwargs: observer)
+    monkeypatch.setattr(completion, 'ArchiveState', lambda *args: state)
+    calls = []
+    runner = factory([dict(status='complete', reserved=False, stage_complete=True)], calls)
+    monkeypatch.setattr(completion, 'WarArchivesExecution', lambda **kwargs: runner())
+    job = object.__new__(completion.WarArchivesComplete)
+    job.config, job.device = config, object()
+    if observe_only:
+        # The diagnostic first-goal probe must run even when the route is already complete.
+        state.update(goal.key, complete=True)
+    job.run()
+    observer.proof_for_goal.assert_called_once_with(goal)
+    assert observer.run_observe.call_count == (0 if observe_only else 1)
+    assert bool(state.record('_list_scan').get('period')) is observed
+    assert len(calls) == (0 if observe_only else 1)
+    assert state.used(ArchiveCoordinator(config, state, observer, runner).period) == 0
