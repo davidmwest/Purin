@@ -27,4 +27,6 @@ OCR_BECKONING_TICKETS = Ocr(
     (1198, 40, 1251, 69), letter=(230, 231, 249), threshold=128,
     alphabet='0123456789', name='BECKONING_TICKETS')
 OCR_BECKONING_VICTORIES = DigitCounter(
-    (918, 595, 1015, 617), letter=(92, 79, 78), threshold=80, name='BECKONING_VICTORIES')
+    # Include padding around the opening parenthesis/leading digit. The tighter
+    # crop read the observed (155/60) as 55/60 and hid an earned milestone.
+    (914, 594, 1018, 617), letter=(92, 79, 78), threshold=80, name='BECKONING_VICTORIES')

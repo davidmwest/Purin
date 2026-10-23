@@ -1,4 +1,5 @@
 from copy import deepcopy
+import re
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
@@ -8,13 +9,15 @@ from PIL import Image
 
 from module.campaign import event_beckoning_story as story
 from module.campaign.event_beckoning import BeckoningTickets, EVENT
-from module.campaign.event_beckoning_assets import BECKONING_MONTHLY_COLLECT
+from module.campaign.event_beckoning_assets import (
+    BECKONING_MONTHLY_COLLECT, BECKONING_VICTORY_COLLECT)
 from module.campaign.event_beckoning_story import BeckoningStoryContinuation
 from module.campaign.event_beckoning_story_assets import (
     MONTHLY_MISSION, OCR_MONTHLY_MILESTONE, STORY_CARDS, STORY_UNLOCKED_TITLES,
     STORY_VIEWER_LOG, STORY_VIEWER_SKIP, VICTORY_MISSION)
 from module.combat.assets import GET_ITEMS_1
 from module.exception import ScriptError
+from module.ocr.ocr import Ocr
 
 
 @pytest.fixture
@@ -57,6 +60,64 @@ def test_actual_six_locked_cards_and_escalating_missions_are_recognized():
     assert OCR_MONTHLY_MILESTONE.ocr(image) == (2, 0, 2)
     # The counter reader clamps the actual 155 victories to the earned 30 goal.
     assert story.OCR_BECKONING_VICTORIES.ocr(image) == (30, 0, 30)
+
+
+def test_actual_counter_preserves_visible_leading_digit_at_sixty_goal():
+    image = np.asarray(Image.open(
+        'tests/campaign/data/beckoning_card3_unlocked.png').convert('RGB')).copy()
+    counter = story.OCR_BECKONING_VICTORIES
+    # Check raw model output too: DigitCounter clamps earned progress to its
+    # goal, so the parsed tuple alone could hide a missing leading digit.
+    raw = Ocr.ocr(counter, image)
+    assert re.search(r'(\d+)/(\d+)', raw).groups() == ('155', '60')
+    assert counter.ocr(image) == (60, 0, 60)
+    # Removing the actual first digit must not reconstruct an assumed 155.
+    image[594:614, 918:930] = (193, 185, 168)
+    assert counter.ocr(image) == (55, 5, 60)
+
+
+@pytest.mark.parametrize('missing_leading_digit', [False, True])
+def test_actual_sixty_milestone_claim_requires_visible_earned_counter(
+        immediate, missing_leading_digit):
+    helper, owner, record, state, saved = controller(frames=12)
+    owner.device.image = np.asarray(Image.open(
+        'tests/campaign/data/beckoning_card3_unlocked.png').convert('RGB')).copy()
+    if missing_leading_digit:
+        owner.device.image[594:614, 918:930] = (193, 185, 168)
+    claimed = [False]
+    helper.visible = lambda button: BeckoningStoryContinuation.visible(helper, button)
+    owner._matches = lambda button: (
+        not (button is BECKONING_VICTORY_COLLECT and claimed[0])
+        and button.match_template_color(owner.device.image, offset=(3, 3), similarity=.85))
+    owner._on_choice = lambda: BeckoningTickets._on_choice(owner)
+    owner._tickets = lambda: 3 if claimed[0] else 2
+
+    def click(button):
+        assert button is BECKONING_VICTORY_COLLECT
+        audit = saved[-1][0][EVENT + ':beckoning_stories_v1']['milestones']['victories:60']
+        assert audit['pending'] and audit['clicks'] == 1 and saved[-1][1] == 0
+        claimed[0] = True
+
+    owner.device.click.side_effect = click
+    assert helper.collect_milestones() is True
+    if missing_leading_digit:
+        owner.device.click.assert_not_called()
+        assert helper.ledger['milestones'] == {}
+    else:
+        owner.device.click.assert_called_once_with(BECKONING_VICTORY_COLLECT)
+        audit = helper.ledger['milestones']['victories:60']
+        assert audit['verified'] and not audit['pending'] and audit['tickets_after'] == 3
+
+
+def test_remaining_locked_cards_match_actual_post_third_story_screen():
+    image = np.asarray(Image.open(
+        'tests/campaign/data/beckoning_card3_unlocked.png').convert('RGB'))
+    helper, owner, *_ = controller()
+    owner.device.image = image
+    for name, title, lock in STORY_CARDS[3:]:
+        assert BeckoningStoryContinuation.visible(helper, title), name
+        assert BeckoningStoryContinuation.visible(helper, lock), name
+        assert name not in STORY_UNLOCKED_TITLES
 
 
 def actual_card3_return(frames=5):
