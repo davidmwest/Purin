@@ -381,6 +381,8 @@ class GeneratedConfig:
     Shipyard_LastRun = datetime.datetime(2020, 1, 1, 0, 0)
 
     # Group `Gacha`
+    Gacha_MissionDriven = True
+    Gacha_FallbackPool = 'light'  # light, heavy, special
     Gacha_Pool = 'light'  # light, heavy, special, event, wishing_well
     Gacha_Amount = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
     Gacha_UseTicket = True

@@ -11651,6 +11651,19 @@
       }
     },
     "Gacha": {
+      "MissionDriven": {
+        "type": "checkbox",
+        "value": true
+      },
+      "FallbackPool": {
+        "type": "select",
+        "value": "light",
+        "option": [
+          "light",
+          "heavy",
+          "special"
+        ]
+      },
       "Pool": {
         "type": "select",
         "value": "light",

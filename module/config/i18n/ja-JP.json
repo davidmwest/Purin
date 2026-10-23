@@ -2410,6 +2410,17 @@
       "name": "Gacha._info.name",
       "help": "Gacha._info.help"
     },
+    "MissionDriven": {
+      "name": "Gacha.MissionDriven.name",
+      "help": "Gacha.MissionDriven.help"
+    },
+    "FallbackPool": {
+      "name": "Gacha.FallbackPool.name",
+      "help": "Gacha.FallbackPool.help",
+      "light": "light",
+      "heavy": "heavy",
+      "special": "special"
+    },
     "Pool": {
       "name": "Gacha.Pool.name",
       "help": "Gacha.Pool.help",

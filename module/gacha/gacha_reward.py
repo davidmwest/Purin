@@ -381,5 +381,11 @@ class RewardGacha(GachaUI, Retirement):
             in: Any page
             out: page_build
         """
-        self.gacha_run()
+        if getattr(self.config, 'Gacha_MissionDriven', True):
+            # Mission mode never reaches the fixed-count queue/submit path.
+            # First collect exact mission and banner evidence through the job.
+            from module.gacha.mission import GachaMissionObserver
+            GachaMissionObserver(config=self.config, device=self.device).run()
+        else:
+            self.gacha_run()
         self.config.task_delay(server_update=True)

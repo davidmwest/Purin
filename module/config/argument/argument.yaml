@@ -662,6 +662,10 @@ Shipyard:
   BuyAmount: 2
   LastRun: 2020-01-01 00:00:00
 Gacha:
+  MissionDriven: true
+  FallbackPool:
+    value: light
+    option: [ light, heavy, special ]
   Pool:
     value: light
     option: [ light, heavy, special, event, wishing_well ]

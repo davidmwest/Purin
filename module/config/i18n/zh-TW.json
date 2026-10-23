@@ -2410,6 +2410,17 @@
       "name": "每日建造",
       "help": "建造完成每日任務，每天建造一次輕型池可貪200物資"
     },
+    "MissionDriven": {
+      "name": "Gacha.MissionDriven.name",
+      "help": "Gacha.MissionDriven.help"
+    },
+    "FallbackPool": {
+      "name": "Gacha.FallbackPool.name",
+      "help": "Gacha.FallbackPool.help",
+      "light": "light",
+      "heavy": "heavy",
+      "special": "special"
+    },
     "Pool": {
       "name": "船池",
       "help": "",

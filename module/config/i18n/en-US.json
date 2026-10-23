@@ -2410,6 +2410,17 @@
       "name": "Gacha Settings",
       "help": "Submit new build order(s) for daily achievement\nPrevious orders will be dequeued before submission to allow for maximum inputs and if any are still in progress, drills will be used to expedite them\nRetirement settings will be enforced if dock is full"
     },
+    "MissionDriven": {
+      "name": "Mission-driven daily builds",
+      "help": "Require verified daily mission progress before building. Prefer the Event pool until every current banner ship is positively owned. Unknown progress is captured for diagnosis and does not submit orders."
+    },
+    "FallbackPool": {
+      "name": "Completed-banner fallback pool",
+      "help": "Use this pool only after ownership of every ship on the current event banner is positively verified. Unknown or incomplete ownership keeps the Event pool.",
+      "light": "Light",
+      "heavy": "Heavy",
+      "special": "Special"
+    },
     "Pool": {
       "name": "Pool",
       "help": "",

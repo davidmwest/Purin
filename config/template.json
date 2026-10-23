@@ -2279,6 +2279,8 @@
       "ServerUpdate": "00:00"
     },
     "Gacha": {
+      "MissionDriven": true,
+      "FallbackPool": "light",
       "Pool": "light",
       "Amount": 1,
       "UseTicket": true,

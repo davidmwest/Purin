@@ -2410,6 +2410,17 @@
       "name": "每日抽卡",
       "help": "抽卡完成每日任务，每天抽一发轻型池可以贪200物资"
     },
+    "MissionDriven": {
+      "name": "Gacha.MissionDriven.name",
+      "help": "Gacha.MissionDriven.help"
+    },
+    "FallbackPool": {
+      "name": "Gacha.FallbackPool.name",
+      "help": "Gacha.FallbackPool.help",
+      "light": "light",
+      "heavy": "heavy",
+      "special": "special"
+    },
     "Pool": {
       "name": "卡池",
       "help": "",
