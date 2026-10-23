@@ -6,7 +6,8 @@ from module.campaign.event_completion import load_reward_observations, save_rewa
 from module.campaign.event_main_notifications import DAY7
 from module.campaign.event_rewards import EventRewards
 from module.campaign.event_treasure_free_pack_assets import (
-    TREASURE_CARDS, TREASURE_DATES, TREASURE_HEADER, TREASURE_HOME)
+    OCR_TREASURE_CONFIRM_PRICE, TREASURE_CARDS, TREASURE_CONFIRM_BUY, TREASURE_CONFIRM_WITNESSES,
+    TREASURE_DATES, TREASURE_HEADER, TREASURE_HOME)
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
@@ -26,11 +27,13 @@ class EventTreasureFreePacks(EventRewards):
         for row in cards.values():
             if (not isinstance(row, dict) or type(row.get('claim_clicks')) is not int
                     or row['claim_clicks'] not in (0, 1)
+                    or type(row.get('confirm_clicks', 0)) is not int or row.get('confirm_clicks', 0) not in (0, 1)
                     or any(type(row.get(field)) is not bool for field in ('pending', 'receipt_seen', 'verified'))):
                 raise ScriptError('Invalid free treasure claim reservation')
             if (row['pending'] and (row['claim_clicks'] != 1 or row['verified'])
                     or row['verified'] and (row['claim_clicks'] != 1 or not row['receipt_seen'])
                     or row['receipt_seen'] and row['claim_clicks'] != 1
+                    or row.get('confirm_clicks', 0) and row['claim_clicks'] != 1
                     or row['claim_clicks'] == 1 and not (row['pending'] or row['verified'])):
                 raise ScriptError('Inconsistent free treasure claim evidence')
         for field, maximum in (('entry_clicks', 2), ('reward_dialogs', 12), ('invocations', None)):
@@ -59,6 +62,13 @@ class EventTreasureFreePacks(EventRewards):
 
     def _claimable(self, day):
         return self._card_base(day) and self._exact(TREASURE_CARDS[day][2])
+
+    def _free_confirmation(self):
+        # This is the observed FREE blue crate with the captured books/oil,
+        # exact name, zero-price strip and Buy button. Generic shop confirmation
+        # handlers must never authorize it or any paid pack on our behalf.
+        return (all(self._exact(button) for button in TREASURE_CONFIRM_WITNESSES)
+                and str(OCR_TREASURE_CONFIRM_PRICE.ocr(self.device.image)).strip() == '0')
 
     def _capture(self, record, suffix):
         path = save_event_diagnostic(self.device, f'alas_treasure_free_{suffix}')
@@ -116,6 +126,28 @@ class EventTreasureFreePacks(EventRewards):
                 persist()
                 self.device.click(dialog)
                 click_wait.reset()
+                continue
+            if pending and self._free_confirmation():
+                row = record['cards'][pending]
+                if row.get('confirm_clicks', 0):
+                    # A previously sent Buy cannot be repeated, even when its
+                    # receipt has not arrived or the modal remains visible.
+                    stable_key, stable_frames = None, 0
+                    settled.reset()
+                    continue
+                key = (pending, 'confirm_free')
+                if key != stable_key:
+                    stable_key, stable_frames = key, 1
+                    settled.reset()
+                    continue
+                stable_frames += 1
+                if stable_frames >= 3 and settled.reached() and click_wait.reached():
+                    row['confirm_clicks'] = 1
+                    persist()
+                    self.device.click(TREASURE_CONFIRM_BUY)
+                    click_wait.reset()
+                    stable_key, stable_frames = None, 0
+                    settled.reset()
                 continue
             if not self._treasure_page():
                 stable_key, stable_frames = None, 0
@@ -186,10 +218,12 @@ class EventTreasureFreePacks(EventRewards):
         ensure_event_running(self)
         state = load_reward_observations('alas', folder=folder)
         previous = state.get(KEY)
-        record = previous if previous is not None else dict(cards={day: dict(claim_clicks=0, pending=False, receipt_seen=False,
+        record = previous if previous is not None else dict(cards={day: dict(claim_clicks=0, confirm_clicks=0, pending=False, receipt_seen=False,
                                                    verified=False) for day in TREASURE_CARDS},
                                   entry_clicks=0, reward_dialogs=0, invocations=0)
         self._validate(record)
+        for row in record['cards'].values():
+            row.setdefault('confirm_clicks', 0)
         # Persisted claim reservations survive restart; only read-only settlement
         # or owned receipt dismissal can resume a pending day. Never reset it.
         record.update(status='collecting', diagnostics=[], returned_main=False, home_clicks=0, inactive=False,

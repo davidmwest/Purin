@@ -9,7 +9,8 @@ from module.campaign import event_treasure_free_packs as treasure
 from module.campaign.event_completion import load_reward_observations, save_reward_observations
 from module.campaign.event_treasure_free_packs import EventTreasureFreePacks, EVENT, KEY
 from module.campaign.event_treasure_free_pack_assets import (
-    TREASURE_CARDS, TREASURE_DATES, TREASURE_HEADER, TREASURE_HOME)
+    OCR_TREASURE_CONFIRM_PRICE, TREASURE_CARDS, TREASURE_CONFIRM_BUY, TREASURE_CONFIRM_WITNESSES,
+    TREASURE_CONFIRM_ZERO, TREASURE_DATES, TREASURE_HEADER, TREASURE_HOME)
 from module.campaign.event_main_notifications import DAY7
 from module.combat.assets import GET_ITEMS_1
 from module.exception import GamePageUnknownError, ScriptError
@@ -18,6 +19,10 @@ from module.ui.page import page_main
 
 def captured():
     return np.asarray(Image.open('tests/campaign/data/treasure_free_packs.png').convert('RGB')).copy()
+
+
+def confirmation_capture():
+    return np.asarray(Image.open('tests/campaign/data/treasure_free_confirmation.png').convert('RGB')).copy()
 
 
 def controller(frames=24):
@@ -74,6 +79,122 @@ def test_every_exact_page_free_name_and_claimable_witness_is_required(missing):
     else:
         day = 'day2' if missing in TREASURE_CARDS['day2'] else 'day1'
         assert not helper._claimable(day)
+
+
+def test_actual_free_pack_confirmation_requires_raw_zero_price_and_captured_free_name_contents():
+    helper = controller()
+    helper.device.image = confirmation_capture()
+    assert OCR_TREASURE_CONFIRM_PRICE.ocr(helper.device.image) == '0'
+    assert helper._free_confirmation()
+
+
+@pytest.mark.parametrize('missing', TREASURE_CONFIRM_WITNESSES)
+def test_captured_confirmation_rejects_missing_free_name_content_price_or_buy(missing):
+    helper = controller()
+    helper.device.image = confirmation_capture()
+    remove(helper.device.image, missing)
+    assert not helper._free_confirmation()
+
+
+@pytest.mark.parametrize('alteration', ['missing_zero', 'nonzero_digit', 'extra_leading_digit'])
+def test_actual_pixel_price_change_never_authorizes_a_paid_or_unreadable_pack(alteration):
+    helper = controller()
+    original = Image.fromarray(confirmation_capture())
+    modified = original.copy()
+    # Use actual pixels from the observed item-count 3, not a mocked recognizer.
+    digit = original.crop((539, 271, 555, 290)).resize((20, 29))
+    if alteration != 'extra_leading_digit':
+        modified.paste(original.getpixel((698, 521)), (665, 512, 688, 544))
+    if alteration == 'nonzero_digit':
+        modified.paste(digit, (666, 513))
+    elif alteration == 'extra_leading_digit':
+        modified.paste(digit, (687, 513))
+    helper.device.image = np.asarray(modified)
+    assert not helper._free_confirmation()
+
+
+@pytest.mark.parametrize('price', ['', '00', '100', 'O', None])
+def test_raw_unreadable_or_nonzero_ocr_cannot_become_zero(monkeypatch, price):
+    helper = controller()
+    helper.device.image = confirmation_capture()
+    monkeypatch.setattr(OCR_TREASURE_CONFIRM_PRICE, 'ocr', Mock(return_value=price))
+    assert not helper._free_confirmation()
+
+
+@pytest.mark.parametrize('day', ['day2', 'day1'])
+def test_owned_pending_free_confirmation_is_reserved_once_before_buy_and_receipt(immediate, day):
+    helper = controller(frames=32)
+    helper.device.image = confirmation_capture()
+    state = record()
+    other = 'day1' if day == 'day2' else 'day2'
+    state['cards'][day].update(claim_clicks=1, pending=True)
+    state['cards'][other].update(claim_clicks=1, verified=True, receipt_seen=True)
+    helper._free_confirmation = Mock(side_effect=lambda: not helper.device.click.called)
+    receipt = [False]
+    snapshots = []
+    def persist():
+        snapshots.append(state['cards'][day].copy())
+    def click(button):
+        if button is TREASURE_CONFIRM_BUY:
+            assert snapshots[-1]['confirm_clicks'] == 1 and snapshots[-1]['pending']
+            receipt[0] = True
+        elif button is GET_ITEMS_1:
+            assert snapshots[-1]['receipt_seen']
+            helper.device.image = captured()
+            remove(helper.device.image, TREASURE_CARDS[day][2])
+            receipt[0] = False
+        else:
+            pytest.fail('unexpected input')
+    helper.device.click.side_effect = click
+    helper._reward_dialog = Mock(side_effect=lambda: GET_ITEMS_1 if receipt[0] else None)
+    helper._collect_free(state, persist)
+    assert state['status'] == 'complete'
+    assert state['cards'][day]['verified'] and state['cards'][day]['confirm_clicks'] == 1
+    assert helper.device.click.call_args_list == [call(TREASURE_CONFIRM_BUY), call(GET_ITEMS_1)]
+
+
+def test_legacy_pending_record_defaults_confirmation_budget_without_resetting_claim(immediate, monkeypatch, tmp_path):
+    state = record()
+    state['cards']['day2'].update(claim_clicks=1, pending=True)
+    save_reward_observations('alas', {KEY: state}, folder=str(tmp_path))
+    helper = controller()
+    helper._free_confirmation = Mock(return_value=True)
+    helper._return_main = Mock(return_value=False)
+    monkeypatch.setattr(treasure, 'save_event_diagnostic', Mock(return_value='pending.png'))
+    result = helper.run(EVENT, folder=str(tmp_path))
+    assert result['cards']['day2']['claim_clicks'] == result['cards']['day2']['confirm_clicks'] == 1
+    assert result['cards']['day2']['pending']
+    helper.device.click.assert_called_once_with(TREASURE_CONFIRM_BUY)
+    helper.device.click.reset_mock()
+    helper.run(EVENT, folder=str(tmp_path))
+    helper.device.click.assert_not_called()
+
+
+def test_confirmation_crash_reservation_prevents_repeated_buy_after_restart(immediate, monkeypatch, tmp_path):
+    state = record()
+    state['cards']['day2'].update(claim_clicks=1, pending=True)
+    save_reward_observations('alas', {KEY: state}, folder=str(tmp_path))
+    helper = controller()
+    helper._free_confirmation = Mock(return_value=True)
+    monkeypatch.setattr(treasure, 'save_event_diagnostic', Mock(return_value='pending.png'))
+    def crash(button):
+        saved = load_reward_observations('alas', folder=str(tmp_path))[KEY]
+        assert saved['cards']['day2']['confirm_clicks'] == 1
+        raise RuntimeError('Buy interrupted')
+    helper.device.click.side_effect = crash
+    with pytest.raises(RuntimeError, match='Buy interrupted'):
+        helper.run(EVENT, folder=str(tmp_path))
+    helper.device.click.reset_mock(side_effect=True)
+    helper.run(EVENT, folder=str(tmp_path))
+    helper.device.click.assert_not_called()
+
+
+def test_unowned_confirmation_has_no_buy_action(immediate):
+    helper = controller()
+    helper.device.image = confirmation_capture()
+    helper._free_confirmation = Mock(return_value=True)
+    helper._collect_free(record(), Mock())
+    helper.device.click.assert_not_called()
 
 
 def test_both_free_cards_claim_once_only_after_durable_proof_and_known_receipts(immediate):
@@ -284,6 +405,7 @@ def test_rewards_disabled_never_constructs_treasure_collector(monkeypatch):
     {'pending': True}, {'verified': True}, {'receipt_seen': True},
     {'claim_clicks': 1}, {'claim_clicks': 1, 'verified': True},
     {'claim_clicks': 1, 'pending': True, 'verified': True, 'receipt_seen': True},
+    {'confirm_clicks': False}, {'confirm_clicks': 2}, {'confirm_clicks': 1},
 ])
 def test_corrupted_claim_journal_fails_before_any_navigation_or_input(tmp_path, broken):
     helper = controller()
