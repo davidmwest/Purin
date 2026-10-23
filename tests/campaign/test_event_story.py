@@ -241,7 +241,8 @@ def test_idle_wakeup_uses_existing_navigation_click_and_settle_budget(monkeypatc
 
 
 @pytest.mark.parametrize('filename,title', [('tempesta_hub.png', 'TEMPESTA_HUB'),
-                                         ('tempesta_rewards_catalog.png', 'TEMPESTA_HUB_INACTIVE')])
+                                         ('tempesta_rewards_catalog.png', 'TEMPESTA_HUB_INACTIVE'),
+                                         ('tempesta_beckoning.png', 'TEMPESTA_HUB_INACTIVE')])
 @pytest.mark.parametrize('missing', [None, 'title', 'home'])
 def test_captured_tempesta_hub_exit_requires_title_and_home(missing, filename, title):
     from pathlib import Path

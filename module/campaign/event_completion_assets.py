@@ -58,3 +58,6 @@ TEMPESTA_HUB_INACTIVE = Button(
 TEMPESTA_BECKONING_TAB = Button(
     area=(44, 360, 181, 386), color=(53, 61, 79), button=(45, 359, 192, 388),
     file=_PANELS, name='TEMPESTA_BECKONING_TAB')
+TEMPESTA_FOGGY_SUPPLY_TAB = Button(
+    area=(44, 258, 230, 284), color=(54, 61, 77), button=(45, 257, 230, 287),
+    file=_PANELS, name='TEMPESTA_FOGGY_SUPPLY_TAB')
