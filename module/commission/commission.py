@@ -86,10 +86,60 @@ def requirement_unmet(image, top):
 REQUIREMENT_LEVEL_AREA = (318, -86, 594, -60)
 REQUIREMENT_WORDS = (230, 86, 68)
 REQUIREMENT_DIGIT = (137, 233, 96)
+# Rows searched for the line of the first requirement, from the top of COMMISSION_ADVICE. Recommend may match 11 px
+# lower than its usual place (Research Mission II of the F2P account, 2026-10-22, its team filled with Lv.1 ships):
+# the box at a fixed offset then cut the top half of the letters, read "vea`'e>v.3VS'P", and no fleet ship was taken.
+REQUIREMENT_SEARCH = (-100, -45)
+REQUIREMENT_LINE_MARGIN = 3
 REQUIREMENT_LEVEL = re.compile(r'[l1I]v[.,]?\s*(\d{1,3})', re.IGNORECASE)
 LEVEL_MAX = 125
 REQUIREMENT_READS = 4
 REQUIREMENT_READ_INTERVAL = 0.4
+
+
+def requirement_mask(area):
+    """
+    Returns:
+        np.ndarray: Pixels of the red words and the green numbers of a requirement
+    """
+    area = area.astype(np.int16)
+    text = np.zeros(area.shape[:2], dtype=bool)
+    for color in (REQUIREMENT_WORDS, REQUIREMENT_DIGIT):
+        text |= np.abs(area - np.array(color)).max(axis=2) < 60
+    return text
+
+
+def requirement_box(image, top):
+    """
+    Args:
+        image (np.ndarray): Screenshot of a commission unfolded
+        top (int): Top of COMMISSION_ADVICE
+
+    Returns:
+        tuple[int, int, int, int]: Area of the line of the first requirement, found by its colors around where it
+            is drawn, REQUIREMENT_LEVEL_AREA if no line is found
+    """
+    x1, y1, x2, y2 = REQUIREMENT_LEVEL_AREA
+    fixed = (x1, top + y1, x2, top + y2)
+    s1 = max(top + REQUIREMENT_SEARCH[0], 0)
+    s2 = min(top + REQUIREMENT_SEARCH[1], image.shape[0])
+    if s2 - s1 < 5:
+        return fixed
+    rows = requirement_mask(crop(image, (x1, s1, x2, s2), copy=False)).sum(axis=1)
+    lit = rows >= 3
+    # The longest run of rows with letters is the line
+    best, start = None, None
+    for y, on in enumerate(list(lit) + [False]):
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            if best is None or rows[start:y].sum() > rows[best[0]:best[1]].sum():
+                best = (start, y)
+            start = None
+    if best is None:
+        return fixed
+    margin = REQUIREMENT_LINE_MARGIN
+    return x1, max(s1 + best[0] - margin, 0), x2, min(s1 + best[1] + margin, image.shape[0])
 
 
 def requirement_text(image, top):
@@ -101,12 +151,8 @@ def requirement_text(image, top):
     Returns:
         str: The first requirement as read, its red words and green numbers
     """
-    x1, y1, x2, y2 = REQUIREMENT_LEVEL_AREA
-    box = (x1, top + y1, x2, top + y2)
-    area = crop(image, box, copy=False).astype(np.int16)
-    text = np.zeros(area.shape[:2], dtype=bool)
-    for color in (REQUIREMENT_WORDS, REQUIREMENT_DIGIT):
-        text |= np.abs(area - np.array(color)).max(axis=2) < 60
+    box = requirement_box(image, top)
+    text = requirement_mask(crop(image, box, copy=False))
     if np.sum(text) < 50:
         return ''
     # White letters on black, the colors of the OCR below

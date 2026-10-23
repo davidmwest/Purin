@@ -39,6 +39,14 @@ def test_level_a_commission_asks_for(name, level):
     assert requirement_level(image, ADVICE_TOP) == level
 
 
+def test_the_requirement_is_found_when_recommend_matches_lower():
+    # Research Mission II of the F2P account, 2026-10-22, its team filled with Lv.1 ships: Recommend matched at 339,
+    # the box at a fixed offset cut the letters in half and read "vea`'e>v.3VS'P"
+    image = cv2.cvtColor(cv2.imread(os.path.join(DATA, 'requirement_lv30_advice_low.png')), cv2.COLOR_BGR2RGB)
+
+    assert requirement_level(image, ADVICE_TOP + 11) == 30
+
+
 def fleet(*ships):
     rows = ['main'] * 3 + ['vanguard'] * 3
     return [Slot(fleet=1, row=row, index=i % 3, name=name, level=level)
