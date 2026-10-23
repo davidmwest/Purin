@@ -686,6 +686,55 @@ def use_en_buttons(owner):
         owner.device.image, **kwargs)
 
 
+def moonlit_list(owner, monkeypatch):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/alas_archive_moonlit.png')
+    use_en_identities(monkeypatch)
+    use_en_buttons(owner)
+
+
+def test_actual_moonlit_card_uses_current_existing_portrait_and_reads_completion(owner, monkeypatch):
+    moonlit_list(owner, monkeypatch)
+    archive = 'war_archives_20190314_en'
+    old_similarity, _ = p.dic_archives_template[archive].match_result(owner.device.image)
+    assert old_similarity < .85  # The formerly selected Prelude crop caused the live miss.
+    assert owner._list_page() and owner._category() == 'sp'
+    cards = {item['archive']: item for item in owner.read_cards()}
+    moonlit = cards[archive]
+    assert moonlit['identity_similarity'] > .97
+    assert moonlit['identity_area'] == [418, 474, 502, 506]
+    assert moonlit['card_area'] == [88, 422, 558, 651]
+    assert moonlit['completion'] == 100 and moonlit['completion_verified']
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('missing', ['identity', 'header', 'completion'])
+def test_actual_moonlit_missing_witness_cannot_authorize_card_entry(owner, monkeypatch, missing):
+    moonlit_list(owner, monkeypatch)
+    area = {'identity': (418, 474, 502, 506), 'header': (88, 402, 148, 421),
+            'completion': (168, 606, 231, 636)}[missing]
+    left, top, right, bottom = area
+    owner.device.image[top:bottom, left:right] = 0
+    matches = [item for item in owner.read_cards()
+               if item['archive'] == 'war_archives_20190314_en'
+               and item['card_area'] is not None and item['completion'] is not None]
+    assert matches == []
+    owner.device.click.assert_not_called()
+
+
+def test_actual_moonlit_search_finds_fresh_card_after_one_progressive_scroll(owner, monkeypatch):
+    moonlit_list(owner, monkeypatch)
+    cards, scroll = owner._settled_list('sp')
+    owner._select_category = Mock(return_value=True)
+    owner._settled_list = Mock(side_effect=[([], dict(top=0, bottom=111)), (cards, scroll)])
+    owner._drag_scroll = Mock(return_value=True)
+    found = owner._find_archive('war_archives_20190314_en', 'sp', record(), Mock(), float('inf'))
+    assert found['identity_area'] == [418, 474, 502, 506]
+    assert found['completion'] == 100 and found['completion_verified']
+    owner._drag_scroll.assert_called_once()
+    owner.device.click.assert_not_called()
+
+
 def test_actual_sp_short_reset_still_requires_another_drag_to_physical_top(owner):
     from module.base.utils import load_image
     owner.device.image = load_image('tests/war_archives/data/f2p_archive_sp_short_reset.png')

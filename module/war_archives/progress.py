@@ -29,7 +29,7 @@ from module.ui.page import page_archives, page_main
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 from module.ui.scroll import Scroll
 from module.war_archives.assets import (WAR_ARCHIVES_EX_ON, WAR_ARCHIVES_SCROLL, WAR_ARCHIVES_SP_ON,
-                                      WAR_ARCHIVES_CAMPAIGN_CHECK)
+                                      WAR_ARCHIVES_CAMPAIGN_CHECK, TEMPLATE_MOONLIT_OVERTURE)
 from module.war_archives.dictionary import dic_archives_template
 from module.war_archives.stage_assets import VISITORS_TITLE, ARCHIVE_NEXT, STAGE_CLEAR, STAGE_PERCENT
 
@@ -38,6 +38,9 @@ ARCHIVE_SCROLL = Scroll(WAR_ARCHIVES_SCROLL, color=(247, 211, 66), name='ARCHIVE
 CATEGORY_BUTTONS = {'ex': WAR_ARCHIVES_EX_ON, 'sp': WAR_ARCHIVES_SP_ON}
 OBSERVATION_VERSION = 1
 FILES_HEADER = Template('./assets/en/war_archives/ARCHIVE_FILES_HEADER_20261023.png')
+# The old Prelude portrait crop predates the current Moonlit Overture card.
+# Use its existing current-art crop without relaxing the identity threshold.
+CARD_IDENTITY_OVERRIDES = {'war_archives_20190314_en': TEMPLATE_MOONLIT_OVERTURE}
 STAGE_KEYS = Ocr((1188, 107, 1272, 131), lang='cnocr', letter=(255, 255, 255),
                  threshold=96, alphabet='0123456789/', name='ARCHIVE_STAGE_KEYS')
 STAGE_TITLE = Ocr((210, 70, 1100, 100), lang='cnocr', letter=(255, 255, 255),
@@ -101,6 +104,7 @@ class ArchiveProgress(CampaignUI):
         cards = []
         headers = FILES_HEADER.match_multi(self.device.image, similarity=.90)
         for archive, template in dic_archives_template.items():
+            template = CARD_IDENTITY_OVERRIDES.get(archive, template)
             similarity, anchor = template.match_result(self.device.image)
             left, top, right, bottom = (int(value) for value in anchor.area)
             if similarity < .85 or not (75 <= left < right <= 1245 and 110 <= top < bottom <= 700):
