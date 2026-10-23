@@ -93,6 +93,7 @@ def test_actual_main_already_claimed_fixture_needs_three_fresh_stage_frames(obse
     observer.loop = frames
     result = reader.observe(p.VISITORS, prize(), tmp_path, 'claimed')
     assert result['claimed'] is True and result['verified'] is True
+    assert result['proof_kind'] == 'source_received_hidden_button'
     assert result['count'] is None  # No invented prior clear count.
     assert result['open_clicks'] == result['claim_clicks'] == 0
     assert result['returned_stage'] and len(calls) == 3

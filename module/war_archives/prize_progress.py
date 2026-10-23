@@ -156,6 +156,7 @@ class ArchivePrizeProgress:
                     absent_frames += 1
                     if absent_frames >= 3 and absent.reached():
                         record.update(status='observed', reason='prize_already_claimed',
+                                      proof_kind='source_received_hidden_button',
                                       verified=True, claimed=True, returned_stage=True)
                         capture('prize_already_claimed')
                         return record
