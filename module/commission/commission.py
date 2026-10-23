@@ -179,6 +179,45 @@ def requirement_level(image, top):
     return level if 1 <= level <= LEVEL_MAX else 0
 
 
+# A ship of a fleet goes in the team of a commission from its team picker, by her name. Recommend never offers a
+# fleet ship, nor one just taken out of her fleet: 2026-10-22, Laffey Lv.75 out of fleet 1 and free, Recommend said
+# "No suitable shipgirls found" for a commission asking for a Lv.30 ship. The picker shows the fleet ships, and taking
+# one asks "This ship is assigned to another fleet. Remove ship from that fleet?"
+TEAM_SLOT_EMPTY = './assets/commission/team_slot_empty.png'
+# The line of the team, from the top of COMMISSION_ADVICE
+TEAM_ROW = (220, -45, 830, 65)
+TEAM_SLOT_SIMILARITY = 0.85
+PICK_OPEN_TIMEOUT = 10
+PICK_TIMEOUT = 20
+
+
+def team_empty_slots(image, top, template):
+    """
+    Args:
+        image (np.ndarray): Screenshot of a commission unfolded
+        top (int): Top of COMMISSION_ADVICE
+        template (np.ndarray): An empty slot of the team
+
+    Returns:
+        list[tuple[int, int, int, int]]: Areas of the empty slots of the team, left to right
+    """
+    x1, y1, x2, y2 = TEAM_ROW
+    area = (x1, max(top + y1, 0), x2, min(top + y2, image.shape[0]))
+    h, w = template.shape[:2]
+    if area[3] - area[1] < h or area[2] - area[0] < w:
+        return []
+    result = cv2.matchTemplate(crop(image, area, copy=False), template, cv2.TM_CCOEFF_NORMED)
+    slots = []
+    while 1:
+        _, score, _, (x, y) = cv2.minMaxLoc(result)
+        if score < TEAM_SLOT_SIMILARITY:
+            break
+        slots.append((area[0] + x, area[1] + y, area[0] + x + w, area[1] + y + h))
+        # Wipe the neighbourhood of this match, the next best is an other slot
+        result[max(y - h // 2, 0):y + h // 2 + 1, max(x - w // 2, 0):x + w // 2 + 1] = -1
+    return sorted(slots)
+
+
 # Commissions tried in a run at most, those that can not start included
 COMMISSION_TRIES = 10
 # "Available Fleet 2/3" on top of the commission list: fleets free for a commission, of all. A young account has 3,
@@ -516,7 +555,7 @@ class RewardCommission(UI, InfoHandler):
         self.daily_choose, self.urgent_choose = self._commission_choose(self.daily, self.urgent)
         return daily, urgent
 
-    def _commission_start_click(self, comm, is_urgent=False, skip_first_screenshot=True):
+    def _commission_start_click(self, comm, is_urgent=False, skip_first_screenshot=True, pick=None):
         """
         Start a commission.
 
@@ -524,6 +563,8 @@ class RewardCommission(UI, InfoHandler):
             comm (Commission):
             is_urgent (bool):
             skip_first_screenshot:
+            pick (Slot): A ship of a fleet put in the team before Recommend, see commission_pick(). Recommend then
+                adds the rest, locked ships of level 1 if it offers them.
 
         Returns:
             bool: If success
@@ -580,7 +621,8 @@ class RewardCommission(UI, InfoHandler):
                 self.interval_reset(COMMISSION_ADVICE)
                 comm_timer.reset()
                 continue
-            if count and not start_clicked and need_level > 1 and self.handle_popup_cancel('COMMISSION_NO_SHIP'):
+            if count and not start_clicked and need_level > 1 and pick is None \
+                    and self.handle_popup_cancel('COMMISSION_NO_SHIP'):
                 # After Recommend: "No suitable shipgirls found. Would you like to automatically add a locked Lv. 1
                 # shipgirl?" Ships of level 1 would not meet "Have at least 1 lv. 30 ship." either
                 logger.warning(f'No free ship at level {need_level} for commission {comm}')
@@ -631,6 +673,9 @@ class RewardCommission(UI, InfoHandler):
                     logger.warning('No selected commission detected, assuming correct')
                 if not count:
                     need_level = self.commission_need_level()
+                    if pick is not None and not self.commission_pick(pick):
+                        logger.warning(f'{pick.name} not put in the team of commission {comm}')
+                        return False
                 self.device.click(COMMISSION_ADVICE)
                 count += 1
                 self.interval_reset(COMMISSION_ADVICE)
@@ -644,6 +689,141 @@ class RewardCommission(UI, InfoHandler):
                 comm_timer.reset()
 
         return True
+
+    def commission_team_empty_slot(self):
+        """
+        Returns:
+            Button | None: The first empty slot of the team of the commission unfolded
+
+        Pages:
+            in: commission details unfold, COMMISSION_ADVICE appeared
+        """
+        if not hasattr(self, '_team_slot_template'):
+            self._team_slot_template = load_image(TEAM_SLOT_EMPTY)
+        slots = team_empty_slots(self.device.image, COMMISSION_ADVICE.button[1], self._team_slot_template)
+        if not slots:
+            return None
+        return Button(area=slots[0], color=(), button=slots[0], name='COMMISSION_TEAM_SLOT')
+
+    def commission_pick_card(self, ship):
+        """
+        Args:
+            ship (Slot): Her name, level and fleet
+
+        Returns:
+            Button | None: Her card among the ships the search found, her level first, then the highest
+
+        Pages:
+            in: the team picker, a dock search done
+        """
+        from module.leveling.fleet import area_button, card_name_area, name_fits
+        from module.retire.scanner import ShipScanner
+        for _ in range(2):
+            scanner = ShipScanner(fleet=(0, 6))
+            scanner.disable('emotion', 'rarity')
+            cards = scanner.scan(self.device.image, output=False)
+            if cards:
+                break
+            # The dock may not have drawn the ships found yet
+            self.device.sleep(1)
+            self.device.screenshot()
+        else:
+            return None
+        buttons = [area_button(card_name_area(card.button), f'PICK_NAME_{i}') for i, card in enumerate(cards)]
+        names = Ocr(buttons, lang='cnocr', letter=(255, 255, 255), threshold=128, name='PICK_NAME').ocr(
+            self.device.image)
+        if isinstance(names, str):
+            names = [names]
+        fits = [card for card, read in zip(cards, names) if name_fits(read, ship.name)]
+        if not fits:
+            logger.warning(f'{ship.name} not found in the team picker, read {names}')
+            return None
+        fits = sorted(fits, key=lambda card: (card.level != ship.level, -card.level))
+        return fits[0].button
+
+    def commission_pick(self, ship):
+        """
+        Put a ship of a fleet in the team of the commission unfolded: tap an empty slot, search her by name in the
+        team picker, tap her, confirm "This ship is assigned to another fleet. Remove ship from that fleet?", and
+        Confirm. The Formation task fills her fleet slot again.
+
+        Args:
+            ship (Slot):
+
+        Returns:
+            bool: If she is in the team
+
+        Pages:
+            in: commission details unfold, COMMISSION_ADVICE appeared
+            out: commission details unfold
+        """
+        from module.leveling.fleet import LevelingFleet
+        from module.retire.assets import SHIP_CONFIRM
+        logger.hr(f'Commission pick {ship.name}', level=3)
+        slot = self.commission_team_empty_slot()
+        if slot is None:
+            logger.warning('No empty slot in the team of the commission')
+            return False
+        empty_before = len(team_empty_slots(self.device.image, COMMISSION_ADVICE.button[1], self._team_slot_template))
+        self.device.click(slot)
+        for _ in self.loop(timeout=PICK_OPEN_TIMEOUT):
+            if self.appear(DOCK_CHECK, offset=(20, 20)):
+                break
+        else:
+            logger.warning('The team picker did not open')
+            return False
+        if not LevelingFleet(config=self.config, device=self.device).dock_search(ship.name):
+            self.commission_pick_leave()
+            return False
+        self.device.screenshot()
+        card = self.commission_pick_card(ship)
+        if card is None:
+            self.commission_pick_leave()
+            return False
+        self.device.click(card)
+        timeout = Timer(PICK_TIMEOUT, count=40).start()
+        # The card taken, or the popup of her fleet confirmed, shows "Selected: 1/6" a moment after
+        confirm = Timer(1.5, count=3).start()
+        for _ in self.loop():
+            if timeout.reached():
+                logger.warning(f'{ship.name} not taken in the team picker')
+                self.commission_pick_leave()
+                return False
+            if self.handle_popup_confirm('COMMISSION_PICK'):
+                confirm.reset()
+                continue
+            if self.appear(COMMISSION_ADVICE, offset=(5, 20)):
+                break
+            if self.appear(DOCK_CHECK, offset=(20, 20)) and confirm.reached():
+                if self.appear_then_click(SHIP_CONFIRM, offset=(200, 50), interval=3):
+                    confirm.reset()
+        # Back on the commission, a slot fewer empty
+        self.device.screenshot()
+        if not self.appear(COMMISSION_ADVICE, offset=(5, 20)):
+            logger.warning(f'Not back on the commission after picking {ship.name}')
+            return False
+        empty_after = len(team_empty_slots(self.device.image, COMMISSION_ADVICE.button[1], self._team_slot_template))
+        if empty_after >= empty_before:
+            logger.warning(f'{ship.name} is not in the team, {empty_after} slots empty')
+            return False
+        logger.info(f'{ship.name} (Lv.{ship.level}) of fleet {ship.fleet} put in the team')
+        return True
+
+    def commission_pick_leave(self):
+        """
+        Leave the team picker with nothing taken.
+
+        Pages:
+            in: the team picker
+            out: commission details unfold
+        """
+        for _ in self.loop(timeout=PICK_OPEN_TIMEOUT):
+            if self.appear(COMMISSION_ADVICE, offset=(5, 20)):
+                return
+            if self.handle_popup_cancel('COMMISSION_PICK'):
+                continue
+            if self.appear(DOCK_CHECK, offset=(20, 20), interval=3):
+                self.device.click(BACK_ARROW)
 
     def commission_need_level(self):
         """
@@ -667,11 +847,12 @@ class RewardCommission(UI, InfoHandler):
         logger.attr('Commission_need_level', level)
         return level
 
-    def _commission_find_and_start(self, comm, is_urgent=False):
+    def _commission_find_and_start(self, comm, is_urgent=False, pick=None):
         """
         Args:
             comm (Commission):
             is_urgent (bool):
+            pick (Slot): A ship of a fleet to put in its team, see commission_pick()
         """
         self.device.click_record_clear()
         comm = copy.deepcopy(comm)
@@ -694,7 +875,7 @@ class RewardCommission(UI, InfoHandler):
                     if new_comm == comm:
                         current = new_comm
                 if current is not None:
-                    if self._commission_start_click(current, is_urgent=is_urgent):
+                    if self._commission_start_click(current, is_urgent=is_urgent, pick=pick):
                         self.device.click_record_clear()
                         return True
                     else:
@@ -806,7 +987,7 @@ class RewardCommission(UI, InfoHandler):
                 logger.info(f'{ship.name} (Lv.{ship.level}) is free already')
             else:
                 fleet = LevelingFleet(config=self.config, device=self.device)
-                ship = fleet.fleet_pull_ship(level)
+                ship = fleet.fleet_choose_ship(level)
                 self.ui_ensure(page_commission)
                 if ship is None:
                     logger.info(f'No ship of the fleets that farm can leave for a level {level} commission')
@@ -814,7 +995,7 @@ class RewardCommission(UI, InfoHandler):
             self._commission_ensure_mode('urgent' if is_urgent else 'daily')
             self._commission_swipe_to_top()
             self.handle_info_bar()
-            if self._commission_find_and_start(comm, is_urgent=is_urgent):
+            if self._commission_find_and_start(comm, is_urgent=is_urgent, pick=ship):
                 comm.convert_to_running()
                 started += 1
                 spare = None

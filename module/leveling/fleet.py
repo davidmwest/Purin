@@ -505,6 +505,32 @@ class LevelingFleet(Formation):
         self.ui_back(check_button=FLEET_CHECK)
         return False
 
+    def fleet_choose_ship(self, level):
+        """
+        Choose a ship of the fleets that farm for a commission, she stays in her fleet: the team picker of the
+        commission takes her out of it, see RewardCommission.commission_pick().
+
+        Args:
+            level (int): Level the commission asks a ship for
+
+        Returns:
+            Slot: Her slot, None if no ship of the fleets can leave
+
+        Pages:
+            in: Any page
+            out: page_fleet, the 3D view
+        """
+        from module.ui.page import page_fleet
+        for index in self.formation_fleets():
+            self.ui_ensure(page_fleet)
+            self.formation_goto_fleet(index)
+            slots = self.fleet_read_slots(index)
+            slot = choose_pull(slots, level)
+            self.fleet_formation_ensure()
+            if slot is not None:
+                return slot
+        return None
+
     def fleet_pull_ship(self, level):
         """
         Free a ship of the fleets that farm for a commission.
