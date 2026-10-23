@@ -1082,3 +1082,165 @@ def test_entry_proxy_never_forwards_generic_confirmation(button):
     with pytest.raises(ex.ArchiveBlocked, match='unrecognized_entry_confirm'):
         proxy.click(button)
     device.click.assert_not_called()
+
+
+ENIGMA = 'war_archives_20200806_cn'
+
+
+def story_unlock_image():
+    return np.asarray(Image.open(Path(__file__).parent / 'data/archive_story_unlock_enigma.png').convert('RGB'))
+
+
+def test_real_story_unlock_requires_complete_current_archive_message_unmocked_ocr():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    owner.goal = StageGoal(ENIGMA, 'SP3', goal='archive_clear')
+    assert owner._story_unlock_witness(story_unlock_image()) is True
+    owner.goal = StageGoal(EVENT, 'A1', goal='archive_clear')
+    assert owner._story_unlock_witness(story_unlock_image()) is False
+    # Identical Info/Cancel layout with an unrelated full message is insufficient.
+    assert owner._story_unlock_candidate(key_dialog_image()) is True
+    assert owner._story_unlock_witness(key_dialog_image()) is False
+
+
+@pytest.mark.parametrize('area', [(353,175,430,215), (401,481,578,542),
+                                  (350,290,930,400), (705,485,876,540)])
+def test_real_story_unlock_missing_header_cancel_message_or_go_never_authorizes(area):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    owner.goal = StageGoal(ENIGMA, 'SP3', goal='archive_clear')
+    image = story_unlock_image().copy()
+    x1, y1, x2, y2 = area
+    image[y1:y2, x1:x2] = (58,65,82)
+    assert owner._story_unlock_witness(image) is False
+
+
+def story_unlock_controller(monkeypatch, *, keep_dialog=False, unknown_after=False):
+    owner, campaign, state, proof, _, _ = controller(monkeypatch)
+    monkeypatch.setattr(ex, 'Timer', ReadyTimer)
+    owner.goal = StageGoal(ENIGMA, 'SP3', goal='archive_clear')
+    proof.update(event=ENIGMA, stage='SP3')
+    owner.proof, owner.key_mode, owner.key_cost = proof, 'per_entry', 5
+    owner.reserved = owner.fleet_go_clicked = True
+    owner.story_unlock_cancelled = owner.inspection = owner.fleet_inspection = False
+    campaign.combat_won = True
+    state.in_stage, state.dialog = False, True
+    image = story_unlock_image()
+    owner.device.image = image
+
+    def screenshot():
+        owner.device.image = image if state.dialog else np.zeros_like(image)
+    owner.device.screenshot.side_effect = screenshot
+
+    def click(button):
+        assert button is ex.ARCHIVE_KEY_CANCEL
+        assert owner.story_unlock_cancelled and owner.device.screenshot.call_count >= 2
+        state.dialog = keep_dialog
+        state.in_stage = not keep_dialog and not unknown_after
+    owner.device.click.side_effect = click
+    # Keep real OCR in fixture tests; mocked OCR here isolates ownership/loop behavior.
+    owner._story_unlock_witness = Mock(return_value=True)
+    return owner, campaign, state
+
+
+def test_owned_story_unlock_cancels_once_then_requires_two_fresh_stage_frames(monkeypatch):
+    owner, campaign, _ = story_unlock_controller(monkeypatch)
+    owner._acknowledge_story_unlock(campaign, False)
+    assert owner._story_unlock_witness.call_count == 2
+    assert owner.device.screenshot.call_count == 4
+    owner.device.click.assert_called_once_with(ex.ARCHIVE_KEY_CANCEL)
+    assert owner.story_unlock_cancelled is True
+
+
+@pytest.mark.parametrize('keep_dialog,unknown_after', [(True, False), (False, True)])
+def test_story_unlock_return_is_bounded_and_never_repeats_cancel(monkeypatch, keep_dialog, unknown_after):
+    owner, campaign, _ = story_unlock_controller(monkeypatch, keep_dialog=keep_dialog,
+                                                unknown_after=unknown_after)
+    with pytest.raises(ex.ArchiveBlocked, match='archive_story_unlock_return_unverified'):
+        owner._acknowledge_story_unlock(campaign, True)
+    assert owner.device.screenshot.call_count == 20
+    owner.device.click.assert_called_once_with(ex.ARCHIVE_KEY_CANCEL)
+
+
+@pytest.mark.parametrize('target,field,value', [
+    ('owner', 'reserved', False), ('owner', 'fleet_go_clicked', False),
+    ('owner', 'inspection', True), ('owner', 'fleet_inspection', True),
+    ('owner', 'story_unlock_cancelled', True), ('campaign', 'combat_won', False),
+    ('campaign', 'combat_lost', True), ('campaign', 'run_lost', True)])
+def test_story_unlock_without_owned_victory_never_reads_or_clicks(monkeypatch, target, field, value):
+    owner, campaign, _ = story_unlock_controller(monkeypatch)
+    setattr(owner if target == 'owner' else campaign, field, value)
+    with pytest.raises(ex.ArchiveBlocked, match='unowned_archive_story_unlock'):
+        owner._acknowledge_story_unlock(campaign, False)
+    owner.device.screenshot.assert_not_called()
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('proof_update', [{'event': EVENT}, {'account': 'f2p'},
+                                         {'verified_for_execution': False}, {'raw_keys': 0}])
+def test_story_unlock_wrong_proof_never_clicks(monkeypatch, proof_update):
+    owner, campaign, _ = story_unlock_controller(monkeypatch)
+    owner.proof.update(proof_update)
+    with pytest.raises(ex.ArchiveBlocked, match='unowned_archive_story_unlock'):
+        owner._acknowledge_story_unlock(campaign, True)
+    owner.device.click.assert_not_called()
+
+
+def test_story_unlock_prior_loss_survives_cleanup_flag_reset(monkeypatch):
+    owner, campaign, _ = story_unlock_controller(monkeypatch)
+    with pytest.raises(ex.ArchiveBlocked, match='unowned_archive_story_unlock'):
+        owner._acknowledge_story_unlock(campaign, True, lost_before=True)
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('real_unrelated', [False, True])
+def test_unrecognized_or_changed_story_notice_never_clicks(monkeypatch, real_unrelated):
+    owner, campaign, _ = story_unlock_controller(monkeypatch)
+    if real_unrelated:
+        owner.goal = StageGoal(EVENT, 'A1', goal='archive_clear')
+        owner.proof.update(event=EVENT, stage='A1')
+        del owner._story_unlock_witness
+    else:
+        owner._story_unlock_witness.side_effect = [True, False]
+    with pytest.raises(ex.ArchiveBlocked, match='archive_story_unlock_unverified'):
+        owner._acknowledge_story_unlock(campaign, True)
+    owner.device.click.assert_not_called()
+
+
+def test_failed_story_cancel_transport_consumes_once_flag(monkeypatch):
+    owner, campaign, _ = story_unlock_controller(monkeypatch)
+    owner.device.click.side_effect = OSError('lost Cancel transport')
+    with pytest.raises(OSError, match='lost Cancel transport'):
+        owner._acknowledge_story_unlock(campaign, True)
+    assert owner.story_unlock_cancelled is True
+    with pytest.raises(ex.ArchiveBlocked, match='unowned_archive_story_unlock'):
+        owner._acknowledge_story_unlock(campaign, True)
+    owner.device.click.assert_called_once_with(ex.ARCHIVE_KEY_CANCEL)
+
+
+def test_post_boss_cleanup_hook_restores_stage_handler_and_preserves_victory(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_in_stage = campaign.handle_in_stage = Mock(return_value=True)
+    image = story_unlock_image()
+    owner.device.image = image
+    owner._story_unlock_candidate = Mock(return_value=True)
+
+    def acknowledge(current, won_before, lost_before):
+        assert current is campaign and expected['active']
+        assert won_before is True and lost_before is False
+        state.in_map, state.in_stage = False, True
+    owner._acknowledge_story_unlock = Mock(side_effect=acknowledge)
+    expected = {'active': False}
+
+    def cleanup(drop=None, expected_end=None):
+        campaign.combat_won = False  # Real Combat cleanup resets the prior result.
+        expected['active'] = True
+        campaign.handle_in_stage()
+        expected['active'] = False
+    campaign.combat_status = cleanup
+    original_battle = campaign.execute_a_battle
+    campaign.execute_a_battle = lambda: (original_battle(), setattr(campaign, 'combat_won', True))
+    result = invoke(owner, proof, prepare, reserve,
+                    goal=StageGoal(EVENT, 'A1', goal='archive_prize'))
+    assert result['status'] == 'won' and result['boss_won'] is True
+    assert campaign.handle_in_stage is original_in_stage
+    original_in_stage.assert_called_once_with()
+    owner._acknowledge_story_unlock.assert_called_once()

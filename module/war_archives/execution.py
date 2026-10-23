@@ -225,6 +225,89 @@ class WarArchivesExecution(CampaignRun):
                 ['Unlockingthisstagerequires', 'Wouldyouliketounlockthisstage?']
                 and [normalize(text) for text in gold.ocr(image)] == ['5DataKey(s)', '5'])
 
+    def _story_unlock_candidate(self, image):
+        return (isinstance(image, np.ndarray) and image.shape == (720, 1280, 3)
+                and all(button.match_template_color(image, offset=(0, 0), similarity=.9)
+                        for button in (ARCHIVE_KEY_HEADER, ARCHIVE_KEY_CANCEL)))
+
+    def _story_unlock_witness(self, image):
+        """The current archive's complete cutscene notice, including its Go label.
+
+        The captured Info/Cancel controls share the tracking reminder's layout.
+        They never authorize input without reading the entire distinct message.
+        """
+        if not self._story_unlock_candidate(image):
+            return False
+        text = image[240:453, 350:930].astype(np.int16)
+        white = (text.min(axis=2) > 200) & (text.max(axis=2) - text.min(axis=2) < 35)
+        rows = np.flatnonzero(white.sum(axis=1) > 20)
+        lines = []
+        for row in rows:
+            if not lines or row - lines[-1][-1] > 1:
+                lines.append([row])
+            else:
+                lines[-1].append(row)
+        if not 2 <= len(lines) <= 8 or any(not 8 <= len(line) <= 30 for line in lines):
+            return False
+        crops = []
+        for line in lines:
+            padding = max(4, (29 - len(line)) // 2)
+            top, bottom = line[0] - padding, line[-1] + padding + 1 + (len(line) < 20)
+            crops.append(cv2.resize(image[240 + top:240 + bottom, 350:930],
+                                    None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC))
+        crops.append(cv2.resize(image[485:540, 705:876], None, fx=2, fy=2,
+                                interpolation=cv2.INTER_CUBIC))
+        reader = Ocr([(0, 0, 1, 1)] * len(crops), lang='cnocr', letter=(255, 255, 255),
+                     threshold=128, name='ARCHIVE_STORY_UNLOCK')
+        words = reader.ocr(crops, direct_ocr=True)
+        normalize = lambda value: re.sub(r'[^a-z0-9]', '', value.lower())
+        expected = ("You've unlocked the cutscenes of " + get_archive(self.goal.event).name
+                    + '. They can be viewed through the Memories menu.')
+        return (len(words) == len(crops) and normalize(''.join(words[:-1])) == normalize(expected)
+                and normalize(words[-1]) == 'go')
+
+    def _acknowledge_story_unlock(self, campaign, won_before, lost_before=False):
+        """Cancel one owned post-boss notice; Go would navigate to Memories."""
+        if (self.inspection or self.fleet_inspection or not self.reserved
+                or not self.fleet_go_clicked or self.story_unlock_cancelled
+                or not self._proof(self.proof, execution=True) or not self._key_proof(self.proof)
+                or not (won_before or campaign.combat_won)
+                or lost_before or campaign.combat_lost or campaign.run_lost):
+            raise ArchiveBlocked('unowned_archive_story_unlock')
+        stable = Timer(1, count=2).start()
+        frames, returned = 0, 0
+        deadline = monotonic() + 12
+        for _ in range(20):
+            if monotonic() >= deadline:
+                break
+            self._check_switch()
+            campaign.device.screenshot()
+            image = getattr(campaign.device, 'image', None)
+            if not self.story_unlock_cancelled:
+                if not self._story_unlock_witness(image):
+                    raise ArchiveBlocked('archive_story_unlock_unverified')
+                frames += 1
+                if frames >= 2 and stable.reached():
+                    self._check_switch()
+                    # Consume before forwarding: an uncertain input is never retried.
+                    self.story_unlock_cancelled = True
+                    logger.info('Archive cutscenes unlocked; dismiss notice and stay on stage list')
+                    campaign.device.click(ARCHIVE_KEY_CANCEL)
+                continue
+            if (self._story_unlock_candidate(image)
+                    or any(campaign.appear(button, offset=(20, 30)) for button in (
+                        GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP, USE_DATA_KEY,
+                        POPUP_CONFIRM, POPUP_CANCEL, POPUP_CONFIRM_WHITE, POPUP_CANCEL_WHITE))):
+                returned = 0
+                continue
+            if campaign.is_in_stage() and not campaign.is_in_map():
+                returned += 1
+                if returned >= 2:
+                    return
+            else:
+                returned = 0
+        raise ArchiveBlocked('archive_story_unlock_return_unverified')
+
     def _confirm_data_key(self, campaign, check_budget, deadline):
         """Own fresh frames through one confirmation and positively recognized entry.
 
@@ -382,6 +465,7 @@ class WarArchivesExecution(CampaignRun):
         original_enter = campaign.enter_map
         original_stop = campaign.triggered_map_stop
         original_status = campaign.combat_status
+        original_in_stage = getattr(campaign, 'handle_in_stage', None)
         original_oil_popup = campaign.handle_oil_purchase
         original_battle = campaign.execute_a_battle
         original_morale = campaign.emotion.check_reduce
@@ -516,9 +600,20 @@ class WarArchivesExecution(CampaignRun):
 
         def status(drop=None, expected_end=None):
             won_before, lost_before = campaign.combat_won, campaign.combat_lost
+            # Combat cleanup asks handle_in_stage before its broad popup handlers.
+            # This scoped wrapper owns only a notice following our reserved boss.
+            if callable(original_in_stage):
+                def in_stage(*args, **kwargs):
+                    if (expected_end == 'in_stage'
+                            and self._story_unlock_candidate(getattr(campaign.device, 'image', None))):
+                        self._acknowledge_story_unlock(campaign, won_before, lost_before)
+                    return original_in_stage(*args, **kwargs)
+                campaign.handle_in_stage = in_stage
             try:
                 return original_status(drop=drop, expected_end=expected_end)
             finally:
+                if callable(original_in_stage):
+                    campaign.handle_in_stage = original_in_stage
                 if (expected_end == 'in_stage' and (won_before or campaign.combat_won)
                         and not (lost_before or campaign.combat_lost or campaign.run_lost)
                         and campaign.is_in_stage()):
@@ -583,6 +678,7 @@ class WarArchivesExecution(CampaignRun):
         self.goal, self.reserve, self.prepare = goal, reserve, prepare
         self.reserved = self.boss_won = self.stage_complete = self.preparation_seen = False
         self.fleet_ready = self.fleet_go_clicked = self.key_confirm_clicked = False
+        self.story_unlock_cancelled = False
         self.oil_deferred = False
         self.diagnostic = ''
         self.fleet_inspection, self.fleet_probe_advances = inspect_fleet_only, 0
