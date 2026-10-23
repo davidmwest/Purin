@@ -325,6 +325,11 @@ Dorm:
     SuccessInterval: 278
     FailureInterval: 278
     ServerUpdate: 00:00
+DormDaily:
+  Scheduler:
+    SuccessInterval: 1440
+    FailureInterval: 30
+    ServerUpdate: 00:00
 DormRest:
   Scheduler:
     SuccessInterval: 60

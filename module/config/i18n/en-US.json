@@ -170,6 +170,10 @@
       "name": "Dorm",
       "help": ""
     },
+    "DormDaily": {
+      "name": "Daily Dorm Snack",
+      "help": "Use exactly one owned snack for the daily restock mission, preferring one Secret Coolant. Use another owned snack only if it fits the free food capacity. Collect that mission reward. Never buys food or enables bulk Dorm feeding; waits if full or empty."
+    },
     "DormRest": {
       "name": "Dorm Rest",
       "help": "Puts on the second floor of the dorm the ships that the enabled tasks need most, and reads their mood there, the only place the game shows it exactly. Ships that lose the most mood come first: the mob fleet of a farming task, then its boss fleet, then the fleets of the daily stages. Ships on the first floor stay where they are.\nWith this task on, mood is followed ship by ship instead of fleet by fleet. A ship recovers by where she is, 50 an hour on the second floor, 40 on the first, 20 up to 119 anywhere else, and loses mood in the battles of her fleet. The lineup of a hard mode stage is learned when a task sorties there.\nRuns every hour, and when a task waits for mood"
