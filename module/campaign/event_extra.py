@@ -375,6 +375,10 @@ class EventExtraRunner(EventExtraScout, Combat):
         start_deadline = monotonic() + 30
         for _ in self.loop(skip_first=False, timeout=360):
             if self.ui_page_appear(page_sp):
+                # Closing the fleet overlay exposes the entrance page before
+                # the tactical board loads. That frame is not an ended sortie.
+                if not combat_seen and not result_seen and monotonic() < start_deadline:
+                    continue
                 if self.combat_lost:
                     return 'lost', 'battle_lost'
                 if self.combat_won:

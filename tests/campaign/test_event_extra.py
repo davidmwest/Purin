@@ -413,6 +413,60 @@ def test_possible_direct_battle_then_unreadable_defeat_never_starts_retry(seen):
     helper.handle_combat_automation_set.assert_not_called()
 
 
+def test_actual_entrance_frame_after_go_waits_for_board_instead_of_ending_sortie(monkeypatch, english_assets):
+    helper = runner_controller()
+    transition = np.asarray(Image.open('tests/campaign/data/ex_entry_transition.png').convert('RGB'))
+    board = np.asarray(Image.open('tests/campaign/data/ex_tactical_map_settled.png').convert('RGB'))
+    current = ['fleet']
+    helper.device.image = transition
+    helper.appear = lambda button, offset=0, **kwargs: (
+        (button is FLEET_PREPARATION and current[0] == 'fleet')
+        or button.match(helper.device.image, offset=offset))
+    helper.ui_page_appear = lambda page: page.check_button.match(helper.device.image, offset=(30, 30))
+    assert helper.ui_page_appear(event_extra.page_sp)
+    frames_seen = []
+    def frames(**kwargs):
+        for image in (transition, transition, board):
+            current[0] = 'entry'
+            helper.device.image = image
+            frames_seen.append(image)
+            yield image
+    helper.loop = frames
+    helper.combat_auto_reset = Mock()
+    helper._launch_extra_map = Mock(return_value=False)
+    monkeypatch.setattr(event_extra, 'monotonic', lambda: 100.)
+    reserve = Mock()
+    record = {}
+    assert helper._direct_extra_battle(record, reserve) == ('blocked', 'map_launch_not_verified')
+    assert len(frames_seen) == 3
+    helper._launch_extra_map.assert_called_once_with(record, reserve)
+    helper.device.click.assert_called_once_with(FLEET_PREPARATION)
+    reserve.assert_called_once_with()
+
+
+def test_entrance_that_never_loads_is_bounded_without_repeating_go(monkeypatch):
+    helper = runner_controller()
+    helper.appear = Mock(return_value=True)
+    helper.ui_page_appear = Mock(return_value=True)
+    helper.combat_auto_reset = Mock()
+    helper._launch_extra_map = Mock()
+    now = [100.]
+    frames_seen = []
+    monkeypatch.setattr(event_extra, 'monotonic', lambda: now[0])
+    def frames(**kwargs):
+        for timestamp in (100.5, 129.9, 130., 131.):
+            now[0] = timestamp
+            frames_seen.append(timestamp)
+            yield timestamp
+    helper.loop = frames
+    reserve = Mock()
+    assert helper._direct_extra_battle({}, reserve) == ('blocked', 'returned_without_verified_result')
+    assert frames_seen == [100.5, 129.9, 130.]
+    helper.device.click.assert_called_once_with(FLEET_PREPARATION)
+    helper._launch_extra_map.assert_not_called()
+    reserve.assert_called_once_with()
+
+
 def hard_preparation_controller():
     helper = runner_controller()
     helper.appear = Mock(return_value=True)
