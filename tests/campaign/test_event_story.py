@@ -99,7 +99,7 @@ def test_unknown_page_never_uses_a_page_graph_coordinate():
     main = SimpleNamespace(
         loop=Mock(return_value=iter(range(3))), interval_clear=Mock(),
         ui_page_appear=Mock(return_value=False), appear=Mock(return_value=False),
-        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)), ui_button_interval_reset=Mock())
+        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)), ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
     assert ensure_event_page(main, page_main) is False
     main.device.click.assert_not_called()
     assert all(page.parent is None for page in Page.iter_pages())
@@ -120,7 +120,7 @@ def test_recognized_battle_preparation_uses_existing_back_arrow_exit():
         ui_page_appear=Mock(side_effect=[False, True]),
         appear=Mock(side_effect=lambda button, **kwargs: button is BATTLE_PREPARATION),
         device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
-        ui_button_interval_reset=Mock())
+        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
     assert ensure_event_page(main, page_main) is True
     main.device.click.assert_called_once_with(BACK_ARROW)
 
@@ -147,7 +147,7 @@ def test_page_transition_cannot_repeat_home_from_another_source_page(monkeypatch
         ui_page_appear=Mock(side_effect=lambda destination: frame[0] == 3),
         appear=Mock(side_effect=appear),
         device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
-        ui_button_interval_reset=Mock())
+        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
     assert ensure_event_page(main, page_main) is True
     main.device.click.assert_called_once_with(GOTO_MAIN)
     assert main.ui_current is page_main
@@ -172,7 +172,69 @@ def test_unchanged_known_page_can_retry_only_after_time_and_fresh_frames(monkeyp
         appear=Mock(side_effect=lambda button, **kwargs: button is page_sp.check_button),
         device=SimpleNamespace(click=Mock(side_effect=lambda button: clicked_at.append(frame[0])),
                                app_is_running=Mock(return_value=True)),
-        ui_button_interval_reset=Mock())
+        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
     assert ensure_event_page(main, page_main, max_clicks=2) is False
     assert clicked_at == [0, 3]
+    assert all(page.parent is None for page in Page.iter_pages())
+
+
+def test_captured_f2p_idle_screen_wakes_before_page_graph_navigation():
+    from pathlib import Path
+    from types import MethodType
+
+    import numpy as np
+    from PIL import Image
+
+    from module.base.timer import Timer
+    from module.ui.assets import REWARD_GOTO_MAIN
+    from module.ui.ui import UI
+
+    image = np.asarray(Image.open(Path(__file__).parent / 'data/f2p_idle.png').convert('RGB'))
+    main = SimpleNamespace(
+        loop=Mock(return_value=iter(range(2))), interval_clear=Mock(),
+        ui_page_appear=Mock(side_effect=[False, True]), appear=Mock(return_value=False),
+        get_interval_timer=Mock(return_value=Timer(3)),
+        device=SimpleNamespace(image=image, click=Mock(), app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    main.handle_idle_page = MethodType(UI.handle_idle_page, main)
+
+    assert ensure_event_page(main, page_main) is True
+    main.device.click.assert_called_once_with(REWARD_GOTO_MAIN)
+    main.appear.assert_not_called()
+    assert main.ui_current is page_main
+
+    # Unknown artwork must never authorize the same wake-up coordinate.
+    main.device.image = np.zeros_like(image)
+    main.get_interval_timer.return_value.clear()
+    main.device.click.reset_mock()
+    assert main.handle_idle_page() is False
+    main.device.click.assert_not_called()
+
+
+def test_idle_wakeup_uses_existing_navigation_click_and_settle_budget(monkeypatch):
+    clock = [1000.0]
+    frame = [0]
+    clicked_at = []
+    monkeypatch.setattr(timer, 'time', lambda: clock[0])
+
+    def screenshots(**kwargs):
+        for index, elapsed in enumerate((0, 3, 3.5, 4, 4.5, 5, 7)):
+            frame[0] = index
+            clock[0] = 1000 + elapsed
+            yield index
+
+    def wake_up():
+        clicked_at.append(frame[0])
+        return True
+
+    main = SimpleNamespace(
+        loop=Mock(side_effect=screenshots), interval_clear=Mock(),
+        ui_page_appear=Mock(return_value=False), appear=Mock(return_value=False),
+        handle_idle_page=Mock(side_effect=wake_up),
+        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    assert ensure_event_page(main, page_main, timeout=8, max_clicks=2) is False
+    assert clicked_at == [0, 3]
+    main.loop.assert_called_once_with(timeout=8)
+    main.appear.assert_not_called()
     assert all(page.parent is None for page in Page.iter_pages())

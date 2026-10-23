@@ -49,6 +49,13 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
                 break
             if not settled.reached():
                 continue
+            # The game's screensaver is outside the page graph. Reuse its
+            # exact idle templates, counting the wake-up against this same
+            # navigation budget and waiting for fresh frames before continuing.
+            if main.handle_idle_page():
+                clicks += 1
+                settled.reset()
+                continue
             for page in Page.iter_pages():
                 if page.parent is None or page.check_button is None:
                     continue
