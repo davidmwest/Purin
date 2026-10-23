@@ -5,10 +5,11 @@ import pytest
 
 from module.eventstory import eventstory
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_switch
+from module.base import timer
 from module.combat.assets import BATTLE_PREPARATION
 from module.exception import GameNotRunningError
-from module.ui.assets import BACK_ARROW
-from module.ui.page import Page, page_main
+from module.ui.assets import BACK_ARROW, GOTO_MAIN
+from module.ui.page import Page, page_campaign, page_main, page_sp
 
 
 def controller(monkeypatch):
@@ -122,3 +123,56 @@ def test_recognized_battle_preparation_uses_existing_back_arrow_exit():
         ui_button_interval_reset=Mock())
     assert ensure_event_page(main, page_main) is True
     main.device.click.assert_called_once_with(BACK_ARROW)
+
+
+def test_page_transition_cannot_repeat_home_from_another_source_page(monkeypatch):
+    clock = [1000.0]
+    frame = [0]
+    monkeypatch.setattr(timer, 'time', lambda: clock[0])
+
+    def screenshots(**kwargs):
+        for index, elapsed in enumerate((0, .75, 1.5, 2.25)):
+            frame[0] = index
+            clock[0] = 1000 + elapsed
+            yield index
+
+    def appear(button, **kwargs):
+        # During the observed sub-second home transition, a different page
+        # check can also match. Both sources would click the same home area.
+        source = page_sp if frame[0] == 0 else page_campaign
+        return button is source.check_button
+
+    main = SimpleNamespace(
+        loop=Mock(side_effect=screenshots), interval_clear=Mock(),
+        ui_page_appear=Mock(side_effect=lambda destination: frame[0] == 3),
+        appear=Mock(side_effect=appear),
+        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    assert ensure_event_page(main, page_main) is True
+    main.device.click.assert_called_once_with(GOTO_MAIN)
+    assert main.ui_current is page_main
+
+
+def test_unchanged_known_page_can_retry_only_after_time_and_fresh_frames(monkeypatch):
+    clock = [1000.0]
+    frame = [0]
+    clicked_at = []
+    monkeypatch.setattr(timer, 'time', lambda: clock[0])
+
+    def screenshots(**kwargs):
+        # Even a long first screenshot cannot bypass the two-frame guard.
+        for index, elapsed in enumerate((0, 3, 3.5, 4, 4.5, 5, 7)):
+            frame[0] = index
+            clock[0] = 1000 + elapsed
+            yield index
+
+    main = SimpleNamespace(
+        loop=Mock(side_effect=screenshots), interval_clear=Mock(),
+        ui_page_appear=Mock(return_value=False),
+        appear=Mock(side_effect=lambda button, **kwargs: button is page_sp.check_button),
+        device=SimpleNamespace(click=Mock(side_effect=lambda button: clicked_at.append(frame[0])),
+                               app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    assert ensure_event_page(main, page_main, max_clicks=2) is False
+    assert clicked_at == [0, 3]
+    assert all(page.parent is None for page in Page.iter_pages())

@@ -35,6 +35,10 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
     Page.init_connection(destination)
     main.interval_clear(list(Page.iter_check_buttons()))
     clicks = 0
+    # Several source pages share the same home button. A second source-page
+    # match during the transition can click the main screen's Settings gear.
+    # Settle across fresh screenshots before allowing any further navigation.
+    settled = Timer(2, count=2)
     try:
         for _ in main.loop(timeout=timeout):
             GOTO_MAIN.clear_offset()
@@ -43,6 +47,8 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
                 return True
             if clicks >= max_clicks:
                 break
+            if not settled.reached():
+                continue
             for page in Page.iter_pages():
                 if page.parent is None or page.check_button is None:
                     continue
@@ -51,18 +57,21 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
                     main.device.click(button)
                     main.ui_button_interval_reset(button)
                     clicks += 1
+                    settled.reset()
                     break
             else:
                 # The established campaign withdrawal path backs out of this screen.
                 if main.appear(BATTLE_PREPARATION, offset=(20, 20), interval=3):
                     main.device.click(BACK_ARROW)
                     clicks += 1
+                    settled.reset()
                     continue
                 # The common campaign runner may leave a recognized preparation screen.
                 if any(main.appear(button, offset=(20, 50), interval=3) for button in (
                         MAP_PREPARATION, MAP_PREPARATION_HARD, FLEET_PREPARATION)):
                     main.device.click(MAP_PREPARATION_CANCEL)
                     clicks += 1
+                    settled.reset()
         return False
     finally:
         Page.clear_connection()

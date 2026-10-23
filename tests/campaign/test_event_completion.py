@@ -55,14 +55,81 @@ def test_unsupported_story_never_calls_its_tapping_detector(monkeypatch):
 def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     helper = controller()
     helper.collect_event_missions = Mock(return_value=True)
+    helper.observe_event_main = Mock(return_value={'status': 'observed'})
     helper.observe_event_rewards = Mock(return_value={'status': 'observed'})
     helper.observe_event_supplies = Mock(return_value={'status': 'observed'})
     result = helper.run('event_20261022_cn')
     assert result == {'story': 'disabled', 'rewards': 'complete', 'event_hub_rewards': 'unsupported',
+                      'event_main_observation': {'status': 'observed'},
                       'event_reward_observation': {'status': 'observed'},
                       'event_supplies_observation': {'status': 'observed'}}
     helper.observe_event_rewards.assert_called_once_with('event_20261022_cn')
     helper.observe_event_supplies.assert_called_once_with('event_20261022_cn')
+
+
+def test_main_observation_is_durable_before_navigation_and_captures_fresh_recognized_frame(monkeypatch, tmp_path):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(2)))
+    helper.ui_page_appear = Mock(side_effect=[False, True])
+
+    def navigate(main, destination):
+        assert load_reward_observations('f2p', folder=tmp_path)['event_20261022_cn:main']['status'] == 'observing'
+        return True
+
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(side_effect=navigate))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock(return_value='/tmp/main.png'))
+    first = helper.observe_event_main('event_20261022_cn', folder=tmp_path)
+    second = helper.observe_event_main('event_20261022_cn', folder=tmp_path)
+    assert first['status'] == 'observed'
+    assert first['diagnostics'] == ['/tmp/main.png']
+    assert second['reused'] is True
+    completion.ensure_event_page.assert_called_once_with(helper, page_main)
+    helper.loop.assert_called_once_with(skip_first=False, timeout=5)
+    completion.save_event_diagnostic.assert_called_once_with(helper.device, 'f2p_event_main_observe')
+    helper.device.click.assert_not_called()
+
+
+def test_unknown_main_frame_is_never_captured_as_an_event_entry(monkeypatch, tmp_path):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(3)))
+    helper.ui_page_appear = Mock(return_value=False)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock())
+    result = helper.observe_event_main('event_20261022_cn', folder=tmp_path)
+    assert result['status'] == 'blocked'
+    assert result['reason'] == 'main_page_unrecognized'
+    completion.save_event_diagnostic.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_interrupted_main_observation_does_not_navigate_again(monkeypatch, tmp_path):
+    save_reward_observations('f2p', {'event_20261022_cn:main': {'status': 'observing'}}, folder=tmp_path)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock())
+    result = controller().observe_event_main('event_20261022_cn', folder=tmp_path)
+    assert result['reason'] == 'previous_main_observation_interrupted'
+    completion.ensure_event_page.assert_not_called()
+
+
+def test_closed_game_does_not_spend_main_observation_budget(tmp_path):
+    helper = controller()
+    helper.device.app_is_running.return_value = False
+    with pytest.raises(GameNotRunningError):
+        helper.observe_event_main('event_20261022_cn', folder=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch):
+    helper = controller()
+    order = []
+    helper.observe_event_main = Mock(side_effect=lambda event: order.append('main'))
+    helper.observe_event_rewards = Mock(side_effect=lambda event: order.append('list'))
+    helper.observe_event_supplies = Mock(side_effect=lambda event: order.append('supplies'))
+    helper.collect_event_missions = Mock(side_effect=lambda: order.append('missions'))
+    story = Mock()
+    story.return_value.run.side_effect = lambda **kwargs: order.append('story')
+    monkeypatch.setattr(completion, 'EventStory', story)
+    helper.run('event_20261022_cn', complete_story=True)
+    assert order == ['main', 'story', 'list', 'supplies', 'missions']
 
 
 def test_supplies_budget_is_independent_and_saved_before_any_inspection(monkeypatch, tmp_path):

@@ -63,6 +63,46 @@ def save_reward_observations(account, state, folder=REWARD_OBSERVATION_DIR):
 
 
 class EventCompletion(Reward):
+    def observe_event_main(self, event, folder=REWARD_OBSERVATION_DIR):
+        """Capture one fresh recognized main screen to identify the event hub entry."""
+        if event not in REWARD_OBSERVATION_EVENTS:
+            return dict(status='unsupported', diagnostics=[])
+        ensure_event_running(self)
+        account = self.config.config_name
+        state = load_reward_observations(account, folder=folder)
+        key = event + ':main'
+        if key in state:
+            record = dict(state[key])
+            if record.get('status') == 'observing':
+                record.update(status='blocked', reason='previous_main_observation_interrupted')
+            record['reused'] = True
+            logger.attr('EventMainObservation', record)
+            return record
+        record = dict(status='observing', diagnostics=[],
+                      started=datetime.now().isoformat(timespec='seconds'))
+        state[key] = record
+        save_reward_observations(account, state, folder=folder)
+        try:
+            record.update(status='blocked', reason='main_page_unrecognized')
+            if ensure_event_page(self, page_main):
+                for _ in self.loop(skip_first=False, timeout=5):
+                    if not self.ui_page_appear(page_main):
+                        continue
+                    path = save_event_diagnostic(self.device, f'{account}_event_main_observe')
+                    if path:
+                        record['diagnostics'].append(path)
+                        record.update(status='observed', reason='event_hub_entry_assets_required')
+                    else:
+                        record.update(reason='diagnostic_not_saved')
+                    break
+        except Exception:
+            record.update(status='blocked', reason='main_observation_exception')
+            raise
+        finally:
+            save_reward_observations(account, state, folder=folder)
+        logger.attr('EventMainObservation', record)
+        return record
+
     def _inspect_event_supplies(self, record):
         if not ensure_event_page(self, page_sp):
             record.update(status='blocked', reason='campaign_page_unrecognized')
@@ -281,6 +321,8 @@ class EventCompletion(Reward):
 
     def run(self, event, collect_rewards=True, complete_story=False):
         result = dict(story='disabled', rewards='disabled', event_hub_rewards='disabled')
+        if collect_rewards:
+            result['event_main_observation'] = self.observe_event_main(event)
         # Story detection taps entrances, so gate before constructing its controller.
         if complete_story:
             if event in SUPPORTED_STORY_EVENTS:
