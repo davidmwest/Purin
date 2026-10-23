@@ -397,7 +397,7 @@ def test_one_build_opener_captures_settled_dialog_without_confirmation(monkeypat
     record = dict(period='2026-10-23T00:00:00')
     helper._open_order_dialog(record, reserve)
     assert record['reason'] == reason and record['build_open_clicked']
-    helper.device.click.assert_called_once_with(mission.BUILD_SUBMIT_ORDERS)
+    helper.device.click.assert_called_once_with(mission.EVENT_BUILD_ORDERS)
     reserve.assert_called_once_with()
     helper.handle_popup_confirm.assert_not_called()
     helper.handle_popup_cancel.assert_not_called()

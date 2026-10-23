@@ -13,6 +13,7 @@ from module.config.utils import get_server_last_update, server_time_offset
 from module.eventstory.eventstory import ensure_event_page, save_event_diagnostic
 from module.exception import ScriptError
 from module.gacha.assets import BUILD_MINUS, BUILD_PLUS, BUILD_SUBMIT_ORDERS
+from module.gacha.banner_assets import EVENT_BUILD_ORDERS
 from module.gacha.mission_assets import (BUILD_THREE_TEXT, BUILD_THREE_TEXT_F2P,
                                         DAILY_MISSION_MARKER, EVENT_MISSION_MARKER)
 from module.gacha.ui import GachaUI
@@ -299,7 +300,7 @@ class GachaMissionOrderObserver(GachaMissionObserver):
             return
         record.update(status='opening', build_open_clicked=True)
         reserve()
-        self.device.click(BUILD_SUBMIT_ORDERS)
+        self.device.click(EVENT_BUILD_ORDERS)
         # No generic popup handler is called: even an apparent Confirm could be
         # a cost authorization or a different dialog. Capture unknown warnings.
         settled = Timer(1, count=2).start()
