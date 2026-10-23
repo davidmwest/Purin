@@ -25,3 +25,9 @@ TEMPESTA_EX_LOCKED = Button(
 TEMPESTA_MAIN_ENTRY = Button(
     area=(1126, 370, 1254, 410), color=(63, 85, 137), button=(1140, 370, 1230, 405),
     file='./assets/en/event_completion/TEMPESTA_MAIN_20261022.png', name='TEMPESTA_MAIN_ENTRY')
+
+# Separate featured-event portrait observed on both accounts' fresh Main screen.
+# Exclude the changing notification badge and the surrounding background.
+TEMPESTA_FEATURED_ENTRY = Button(
+    area=(1077, 90, 1143, 157), color=(178, 182, 196), button=(1080, 95, 1140, 150),
+    file='./assets/en/event_completion/TEMPESTA_FEATURED_20261022.png', name='TEMPESTA_FEATURED_ENTRY')
