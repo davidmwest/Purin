@@ -11,7 +11,7 @@ from module.campaign.campaign_stars import (CampaignStars, EventExtra, EventStar
                                             stage_overrides)
 from module.campaign.run import CampaignRun
 from module.config.config import TaskEnd
-from module.exception import CampaignEnd, GameNotRunningError, ScriptEnd
+from module.exception import CampaignEnd, GameNotRunningError, GamePageUnknownError, ScriptEnd
 from module.handler.fast_forward import FastForwardHandler
 
 
@@ -268,6 +268,58 @@ def test_explicit_scheduler_deferral_refunds_only_before_campaign_run(monkeypatc
     resume = Mock(return_value='capped' if started else 'complete')
     complete_stage(goal, progress, resume)
     resume.assert_called_once_with(goal, inspect_only=started)
+
+
+@pytest.mark.parametrize('started', [False, True])
+@pytest.mark.parametrize('stage,goal_type,prior_attempts', [('SP', 'clear', 0), ('T5', 'three_stars', 1)])
+def test_unknown_page_refunds_only_proven_pre_run_navigation_and_preserves_recovery(
+        monkeypatch, tmp_path, started, stage, goal_type, prior_attempts):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    error = GamePageUnknownError('unknown event hub')
+    campaign = SimpleNamespace(
+        triggered_map_stop=Mock(), handle_chapter_additional=Mock(), combat_status=Mock(),
+        ensure_campaign_ui=Mock(side_effect=error), run=Mock(side_effect=error))
+    monkeypatch.setattr(CampaignRun, 'load_campaign',
+                        lambda self, name, folder: setattr(self, 'campaign', campaign) or True)
+
+    def run(*args, **kwargs):
+        runner.load_campaign(stage.lower(), 'event_20261022_cn')
+        if started:
+            campaign.run()
+        campaign.ensure_campaign_ui()
+
+    monkeypatch.setattr(runner, 'run', run)
+    goal = StageGoal('event_20261022_cn', stage, goal=goal_type)
+    progress = StarProgress('alas', 'EventStars', tmp_path)
+    progress.save(goal, attempts=prior_attempts, status='ran')
+    with pytest.raises(GamePageUnknownError) as raised:
+        complete_stage(goal, progress, runner.run_goal)
+    # Keep the original exception so the scheduler still performs its Restart.
+    assert raised.value is error
+    assert StarProgress('alas', 'EventStars', tmp_path).record(goal) == {
+        'attempts': prior_attempts + int(started),
+        'status': 'attempting' if started else 'deferred'}
+    assert runner.config.StopCondition_ThenTask == 'Event'
+    resume = Mock(return_value='capped' if started else 'complete')
+    complete_stage(goal, StarProgress('alas', 'EventStars', tmp_path), resume,
+                   max_runs=prior_attempts + 1)
+    resume.assert_called_once_with(goal, inspect_only=started)
+
+
+def test_unclassified_pre_run_crash_keeps_reserved_attempt(monkeypatch, tmp_path):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    monkeypatch.setattr(runner, 'run', Mock(side_effect=RuntimeError('unexpected interruption')))
+    goal = StageGoal('event_20261022_cn', 'SP', goal='clear')
+    progress = StarProgress('alas', 'EventStars', tmp_path)
+    with pytest.raises(RuntimeError, match='unexpected interruption'):
+        complete_stage(goal, progress, runner.run_goal)
+    assert StarProgress('alas', 'EventStars', tmp_path).record(goal) == {
+        'attempts': 1, 'status': 'attempting'}
+    resume = Mock(return_value='capped')
+    complete_stage(goal, StarProgress('alas', 'EventStars', tmp_path), resume)
+    resume.assert_called_once_with(goal, inspect_only=True)
 
 
 @pytest.mark.parametrize('complete,inspect_only,expected', [

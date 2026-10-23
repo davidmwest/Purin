@@ -15,7 +15,7 @@ from module.base.timer import Timer
 from module.campaign.run import CampaignRun
 from module.campaign.stage import load_stage, stage_names
 from module.config.config import TaskEnd
-from module.exception import RequestHumanTakeover, ScriptEnd
+from module.exception import GamePageUnknownError, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import to_map_file_name, to_map_input_name
 from module.logger import logger
 
@@ -263,9 +263,9 @@ class StageStarsRunner(CampaignRun):
         with stage_overrides(self.config, goal):
             try:
                 self.run(goal.stage, folder=goal.event, mode=goal.mode, total=1)
-            except TaskEnd as error:
-                # Preserve the scheduler's Commission/expiry dispatch. Only an
-                # explicit stop before campaign.run is proven safe to refund.
+            except (TaskEnd, GamePageUnknownError) as error:
+                # Preserve scheduler dispatch/recovery. An explicit stop or
+                # failed navigation before campaign.run cannot start this sortie.
                 error.star_pass_precombat = not self.attempt_started
                 raise
             except (StageUnavailable, ScriptEnd) as error:
@@ -308,7 +308,7 @@ def complete_stage(goal, progress, attempt, max_runs=6):
             progress.save(goal, attempts=runs, status='attempting')
         try:
             result = attempt(goal, inspect_only=inspecting)
-        except TaskEnd as error:
+        except (TaskEnd, GamePageUnknownError) as error:
             if getattr(error, 'star_pass_precombat', False) and not inspecting:
                 progress.save(goal, attempts=runs - 1, status='deferred')
             raise
