@@ -31,7 +31,11 @@ For a specific guaranteed ship, set `WarArchivesPrize` to `Target=Visitors Dyed 
 
 The scheduler resumes bounded chunks from `config/war_archives/<account>.json`. Stage completion, shared spending reservations and prize progress remain separate. Completion waits until the next server update; a full chunk yields briefly to other jobs. Morale, loss, oil and preemption can defer work. Do not delete the ledger to retry an uncertain entry: that would discard its spending history.
 
-Initial UI support is deliberately conservative: archive identities, list completion and key balances have captured readers; exact stage-unlock/progress and guaranteed-counter/claim readers still require observed UI fixtures. Until those execution proofs are available, the job records a diagnostic and blocks instead of starting or claiming by guessed coordinates. Unsupported catalog entries are reported by name, including when `Target=all`; “all” does not mean those four archives have been completed.
+Archive identity, list completion, stage progress and key balance must be read from a settled screen before entry. List scans use overlapping pages so a card cannot remain clipped between scrolls. Hard entry accepts the captured two-surface-fleet layout only when both rows are occupied, every displayed stat requirement is satisfied and the Go control is enabled. It uses the stage's existing Hard fleets; common fleet numbers do not select Hard lineups. An unprepared or unfamiliar Hard lineup stops with a diagnostic rather than rearranging ships.
+
+Guaranteed prizes use a separate identity-bound counter panel. Opening and claiming have durable journals, and a claim requires the expected reward, stage and 60/60 counter followed by a verified receipt and return. A hidden reward button proves an earlier receipt only for the captured Visitors Dyed in Red layout; absence elsewhere stops for inspection. Unsupported catalog entries are reported by name, including when `Target=all`; “all” does not mean those four archives have been completed.
+
+The stage-information Start button opens fleet preparation; it does not itself debit keys. The game debits five keys after a successful Fleet Go tracking response. Purin reserves its shared allowance before advancing preparation, so a crash or unreadable transition cannot authorize a duplicate retry. This conservative reservation can remain spent even when the client did not debit keys.
 
 ## Routes, unlocks and completion
 
