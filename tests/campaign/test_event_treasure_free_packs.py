@@ -25,6 +25,31 @@ def confirmation_capture():
     return np.asarray(Image.open('tests/campaign/data/treasure_free_confirmation.png').convert('RGB')).copy()
 
 
+def scrolled_confirmation_capture():
+    return np.asarray(Image.open('tests/campaign/data/treasure_free_confirmation_scrolled.png').convert('RGB')).copy()
+
+
+def confirmation_animation(monkeypatch, helper, frames):
+    clock = [0]
+    class ObservedTimer:
+        def __init__(self, seconds, count=0):
+            self.seconds, self.started = seconds, -100
+        def start(self):
+            return self.reset()
+        def reset(self):
+            self.started = clock[0]
+            return self
+        def reached(self):
+            return clock[0] - self.started >= self.seconds
+    monkeypatch.setattr(treasure, 'Timer', ObservedTimer)
+    def loop(**kwargs):
+        for elapsed, image in frames:
+            clock[0] = elapsed
+            helper.device.image = image
+            yield None
+    helper.loop = loop
+
+
 def controller(frames=24):
     helper = EventTreasureFreePacks.__new__(EventTreasureFreePacks)
     helper.config = SimpleNamespace(config_name='alas')
@@ -86,6 +111,65 @@ def test_actual_free_pack_confirmation_requires_raw_zero_price_and_captured_free
     helper.device.image = confirmation_capture()
     assert OCR_TREASURE_CONFIRM_PRICE.ocr(helper.device.image) == '0'
     assert helper._free_confirmation()
+
+
+def test_observed_marquee_frame_preserves_all_witnesses_except_scrolled_name():
+    helper = controller()
+    helper.device.image = scrolled_confirmation_capture()
+    witnesses = {button.name: helper._exact(button) for button in TREASURE_CONFIRM_WITNESSES}
+    assert witnesses == {button.name: button.name != 'TREASURE_CONFIRM_NAME'
+                         for button in TREASURE_CONFIRM_WITNESSES}
+    assert not helper._free_confirmation()
+
+
+def test_exact_zero_confirmation_can_settle_across_observed_marquee_gaps(monkeypatch):
+    helper = controller()
+    matching, marquee = confirmation_capture(), scrolled_confirmation_capture()
+    confirmation_animation(monkeypatch, helper, [(0, matching), (.3, matching), (.6, marquee),
+                                                (5, marquee), (10.7, matching), (11, matching)])
+    state = record()
+    state['cards']['day2'].update(claim_clicks=1, pending=True)
+    snapshots = []
+    def click(button):
+        assert helper._free_confirmation()  # All exact witnesses/raw zero still present at action.
+        assert snapshots[-1]['confirm_clicks'] == 1
+    helper.device.click.side_effect = click
+    helper._collect_free(state, lambda: snapshots.append(state['cards']['day2'].copy()))
+    helper.device.click.assert_called_once_with(TREASURE_CONFIRM_BUY)
+    assert state['cards']['day2']['pending'] and not state['cards']['day2']['verified']
+
+
+def test_elapsed_old_matches_never_authorize_a_current_nonmatching_frame(monkeypatch):
+    helper = controller()
+    matching, marquee = confirmation_capture(), scrolled_confirmation_capture()
+    confirmation_animation(monkeypatch, helper, [(0, matching), (.3, matching), (.6, matching),
+                                                (5, marquee), (10, marquee)])
+    state = record()
+    state['cards']['day2'].update(claim_clicks=1, pending=True)
+    helper._collect_free(state, Mock())
+    helper.device.click.assert_not_called()
+    assert not state['cards']['day2'].get('confirm_clicks')
+
+
+def test_two_old_exact_matches_cannot_authorize_current_changed_price(monkeypatch):
+    helper = controller()
+    matching, paid = confirmation_capture(), confirmation_capture()
+    remove(paid, TREASURE_CONFIRM_ZERO)
+    confirmation_animation(monkeypatch, helper, [(0, matching), (.3, matching), (10.7, paid), (11, paid)])
+    state = record()
+    state['cards']['day2'].update(claim_clicks=1, pending=True)
+    helper._collect_free(state, Mock())
+    helper.device.click.assert_not_called()
+
+
+def test_exact_confirmation_observations_do_not_survive_an_invocation(monkeypatch):
+    helper = controller()
+    state = record()
+    state['cards']['day2'].update(claim_clicks=1, pending=True)
+    for _ in range(2):
+        confirmation_animation(monkeypatch, helper, [(0, confirmation_capture()), (2, confirmation_capture())])
+        helper._collect_free(state, Mock())
+    helper.device.click.assert_not_called()
 
 
 @pytest.mark.parametrize('missing', TREASURE_CONFIRM_WITNESSES)

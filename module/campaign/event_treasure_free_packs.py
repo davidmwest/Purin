@@ -106,13 +106,16 @@ class EventTreasureFreePacks(EventRewards):
 
     def _collect_free(self, record, persist):
         settled = Timer(1, count=2).start()
+        confirm_settled = Timer(1, count=2).start()
         click_wait = Timer(2, count=3)
         stable_key, stable_frames = None, 0
+        confirm_day, confirm_frames = None, 0
         for _ in self.loop(skip_first=False, timeout=45):
             pending = next((day for day, row in record['cards'].items() if row.get('pending')), None)
             # Receipts take priority over a panel visible behind their overlay.
             dialog = self._reward_dialog() if pending else None
             if dialog is not None:
+                confirm_day, confirm_frames = None, 0
                 settled.reset()
                 stable_frames = 0
                 if not click_wait.reached():
@@ -135,16 +138,21 @@ class EventTreasureFreePacks(EventRewards):
                     stable_key, stable_frames = None, 0
                     settled.reset()
                     continue
-                key = (pending, 'confirm_free')
-                if key != stable_key:
-                    stable_key, stable_frames = key, 1
-                    settled.reset()
-                    continue
-                stable_frames += 1
-                if stable_frames >= 3 and settled.reached() and click_wait.reached():
+                # The observed name marquee exposes the exact full witness for
+                # less than a second per cycle. Count fresh, independently
+                # matching frames across animation gaps, with elapsed settling
+                # time, and still require *all* witnesses/raw zero right now.
+                # These local observations never authorize a nonmatching frame
+                # and never survive a receipt, different card or invocation.
+                if pending != confirm_day:
+                    confirm_day, confirm_frames = pending, 0
+                    confirm_settled.reset()
+                confirm_frames += 1
+                if confirm_frames >= 3 and confirm_settled.reached() and click_wait.reached():
                     row['confirm_clicks'] = 1
                     persist()
                     self.device.click(TREASURE_CONFIRM_BUY)
+                    confirm_day, confirm_frames = None, 0
                     click_wait.reset()
                     stable_key, stable_frames = None, 0
                     settled.reset()
