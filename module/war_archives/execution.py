@@ -299,12 +299,18 @@ class WarArchivesExecution(CampaignRun):
                        (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP)):
                     raise ArchiveBlocked('unowned_receipt')
                 if campaign.appear(USE_DATA_KEY, offset=(20, 20)):
+                    self.diagnostic = str(save_event_diagnostic(
+                        campaign.device,
+                        f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_data_key_dialog') or '')
                     raise ArchiveBlocked('unverified_data_key_dialog')
                 # A generic confirm may buy keys, oil, or an unknown entitlement.
                 # Let the exact oil guard cancel its known purchase dialog first.
                 original_oil_popup()
                 if any(campaign.appear(button, offset=(20, 20)) for button in (
                         POPUP_CONFIRM, POPUP_CANCEL, POPUP_CONFIRM_WHITE, POPUP_CANCEL_WHITE)):
+                    self.diagnostic = str(save_event_diagnostic(
+                        campaign.device,
+                        f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_entry_dialog') or '')
                     raise ArchiveBlocked('unrecognized_entry_dialog')
                 return False
             return original_oil_popup()

@@ -340,6 +340,49 @@ def test_entry_dialog_never_uses_generic_confirm_or_start(monkeypatch, modal, re
     reserve.assert_not_called()
 
 
+@pytest.mark.parametrize('after_go', [False, True])
+@pytest.mark.parametrize('modal,reason,tag', [
+    (ex.USE_DATA_KEY, 'unverified_data_key_dialog', 'archive_data_key_dialog'),
+    (ex.POPUP_CONFIRM_WHITE, 'unrecognized_entry_dialog', 'archive_entry_dialog')])
+def test_entry_dialog_captures_current_frame_and_keeps_reservation(monkeypatch, after_go, modal, reason, tag):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    visible = [None if after_go else modal]
+    campaign.appear.side_effect = lambda button, **kwargs: button is visible[0]
+    capture = Mock(return_value='/tmp/archive_entry.png')
+    monkeypatch.setattr(ex, 'save_event_diagnostic', capture)
+    if after_go:
+        def enter(*args, **kwargs):
+            campaign.handle_oil_purchase()
+            campaign.triggered_map_stop()
+            campaign.fleet_preparation()
+            campaign.device.click(ex.FLEET_PREPARATION)
+            visible[0] = modal
+            campaign.handle_oil_purchase()
+        campaign.enter_map = enter
+    result = invoke(owner, proof, prepare, reserve)
+    assert result == dict(status='blocked', reason=reason, reserved=after_go,
+                         boss_won=False, stage_complete=False, diagnostic='/tmp/archive_entry.png')
+    capture.assert_called_once_with(
+        campaign.device, f'alas_{EVENT}_A1_{tag}')
+    # Capture the detected frame directly; no new screenshot can replace it.
+    assert owner.device.screenshot.call_count == 1
+    assert reserve.call_count == int(after_go) and state.starts == 0
+    assert owner.device.click.call_args_list == ([((ex.FLEET_PREPARATION,), {})] if after_go else [])
+
+
+def test_entry_dialog_capture_failure_does_not_authorize_input(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    campaign.appear.side_effect = lambda button, **kwargs: button is ex.USE_DATA_KEY
+    capture = Mock(return_value=None)
+    monkeypatch.setattr(ex, 'save_event_diagnostic', capture)
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'unverified_data_key_dialog' and 'diagnostic' not in result
+    capture.assert_called_once()
+    assert state.starts == 0
+    owner.device.click.assert_not_called()
+    reserve.assert_not_called()
+
+
 def test_existing_exact_oil_guard_exception_defers_and_never_confirms(monkeypatch):
     owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
     campaign.handle_oil_purchase.side_effect = OilExhausted
