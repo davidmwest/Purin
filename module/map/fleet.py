@@ -80,6 +80,8 @@ class Fleet(Camera, AmbushHandler):
 
     # Cells each fleet was found to walk at most, by fleet_current_index, see walk_timeout_out_of_step()
     fleet_step_found = {}
+    # Walking a cell at a time after a MapWalkError, or bouncing off a maze: a timeout there is not the step
+    _walk_step_fallback = False
 
     @property
     def fleet_step(self):
@@ -100,27 +102,52 @@ class Fleet(Camera, AmbushHandler):
             return found
         return step
 
+    def walk_distance(self, location):
+        """
+        Returns:
+            int: Cells of the route from the current fleet to the location, as the game counts its step. The
+                Manhattan distance if the route is not known.
+        """
+        manhattan = int(np.sum(np.abs(np.subtract(location, self.fleet_current))))
+        try:
+            route = self.map._find_path(location)
+        except Exception:
+            route = None
+        if route and len(route) >= 2 and route[0] == tuple(self.fleet_current):
+            return len(route) - 1
+        return manhattan
+
     def walk_timeout_out_of_step(self, location):
         """
         A fleet that did not move may have been sent further than it walks on a map with fleet step. The game says so
         with a text that handle_walk_out_of_step() matches, but not always: 2026-10-22, the F2P account at 2560x1440
         on event T3, its fleet 1 walks 2 cells and Fleet1Step was 3. Purin tapped a siren 3 cells away 12 times, and
-        every run of the task ended there.
+        every run of the task ended there. _goto() calls this from its second walk timeout in a row: one timeout
+        alone is often a fleet that did arrive and was not seen, the retry finds her there.
 
         Args:
             location (tuple): Where the fleet was sent
 
         Raises:
-            MapWalkError: If the fleet was sent further than a cell. The step of the fleet is lowered by one for the
-                rest of the task, and goto() walks there a cell at a time.
+            MapWalkError: If the fleet was sent further than it walks. The step of the fleet is lowered by one for
+                the rest of the task, never below 2, the shortest step of the game, and goto() walks there a cell at a
+                time. A node planned with a step since lowered raises too, the step stays.
         """
+        if self._walk_step_fallback:
+            return
         if not self.config.MAP_HAS_FLEET_STEP or not self.fleet_current:
             return
-        distance = int(np.sum(np.abs(np.subtract(location, self.fleet_current))))
+        distance = self.walk_distance(location)
         if distance <= 1:
             return
         step = self.fleet_step
-        lowered = max(min(step, distance) if step else distance, 2) - 1
+        if step and distance > step:
+            logger.warning(f'Fleet {self.fleet_current_index} was sent {distance} cells to {location2node(location)}, '
+                           f'planned before its step was lowered to {step}')
+            raise MapWalkError('walk_planned_with_old_step')
+        lowered = (min(step, distance) if step else distance) - 1
+        if lowered < 2:
+            return
         found = dict(self.fleet_step_found)
         found[self.fleet_current_index] = lowered
         self.fleet_step_found = found
@@ -307,6 +334,7 @@ class Fleet(Camera, AmbushHandler):
         # The upper grid is submarine, may mess up predict_fleet()
         may_submarine_icon = self.map.grid_covered(self.map[location], location=[(0, -1)])
         may_submarine_icon = may_submarine_icon and self.fleet_submarine_location == may_submarine_icon[0].location
+        walk_timeouts = 0
 
         while 1:
             self.fleet_ensure(self.fleet_current_index)
@@ -470,7 +498,9 @@ class Fleet(Camera, AmbushHandler):
                     logger.warning('Walk timeout. Retrying.')
                     self.predict()
                     self.ensure_edge_insight(skip_first_update=False)
-                    self.walk_timeout_out_of_step(location)
+                    walk_timeouts += 1
+                    if walk_timeouts >= 2:
+                        self.walk_timeout_out_of_step(location)
                     break
 
             # End
@@ -528,12 +558,16 @@ class Fleet(Camera, AmbushHandler):
             for node in nodes:
                 if self.maze_active_on(node):
                     logger.info(f'Maze is active on {location2node(node)}, bouncing to wait')
-                    for _ in range(10):
-                        grids = self.map[node].maze_nearby.delete(self.map.select(is_fleet=True))
-                        if grids.select(is_enemy=False):
-                            grids = grids.select(is_enemy=False)
-                        grids = grids.sort('cost')
-                        self._goto(grids[0], expected='')
+                    self._walk_step_fallback = True
+                    try:
+                        for _ in range(10):
+                            grids = self.map[node].maze_nearby.delete(self.map.select(is_fleet=True))
+                            if grids.select(is_enemy=False):
+                                grids = grids.select(is_enemy=False)
+                            grids = grids.sort('cost')
+                            self._goto(grids[0], expected='')
+                    finally:
+                        self._walk_step_fallback = False
                 try:
                     self._goto(node, expected=expected if node == nodes[-1] else '')
                 except MapWalkError:
@@ -541,8 +575,16 @@ class Fleet(Camera, AmbushHandler):
                     self.predict()
                     self.ensure_edge_insight()
                     nodes_ = self.map.find_path(node, step=1, turning_optimize=False)
-                    for node_ in nodes_:
-                        self._goto(node_, expected=expected if node == nodes[-1] else '')
+                    self._walk_step_fallback = True
+                    try:
+                        for node_ in nodes_:
+                            self._goto(node_, expected=expected if node == nodes[-1] else '')
+                    finally:
+                        self._walk_step_fallback = False
+                    if node != nodes[-1] and step_optimize:
+                        # The nodes after it were planned with the step before, it may be lowered now
+                        return self.goto(location, expected=expected, step_optimize=step_optimize,
+                                         turning_optimize=turning_optimize)
         else:
             self._goto(location, expected=expected)
 
