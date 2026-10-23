@@ -4,6 +4,8 @@ from module.ocr.ocr import DigitCounter
 
 _CARDS = './assets/en/event_completion/TEMPESTA_BECKONING_STORIES_20261023.png'
 _VIEWER = './assets/en/event_completion/TEMPESTA_BECKONING_VIEWER_20261023.png'
+_UNLOCKED1 = './assets/en/event_completion/TEMPESTA_BECKONING_UNLOCKED1_20261023.png'
+_UNLOCKED2 = './assets/en/event_completion/TEMPESTA_BECKONING_UNLOCKED2_20261023.png'
 _UNLOCKED = './assets/en/event_completion/TEMPESTA_BECKONING_UNLOCKED_20261023.png'
 _UNLOCKED4 = './assets/en/event_completion/TEMPESTA_BECKONING_UNLOCKED4_20261023.png'
 _UNLOCKED5 = './assets/en/event_completion/TEMPESTA_BECKONING_UNLOCKED5_20261023.png'
@@ -31,6 +33,8 @@ STORY_CARDS = tuple(
 # These labels change contrast/background after their ticket is spent. Keep
 # their separately observed unlocked appearance instead of weakening matches.
 STORY_UNLOCKED_TITLES = {
+    '1': _button('BECKONING_CARD_1_UNLOCKED', (110, 365, 255, 403), _UNLOCKED1),
+    '2': _button('BECKONING_CARD_2_UNLOCKED', (366, 353, 549, 390), _UNLOCKED2),
     '3': _button('BECKONING_CARD_3_UNLOCKED', (649, 276, 914, 302), _UNLOCKED),
     '4': _button('BECKONING_CARD_4_UNLOCKED', (995, 254, 1168, 296), _UNLOCKED4),
     '5': _button('BECKONING_CARD_5_UNLOCKED', (43, 602, 336, 632), _UNLOCKED5),
