@@ -31,6 +31,8 @@ def ensure_event_running(main):
 
 def ensure_event_page(main, destination, timeout=30, max_clicks=12):
     """Use the normal page graph with a finite budget and recognized screens only."""
+    from module.campaign.event_completion_assets import TEMPESTA_HUB, TEMPESTA_HUB_HOME
+
     ensure_event_running(main)
     Page.init_connection(destination)
     main.interval_clear(list(Page.iter_check_buttons()))
@@ -53,6 +55,14 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
             # exact idle templates, counting the wake-up against this same
             # navigation budget and waiting for fresh frames before continuing.
             if main.handle_idle_page():
+                clicks += 1
+                settled.reset()
+                continue
+            # The observed featured-event hub is outside the normal page graph.
+            # Its exact title and Home glyph must agree before using that exit.
+            if (main.match_template_color(TEMPESTA_HUB, offset=(3, 3), similarity=.85)
+                    and main.match_template_color(TEMPESTA_HUB_HOME, offset=(3, 3), similarity=.85)):
+                main.device.click(TEMPESTA_HUB_HOME)
                 clicks += 1
                 settled.reset()
                 continue

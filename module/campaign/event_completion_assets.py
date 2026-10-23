@@ -31,3 +31,19 @@ TEMPESTA_MAIN_ENTRY = Button(
 TEMPESTA_FEATURED_ENTRY = Button(
     area=(1077, 90, 1143, 157), color=(178, 182, 196), button=(1080, 95, 1140, 150),
     file='./assets/en/event_completion/TEMPESTA_FEATURED_20261022.png', name='TEMPESTA_FEATURED_ENTRY')
+
+# Featured hub observed at 2026-10-22_22-27-55_087155. The selected event
+# title remains in the side navigation while its subpanels are open.
+_HUB = './assets/en/event_completion/TEMPESTA_HUB_20261022.png'
+TEMPESTA_HUB = Button(
+    area=(43, 151, 202, 187), color=(54, 74, 110), button=(43, 151, 202, 187),
+    file=_HUB, name='TEMPESTA_HUB')
+TEMPESTA_HUB_HOME = Button(
+    area=(1224, 34, 1257, 66), color=(184, 186, 184), button=(1220, 29, 1260, 69),
+    file=_HUB, name='TEMPESTA_HUB_HOME')
+TEMPESTA_REWARDS_TAB = Button(
+    area=(43, 468, 123, 491), color=(57, 66, 85), button=(45, 466, 147, 493),
+    file=_HUB, name='TEMPESTA_REWARDS_TAB')
+TEMPESTA_HUB_LANDING = Button(
+    area=(282, 376, 801, 467), color=(70, 88, 127), button=(282, 376, 801, 467),
+    file=_HUB, name='TEMPESTA_HUB_LANDING')

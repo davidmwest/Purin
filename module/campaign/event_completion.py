@@ -12,7 +12,8 @@ from time import monotonic
 
 from module.base.timer import Timer
 from module.campaign.event_completion_assets import (
-    TEMPESTA_CAMPAIGN, TEMPESTA_FEATURED_ENTRY, TEMPESTA_MAIN_ENTRY, TEMPESTA_SUPPLIES)
+    TEMPESTA_CAMPAIGN, TEMPESTA_FEATURED_ENTRY, TEMPESTA_HUB, TEMPESTA_HUB_HOME,
+    TEMPESTA_HUB_LANDING, TEMPESTA_MAIN_ENTRY, TEMPESTA_REWARDS_TAB, TEMPESTA_SUPPLIES)
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
@@ -108,6 +109,12 @@ class EventCompletion(Reward):
                 self.device.click(GOTO_MAIN)
                 clicks += 1
                 settled.reset()
+            elif (self.match_template_color(TEMPESTA_HUB, offset=(3, 3), similarity=self.text_similarity)
+                  and self.match_template_color(TEMPESTA_HUB_HOME, offset=(3, 3),
+                                                similarity=self.text_similarity)):
+                self.device.click(TEMPESTA_HUB_HOME)
+                clicks += 1
+                settled.reset()
         return False
 
     def observe_event_hub(self, event, folder=REWARD_OBSERVATION_DIR):
@@ -191,6 +198,76 @@ class EventCompletion(Reward):
             finally:
                 save_reward_observations(account, state, folder=folder)
         logger.attr('EventFeaturedObservation', record)
+        return record
+
+    def _inspect_event_rewards_panel(self, record):
+        self._inspect_event_hub(record, entry=TEMPESTA_FEATURED_ENTRY)
+        if record.get('status') != 'observed':
+            return
+        settled = Timer(1, count=2).start()
+        clicks = 0
+        for _ in self.loop(skip_first=False, timeout=20):
+            hub = self.match_template_color(TEMPESTA_HUB, offset=(3, 3), similarity=self.text_similarity)
+            tab = hub and self.match_template_color(TEMPESTA_REWARDS_TAB, offset=(3, 3),
+                                                    similarity=self.text_similarity)
+            landing = hub and self.match_template_color(TEMPESTA_HUB_LANDING, offset=(3, 3),
+                                                        similarity=self.text_similarity)
+            if not clicks and not (hub and tab and landing):
+                settled.reset()
+                continue
+            if not settled.reached():
+                continue
+            if clicks and not landing:
+                record.update(status='observed', reason='rewards_panel_assets_required')
+                return
+            if not (hub and tab and landing):
+                continue
+            if clicks >= 2:
+                record.update(status='blocked', reason='rewards_panel_did_not_open')
+                return
+            self.device.click(TEMPESTA_REWARDS_TAB)
+            clicks += 1
+            record['rewards_tab_clicks'] = clicks
+            settled = Timer(3, count=4).start()
+        record.update(status='blocked', reason='rewards_panel_timeout' if clicks else 'rewards_tab_unrecognized')
+
+    def observe_event_rewards_panel(self, event, folder=REWARD_OBSERVATION_DIR):
+        """Open the observed free Rewards tab and capture its controls once."""
+        if event not in REWARD_OBSERVATION_EVENTS:
+            return dict(status='unsupported', diagnostics=[])
+        ensure_event_running(self)
+        account = self.config.config_name
+        state = load_reward_observations(account, folder=folder)
+        key = event + ':pt_panel'
+        if key in state:
+            record = dict(state[key])
+            if record.get('status') == 'observing':
+                record.update(status='blocked', reason='previous_rewards_panel_observation_interrupted')
+            record['reused'] = True
+            logger.attr('EventRewardsPanelObservation', record)
+            return record
+        record = dict(status='observing', diagnostics=[], returned_main=False,
+                      started=datetime.now().isoformat(timespec='seconds'))
+        state[key] = record
+        save_reward_observations(account, state, folder=folder)
+        try:
+            self._inspect_event_rewards_panel(record)
+            path = save_event_diagnostic(self.device, f'{account}_event_rewards_panel_{record["status"]}')
+            if path:
+                record['diagnostics'].append(path)
+            else:
+                record.update(status='blocked', reason='diagnostic_not_saved')
+        except Exception:
+            record.update(status='blocked', reason='rewards_panel_observation_exception')
+            raise
+        finally:
+            try:
+                record['returned_main'] = self._return_event_hub_main()
+                if not record['returned_main']:
+                    record['return_reason'] = 'main_return_unrecognized'
+            finally:
+                save_reward_observations(account, state, folder=folder)
+        logger.attr('EventRewardsPanelObservation', record)
         return record
 
     def observe_event_main(self, event, folder=REWARD_OBSERVATION_DIR):
@@ -455,6 +532,7 @@ class EventCompletion(Reward):
             result['event_main_observation'] = self.observe_event_main(event)
             result['event_hub_observation'] = self.observe_event_hub(event)
             result['event_featured_observation'] = self.observe_event_featured(event)
+            result['event_pt_observation'] = self.observe_event_rewards_panel(event)
         # Story detection taps entrances, so gate before constructing its controller.
         if complete_story:
             if event in SUPPORTED_STORY_EVENTS:

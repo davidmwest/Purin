@@ -99,7 +99,7 @@ def test_unknown_page_never_uses_a_page_graph_coordinate():
     main = SimpleNamespace(
         loop=Mock(return_value=iter(range(3))), interval_clear=Mock(),
         ui_page_appear=Mock(return_value=False), appear=Mock(return_value=False),
-        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)), ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
+        device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)), ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False), match_template_color=Mock(return_value=False))
     assert ensure_event_page(main, page_main) is False
     main.device.click.assert_not_called()
     assert all(page.parent is None for page in Page.iter_pages())
@@ -120,7 +120,7 @@ def test_recognized_battle_preparation_uses_existing_back_arrow_exit():
         ui_page_appear=Mock(side_effect=[False, True]),
         appear=Mock(side_effect=lambda button, **kwargs: button is BATTLE_PREPARATION),
         device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
-        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
+        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False), match_template_color=Mock(return_value=False))
     assert ensure_event_page(main, page_main) is True
     main.device.click.assert_called_once_with(BACK_ARROW)
 
@@ -147,7 +147,7 @@ def test_page_transition_cannot_repeat_home_from_another_source_page(monkeypatch
         ui_page_appear=Mock(side_effect=lambda destination: frame[0] == 3),
         appear=Mock(side_effect=appear),
         device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
-        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
+        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False), match_template_color=Mock(return_value=False))
     assert ensure_event_page(main, page_main) is True
     main.device.click.assert_called_once_with(GOTO_MAIN)
     assert main.ui_current is page_main
@@ -172,7 +172,7 @@ def test_unchanged_known_page_can_retry_only_after_time_and_fresh_frames(monkeyp
         appear=Mock(side_effect=lambda button, **kwargs: button is page_sp.check_button),
         device=SimpleNamespace(click=Mock(side_effect=lambda button: clicked_at.append(frame[0])),
                                app_is_running=Mock(return_value=True)),
-        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False))
+        ui_button_interval_reset=Mock(), handle_idle_page=Mock(return_value=False), match_template_color=Mock(return_value=False))
     assert ensure_event_page(main, page_main, max_clicks=2) is False
     assert clicked_at == [0, 3]
     assert all(page.parent is None for page in Page.iter_pages())
@@ -195,7 +195,7 @@ def test_captured_f2p_idle_screen_wakes_before_page_graph_navigation():
         ui_page_appear=Mock(side_effect=[False, True]), appear=Mock(return_value=False),
         get_interval_timer=Mock(return_value=Timer(3)),
         device=SimpleNamespace(image=image, click=Mock(), app_is_running=Mock(return_value=True)),
-        ui_button_interval_reset=Mock())
+        ui_button_interval_reset=Mock(), match_template_color=Mock(return_value=False))
     main.handle_idle_page = MethodType(UI.handle_idle_page, main)
 
     assert ensure_event_page(main, page_main) is True
@@ -236,5 +236,62 @@ def test_idle_wakeup_uses_existing_navigation_click_and_settle_budget(monkeypatc
     assert ensure_event_page(main, page_main, timeout=8, max_clicks=2) is False
     assert clicked_at == [0, 3]
     main.loop.assert_called_once_with(timeout=8)
+    main.appear.assert_not_called()
+    assert all(page.parent is None for page in Page.iter_pages())
+
+
+@pytest.mark.parametrize('missing', [None, 'title', 'home'])
+def test_captured_tempesta_hub_exit_requires_title_and_home(missing):
+    from pathlib import Path
+
+    import numpy as np
+    from PIL import Image
+
+    from module.campaign.event_completion_assets import TEMPESTA_HUB, TEMPESTA_HUB_HOME
+
+    image = np.asarray(Image.open(Path(__file__).parent / 'data/tempesta_hub.png').convert('RGB')).copy()
+    if missing:
+        button = TEMPESTA_HUB if missing == 'title' else TEMPESTA_HUB_HOME
+        x1, y1, x2, y2 = button.area
+        image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    main = SimpleNamespace(
+        loop=Mock(return_value=iter(range(2))), interval_clear=Mock(),
+        ui_page_appear=Mock(side_effect=[False, True] if missing is None else [False, False]),
+        appear=Mock(return_value=False), handle_idle_page=Mock(return_value=False),
+        device=SimpleNamespace(image=image, click=Mock(), app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    main.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+
+    assert ensure_event_page(main, page_main) is (missing is None)
+    if missing is None:
+        main.device.click.assert_called_once_with(TEMPESTA_HUB_HOME)
+        main.appear.assert_not_called()
+    else:
+        main.device.click.assert_not_called()
+
+
+def test_tempesta_hub_exit_shares_navigation_click_and_settle_budget(monkeypatch):
+    from module.campaign.event_completion_assets import TEMPESTA_HUB_HOME
+
+    clock = [1000.0]
+    frame = [0]
+    clicked_at = []
+    monkeypatch.setattr(timer, 'time', lambda: clock[0])
+
+    def screenshots(**kwargs):
+        for index, elapsed in enumerate((0, 3, 3.5, 4, 4.5, 5, 7)):
+            frame[0] = index
+            clock[0] = 1000 + elapsed
+            yield index
+
+    main = SimpleNamespace(
+        loop=Mock(side_effect=screenshots), interval_clear=Mock(),
+        ui_page_appear=Mock(return_value=False), appear=Mock(return_value=False),
+        handle_idle_page=Mock(return_value=False), match_template_color=Mock(return_value=True),
+        device=SimpleNamespace(click=Mock(side_effect=lambda button: clicked_at.append((frame[0], button))),
+                               app_is_running=Mock(return_value=True)),
+        ui_button_interval_reset=Mock())
+    assert ensure_event_page(main, page_main, max_clicks=2) is False
+    assert clicked_at == [(0, TEMPESTA_HUB_HOME), (3, TEMPESTA_HUB_HOME)]
     main.appear.assert_not_called()
     assert all(page.parent is None for page in Page.iter_pages())
