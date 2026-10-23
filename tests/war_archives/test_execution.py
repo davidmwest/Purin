@@ -366,8 +366,9 @@ def test_entry_dialog_captures_current_frame_and_keeps_reservation(monkeypatch, 
     captured_device, captured_tag = capture.call_args.args
     assert captured_device._device is campaign.device
     assert captured_tag == f'alas_{EVENT}_A1_{tag}'
-    # Capture the detected frame directly; no new screenshot can replace it.
-    assert owner.device.screenshot.call_count == 1
+    # The owned key handler verifies a fresh frame; diagnostics then capture
+    # that rejected frame directly without another screenshot replacing it.
+    assert owner.device.screenshot.call_count == (2 if after_go and modal is ex.USE_DATA_KEY else 1)
     assert reserve.call_count == int(after_go) and state.starts == 0
     assert owner.device.click.call_args_list == ([((ex.FLEET_PREPARATION,), {})] if after_go else [])
 
@@ -828,6 +829,16 @@ def test_actual_five_data_key_reminder_requires_exact_complete_text():
     assert owner._data_key_dialog_witness(key_dialog_image()) is True
 
 
+def key_toast_image():
+    return np.asarray(Image.open(Path(__file__).parent / 'data/archive_data_key_toast.png').convert('RGB'))
+
+
+def test_actual_game_toast_is_only_a_wait_candidate_without_complete_key_message():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    assert owner._data_key_dialog_candidate(key_toast_image()) is True
+    assert owner._data_key_dialog_witness(key_toast_image()) is False
+
+
 @pytest.mark.parametrize('changed', ['five', 'message', 'header', 'cancel', 'confirm', 'dim', 'wrong_cost'])
 def test_actual_key_dialog_rejects_missing_price_controls_and_dim_overlay(changed):
     from PIL import ImageDraw
@@ -954,10 +965,50 @@ def test_exact_dialog_without_own_fresh_reservation_go_or_once_budget_never_clic
 
 def test_dialog_change_before_stability_does_not_confirm(monkeypatch):
     owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
-    owner._data_key_dialog_witness = Mock(side_effect=[True, True, False])
+    owner._data_key_dialog_witness = Mock(side_effect=[True, False])
     result = invoke(owner, proof, prepare, reserve)
     assert result['reason'] == 'unverified_data_key_dialog'
     assert state.events == ['reserve', 'go'] and owner.key_confirm_clicked is False
+
+
+@pytest.mark.parametrize('persistent', [False, True])
+def test_owned_go_waits_for_real_toast_to_clear_but_never_confirms_covered_message(monkeypatch, persistent):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
+    toast, clean = key_toast_image(), key_dialog_image()
+    frames = []
+    original_click = owner.device.click.side_effect
+
+    def click(button, *args, **kwargs):
+        if button is ex.ARCHIVE_KEY_CONFIRM:
+            assert len(frames) >= 5 and all(value == 'clean' for value in frames[-2:])
+        original_click(button, *args, **kwargs)
+        if button is ex.FLEET_PREPARATION:
+            owner.device.image = toast
+
+    def screenshot():
+        if state.dialog:
+            covered = persistent or len(frames) < 3
+            frames.append('toast' if covered else 'clean')
+            owner.device.image = toast if covered else clean
+        else:
+            owner.device.image = np.zeros_like(clean)
+
+    owner.device.click.side_effect = click
+    owner.device.screenshot.side_effect = screenshot
+    # Live failure: the obscured message misses USE_DATA_KEY while the generic
+    # popup marker still matches. Candidate controls must retain ownership.
+    campaign.appear.side_effect = lambda button, **kwargs: state.dialog and button is ex.POPUP_CONFIRM
+    result = invoke(owner, proof, prepare, reserve, goal=StageGoal(EVENT, 'A1', goal='archive_prize'))
+    assert result['reserved'] is True
+    if persistent:
+        assert result['reason'] == 'data_key_entry_not_verified'
+        assert state.events == ['reserve', 'go'] and not owner.key_confirm_clicked
+        assert len(frames) == 30 and state.legacy_after_handler == 0
+    else:
+        assert result['status'] == 'won'
+        assert frames == ['toast'] * 3 + ['clean'] * 2
+        assert state.events == ['reserve', 'go', 'confirm']
+        assert state.legacy_after_handler == 1
 
 
 def test_failed_confirmation_transport_consumes_once_flag_and_restores_entry_device(monkeypatch):

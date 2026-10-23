@@ -202,6 +202,12 @@ class WarArchivesExecution(CampaignRun):
                 and type(value.get('raw_keys')) is int
                 and 5 <= value['raw_keys'] <= 300)
 
+    def _data_key_dialog_candidate(self, image):
+        """Captured frame controls permit waiting, never confirmation by themselves."""
+        return (isinstance(image, np.ndarray) and image.shape == (720, 1280, 3)
+                and all(button.match_template_color(image, offset=(0, 0), similarity=.9)
+                        for button in (ARCHIVE_KEY_HEADER, ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM)))
+
     def _data_key_dialog_witness(self, image):
         """Exact captured Info dialog and complete five-key message, never a price guess."""
         if not isinstance(image, np.ndarray) or image.shape != (720, 1280, 3):
@@ -240,7 +246,8 @@ class WarArchivesExecution(CampaignRun):
             if any(campaign.appear(button, offset=(20, 30)) for button in
                    (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP)):
                 raise ArchiveBlocked('unowned_receipt')
-            witness = self._data_key_dialog_witness(campaign.device.image)
+            image = getattr(campaign.device, 'image', None)
+            witness = self._data_key_dialog_witness(image)
             if witness:
                 entered_frames = 0
                 if not self.key_confirm_clicked:
@@ -255,6 +262,11 @@ class WarArchivesExecution(CampaignRun):
                         campaign.device.click(ARCHIVE_KEY_CONFIRM)
                 continue
             if not self.key_confirm_clicked:
+                # A transient game toast can cover the price/message just after
+                # Go. The exact frame controls authorize only bounded waiting.
+                # Once complete message proof starts, a changed message fails.
+                if frames == 0 and self._data_key_dialog_candidate(image):
+                    continue
                 raise ArchiveBlocked('unverified_data_key_dialog')
             if any(campaign.appear(button, offset=(20, 20)) for button in (
                     USE_DATA_KEY, POPUP_CONFIRM, POPUP_CANCEL, POPUP_CONFIRM_WHITE, POPUP_CANCEL_WHITE)):
@@ -388,10 +400,9 @@ class WarArchivesExecution(CampaignRun):
                 if any(campaign.appear(button, offset=(20, 30)) for button in
                        (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP)):
                     raise ArchiveBlocked('unowned_receipt')
-                if campaign.appear(USE_DATA_KEY, offset=(20, 20)):
+                if (campaign.appear(USE_DATA_KEY, offset=(20, 20))
+                        or self._data_key_dialog_candidate(getattr(campaign.device, 'image', None))):
                     try:
-                        if not self._data_key_dialog_witness(getattr(campaign.device, 'image', None)):
-                            raise ArchiveBlocked('unverified_data_key_dialog')
                         self._confirm_data_key(campaign, check_entry_budget, entry_deadline)
                         return False
                     except ArchiveBlocked:
