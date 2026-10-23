@@ -1,7 +1,8 @@
 """One observed War Archives sortie; the caller owns the shared attempt ledger.
 
-This deliberately does not use CampaignWarArchives.run(): that wrapper enables
-the old timed data-key confirmation. A navigation provider must first establish
+This deliberately does not use CampaignWarArchives.run(): its legacy data-key
+handler suppresses the daily reminder and retries confirmation without a bound.
+A navigation provider must first establish
 the exact archive/stage from captured UI. Unknown observations never authorize
 navigation or combat. The provider is responsible for bounding its own controls.
 """
@@ -28,7 +29,9 @@ from module.ocr.ocr import Ocr
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 from module.war_archives.catalog import get_archive
 from module.war_archives.execution_assets import (
-    ARCHIVE_DISABLED_SUB, ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_GO, ARCHIVE_HARD_SURFACE)
+    ARCHIVE_DISABLED_SUB, ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_GO, ARCHIVE_HARD_SURFACE,
+    ARCHIVE_KEY_HEADER, ARCHIVE_KEY_MESSAGE, ARCHIVE_KEY_FIVE,
+    ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM)
 
 
 _REQUIREMENT = re.compile(r'(AverageLevel|Total(?:HP|FP|TRP|AVI|AA|RLD|EVA|HIT|ASW))>(0|[1-9][0-9]{0,5})\((0|[1-9][0-9]{0,5})\)')
@@ -61,6 +64,23 @@ class ArchiveBlocked(ScriptEnd):
 
 class ArchiveInspected(ScriptEnd):
     pass
+
+
+class _ArchiveEntryDevice:
+    """Observe the actual Go outside legacy fleet_preparation(), before input."""
+
+    def __init__(self, device, before_go):
+        self._device, self._before_go = device, before_go
+
+    def __getattr__(self, name):
+        return getattr(self._device, name)
+
+    def click(self, button, *args, **kwargs):
+        if button is FLEET_PREPARATION:
+            self._before_go()
+        elif button is POPUP_CONFIRM or button is POPUP_CONFIRM_WHITE:
+            raise ArchiveBlocked('unrecognized_entry_confirm')
+        return self._device.click(button, *args, **kwargs)
 
 
 class _FleetPreparationDevice:
@@ -150,7 +170,8 @@ class WarArchivesExecution(CampaignRun):
     the caller's shared daily/surplus budget and return literal True. No Start is
     allowed otherwise. A successful reservation is never refunded here, including
     losses, exceptions or interruptions. Raw-key pricing must come from observed
-    game evidence; this module has no assumed five-key or timed-unlock default.
+    game evidence. Current EN entry uses five keys per fresh tracking request;
+    its optional daily reminder is confirmed only after this run's reserved Go.
     """
 
     def _proof(self, value, execution=False):
@@ -180,6 +201,72 @@ class WarArchivesExecution(CampaignRun):
                 and type(value.get('key_capacity')) is int
                 and type(value.get('raw_keys')) is int
                 and 5 <= value['raw_keys'] <= 300)
+
+    def _data_key_dialog_witness(self, image):
+        """Exact captured Info dialog and complete five-key message, never a price guess."""
+        if not isinstance(image, np.ndarray) or image.shape != (720, 1280, 3):
+            return False
+        if not all(button.match_template_color(image, offset=(0, 0), similarity=.9)
+                   for button in (ARCHIVE_KEY_HEADER, ARCHIVE_KEY_MESSAGE, ARCHIVE_KEY_FIVE,
+                                  ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM)):
+            return False
+        white = Ocr([(362, 319, 737, 347), (410, 345, 871, 373)], lang='cnocr',
+                    letter=(255, 255, 255), threshold=128, name='ARCHIVE_KEY_MESSAGE')
+        gold = Ocr([(737, 319, 908, 347), (736, 319, 756, 347)], lang='cnocr',
+                   letter=(255, 220, 50), threshold=128, name='ARCHIVE_KEY_COST')
+        normalize = lambda text: re.sub(r'\s+', '', text)
+        return ([normalize(text) for text in white.ocr(image)] ==
+                ['Unlockingthisstagerequires', 'Wouldyouliketounlockthisstage?']
+                and [normalize(text) for text in gold.ocr(image)] == ['5DataKey(s)', '5'])
+
+    def _confirm_data_key(self, campaign, check_budget, deadline):
+        """Own fresh frames through one confirmation and positively recognized entry.
+
+        enter_map ignores the oil-handler return value, so this must not return
+        while a pending modal could fall through into legacy controls.
+        """
+        if (self.inspection or self.fleet_inspection or not self.reserved
+                or not self.fleet_go_clicked or self.key_confirm_clicked
+                or not self._proof(self.proof, execution=True) or not self._key_proof(self.proof)):
+            raise ArchiveBlocked('unverified_data_key_dialog')
+        stable = Timer(1, count=2).start()
+        frames, entered_frames = 0, 0
+        end = min(deadline, monotonic() + 15)
+        for _ in range(30):
+            if monotonic() >= end:
+                break
+            campaign.device.screenshot()
+            check_budget()
+            if any(campaign.appear(button, offset=(20, 30)) for button in
+                   (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP)):
+                raise ArchiveBlocked('unowned_receipt')
+            witness = self._data_key_dialog_witness(campaign.device.image)
+            if witness:
+                entered_frames = 0
+                if not self.key_confirm_clicked:
+                    if frames == 0:
+                        stable.reset()
+                    frames += 1
+                    if frames >= 2 and stable.reached():
+                        self._check_switch()
+                        # The durable shared reservation already exists. Consume
+                        # this invocation's sole confirmation before forwarding.
+                        self.key_confirm_clicked = True
+                        campaign.device.click(ARCHIVE_KEY_CONFIRM)
+                continue
+            if not self.key_confirm_clicked:
+                raise ArchiveBlocked('unverified_data_key_dialog')
+            if any(campaign.appear(button, offset=(20, 20)) for button in (
+                    USE_DATA_KEY, POPUP_CONFIRM, POPUP_CANCEL, POPUP_CONFIRM_WHITE, POPUP_CANCEL_WHITE)):
+                raise ArchiveBlocked('unrecognized_entry_dialog')
+            loading = getattr(campaign, 'is_combat_loading', lambda: False)
+            if campaign.is_in_map() or loading():
+                entered_frames += 1
+                if entered_frames >= 2:
+                    return
+            else:
+                entered_frames = 0
+        raise ArchiveBlocked('data_key_entry_not_verified')
 
     def _hard_fleet_witness(self, campaign):
         """Only the captured two-surface-row layout, with every stat satisfied.
@@ -289,20 +376,29 @@ class WarArchivesExecution(CampaignRun):
         original_fleet = campaign.fleet_preparation
         entry_deadline, entry_frames = None, 0
 
-        def entry_guard():
+        def check_entry_budget():
             nonlocal entry_frames
+            entry_frames += 1
+            if monotonic() >= entry_deadline or entry_frames > 120:
+                raise ArchiveBlocked('map_entry_timeout')
+
+        def entry_guard():
             if entry_deadline is not None:
-                entry_frames += 1
-                if monotonic() >= entry_deadline or entry_frames > 120:
-                    raise ArchiveBlocked('map_entry_timeout')
+                check_entry_budget()
                 if any(campaign.appear(button, offset=(20, 30)) for button in
                        (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP)):
                     raise ArchiveBlocked('unowned_receipt')
                 if campaign.appear(USE_DATA_KEY, offset=(20, 20)):
-                    self.diagnostic = str(save_event_diagnostic(
-                        campaign.device,
-                        f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_data_key_dialog') or '')
-                    raise ArchiveBlocked('unverified_data_key_dialog')
+                    try:
+                        if not self._data_key_dialog_witness(getattr(campaign.device, 'image', None)):
+                            raise ArchiveBlocked('unverified_data_key_dialog')
+                        self._confirm_data_key(campaign, check_entry_budget, entry_deadline)
+                        return False
+                    except ArchiveBlocked:
+                        self.diagnostic = str(save_event_diagnostic(
+                            campaign.device,
+                            f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_data_key_dialog') or '')
+                        raise
                 # A generic confirm may buy keys, oil, or an unknown entitlement.
                 # Let the exact oil guard cancel its known purchase dialog first.
                 original_oil_popup()
@@ -321,10 +417,24 @@ class WarArchivesExecution(CampaignRun):
                 raise ArchiveBlocked('second_sortie_forbidden')
             self.entry_calls += 1
             entry_deadline, entry_frames = monotonic() + 60, 0
+            original_device = campaign.device
+            campaign.device = _ArchiveEntryDevice(original_device, before_go)
             try:
                 return original_enter(*args, **kwargs)
             finally:
+                campaign.device = original_device
                 entry_deadline = None
+
+        def before_go():
+            check_entry_budget()
+            if (self.inspection or self.fleet_inspection or not self.reserved
+                    or not self.fleet_ready or not self._proof(self.proof, execution=True)
+                    or not self._key_proof(self.proof)):
+                raise ArchiveBlocked('unreserved_fleet_go')
+            if self.fleet_go_clicked:
+                raise ArchiveBlocked('second_fleet_go_forbidden')
+            self._check_switch()
+            self.fleet_go_clicked = True
 
         def stop():
             self.preparation_seen = True
@@ -388,6 +498,7 @@ class WarArchivesExecution(CampaignRun):
                           else original_fleet(*args, **kwargs))
                 campaign.device._check()
                 entry_guard()
+                self.fleet_ready = True
                 return result
             finally:
                 campaign.device = original_device
@@ -460,6 +571,7 @@ class WarArchivesExecution(CampaignRun):
                  inspect_fleet_only=False):
         self.goal, self.reserve, self.prepare = goal, reserve, prepare
         self.reserved = self.boss_won = self.stage_complete = self.preparation_seen = False
+        self.fleet_ready = self.fleet_go_clicked = self.key_confirm_clicked = False
         self.oil_deferred = False
         self.diagnostic = ''
         self.fleet_inspection, self.fleet_probe_advances = inspect_fleet_only, 0

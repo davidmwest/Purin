@@ -362,8 +362,10 @@ def test_entry_dialog_captures_current_frame_and_keeps_reservation(monkeypatch, 
     result = invoke(owner, proof, prepare, reserve)
     assert result == dict(status='blocked', reason=reason, reserved=after_go,
                          boss_won=False, stage_complete=False, diagnostic='/tmp/archive_entry.png')
-    capture.assert_called_once_with(
-        campaign.device, f'alas_{EVENT}_A1_{tag}')
+    capture.assert_called_once()
+    captured_device, captured_tag = capture.call_args.args
+    assert captured_device._device is campaign.device
+    assert captured_tag == f'alas_{EVENT}_A1_{tag}'
     # Capture the detected frame directly; no new screenshot can replace it.
     assert owner.device.screenshot.call_count == 1
     assert reserve.call_count == int(after_go) and state.starts == 0
@@ -814,3 +816,218 @@ def test_hard_stage_bypasses_common_fleet_number_selection(monkeypatch):
     owner._prepare_hard_fleet.assert_called_once_with(campaign)
     original.assert_not_called()
     campaign.device.click.assert_not_called()
+
+
+
+def key_dialog_image():
+    return np.asarray(Image.open(Path(__file__).parent / 'data/archive_data_key_dialog.png').convert('RGB'))
+
+
+def test_actual_five_data_key_reminder_requires_exact_complete_text():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    assert owner._data_key_dialog_witness(key_dialog_image()) is True
+
+
+@pytest.mark.parametrize('changed', ['five', 'message', 'header', 'cancel', 'confirm', 'dim', 'wrong_cost'])
+def test_actual_key_dialog_rejects_missing_price_controls_and_dim_overlay(changed):
+    from PIL import ImageDraw
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    image = key_dialog_image().copy()
+    areas = {'five': (737,319,757,347), 'message': (410,345,871,373),
+             'header': (353,175,430,215), 'cancel': (401,481,578,542),
+             'confirm': (702,481,878,542), 'wrong_cost': (737,319,757,347)}
+    if changed == 'dim':
+        image = (image * .45).astype(np.uint8)
+    else:
+        x1,y1,x2,y2 = areas[changed]
+        image[y1:y2,x1:x2] = (58,65,82)
+        if changed == 'wrong_cost':
+            altered = Image.fromarray(image)
+            ImageDraw.Draw(altered).text((740,325), '6', fill=(255,220,50))
+            image = np.asarray(altered)
+    assert owner._data_key_dialog_witness(image) is False
+
+
+def test_key_dialog_does_not_accept_extra_or_incomplete_message_by_template_alone(monkeypatch):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    monkeypatch.setattr(ex, 'Ocr', Mock(side_effect=[
+        SimpleNamespace(ocr=Mock(return_value=['Unlocking this stage requires 15',
+                                              'Would you like to unlock this stage?'])),
+        SimpleNamespace(ocr=Mock(return_value=['5 Data Key(s)', '5']))]))
+    assert owner._data_key_dialog_witness(key_dialog_image()) is False
+
+
+def key_dialog_entry(monkeypatch, *, keep_dialog=False, unknown_after=False, fail_confirm=False):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    monkeypatch.setattr(ex, 'Timer', ReadyTimer)
+    monkeypatch.setattr(ex, 'save_event_diagnostic', Mock(return_value='/tmp/key.png'))
+    image = key_dialog_image()
+    owner.device.image = np.zeros_like(image)
+    state.dialog = False
+    state.confirmed = False
+    state.legacy_after_handler = 0
+    state.events = []
+    reserve.side_effect = lambda *args, **kwargs: state.events.append('reserve') or True
+    campaign.appear.side_effect = lambda button, **kwargs: state.dialog and button is ex.USE_DATA_KEY
+
+    def screenshot():
+        owner.device.image = image if state.dialog else np.zeros_like(image)
+    owner.device.screenshot.side_effect = screenshot
+
+    def click(button, *args, **kwargs):
+        if button is ex.FLEET_PREPARATION:
+            assert owner.fleet_go_clicked and owner.reserved
+            state.events.append('go')
+            state.dialog = True
+            owner.device.image = image
+        elif button is ex.ARCHIVE_KEY_CONFIRM:
+            assert owner.key_confirm_clicked and owner.reserved and owner.fleet_go_clicked
+            state.events.append('confirm')
+            if fail_confirm:
+                raise OSError('lost confirmation transport')
+            state.confirmed = True
+            state.dialog = keep_dialog
+            state.in_map = not keep_dialog and not unknown_after
+            state.in_stage = False
+        else:
+            pytest.fail(f'unexpected control: {button}')
+    owner.device.click.side_effect = click
+
+    def enter(*args, **kwargs):
+        campaign.handle_oil_purchase()
+        campaign.triggered_map_stop()
+        campaign.fleet_preparation()
+        campaign.device.click(ex.FLEET_PREPARATION)
+        # The real enter_map ignores the handler return, so our helper must
+        # retain control until recognized entry instead of yielding the modal.
+        campaign.handle_oil_purchase()
+        assert not state.dialog and state.in_map
+        state.legacy_after_handler += 1
+        state.starts += 1
+        return True
+    campaign.enter_map = enter
+    return owner, campaign, state, proof, prepare, reserve
+
+
+def test_reserved_go_exact_key_dialog_is_settled_then_confirmed_once_before_verified_map(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
+    original_device = campaign.device
+    # Prize goal avoids a later inspect-only entry; this is one actual sortie.
+    result = invoke(owner, proof, prepare, reserve, goal=StageGoal(EVENT, 'A1', goal='archive_prize'))
+    assert result['status'] == 'won' and result['reserved'] is True
+    assert state.events == ['reserve', 'go', 'confirm']
+    assert state.starts == state.legacy_after_handler == 1
+    assert owner.device.screenshot.call_count >= 5  # initial + 2 modal + 2 map
+    assert campaign.device is original_device
+    assert owner.device.click.call_args_list == [((ex.FLEET_PREPARATION,), {}), ((ex.ARCHIVE_KEY_CONFIRM,), {})]
+
+
+@pytest.mark.parametrize('keep_dialog,unknown_after', [(True, False), (False, True)])
+def test_confirmed_but_unverified_entry_remains_bounded_without_legacy_fallthrough(monkeypatch, keep_dialog, unknown_after):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(
+        monkeypatch, keep_dialog=keep_dialog, unknown_after=unknown_after)
+    original_device = campaign.device
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'data_key_entry_not_verified' and result['reserved'] is True
+    assert state.events == ['reserve', 'go', 'confirm']
+    assert state.starts == state.legacy_after_handler == 0
+    assert owner.device.screenshot.call_count <= 31
+    assert campaign.device is original_device
+
+
+@pytest.mark.parametrize('field,value', [
+    ('reserved', False), ('fleet_go_clicked', False), ('key_confirm_clicked', True),
+    ('inspection', True), ('fleet_inspection', True)])
+def test_exact_dialog_without_own_fresh_reservation_go_or_once_budget_never_clicks(monkeypatch, field, value):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    owner.goal = StageGoal(EVENT, 'A1', goal='archive_prize')
+    owner.proof, owner.key_mode, owner.key_cost = proof, 'per_entry', 5
+    owner.reserved = owner.fleet_go_clicked = True
+    owner.key_confirm_clicked = owner.inspection = owner.fleet_inspection = False
+    setattr(owner, field, value)
+    owner.device.image = key_dialog_image()
+    with pytest.raises(ex.ArchiveBlocked, match='unverified_data_key_dialog'):
+        owner._confirm_data_key(campaign, Mock(), float('inf'))
+    owner.device.click.assert_not_called()
+    owner.device.screenshot.assert_not_called()
+
+
+def test_dialog_change_before_stability_does_not_confirm(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
+    owner._data_key_dialog_witness = Mock(side_effect=[True, True, False])
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'unverified_data_key_dialog'
+    assert state.events == ['reserve', 'go'] and owner.key_confirm_clicked is False
+
+
+def test_failed_confirmation_transport_consumes_once_flag_and_restores_entry_device(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch, fail_confirm=True)
+    original_device = campaign.device
+    with pytest.raises(OSError, match='lost confirmation transport') as error:
+        invoke(owner, proof, prepare, reserve)
+    assert error.value.archive_reserved is True
+    assert owner.key_confirm_clicked is True and state.events == ['reserve', 'go', 'confirm']
+    assert campaign.device is original_device
+
+
+def test_second_fleet_go_never_reaches_device_even_after_ignored_return(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
+    original = campaign.enter_map
+    def twice(*args, **kwargs):
+        original(*args, **kwargs)
+        campaign.device.click(ex.FLEET_PREPARATION)
+    campaign.enter_map = twice
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['reason'] == 'second_fleet_go_forbidden'
+    assert state.events == ['reserve', 'go', 'confirm']
+    assert owner.device.click.call_count == 2
+
+
+def test_five_key_settling_timer_is_one_second_and_needs_fresh_positive_frames(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
+    timer = ReadyTimer()
+    timer.reached = Mock(side_effect=[False, True])
+    timer.reset = Mock(return_value=timer)
+    timer_factory = Mock(return_value=timer)
+    monkeypatch.setattr(ex, 'Timer', timer_factory)
+    result = invoke(owner, proof, prepare, reserve, goal=StageGoal(EVENT, 'A1', goal='archive_prize'))
+    assert result['status'] == 'won'
+    timer_factory.assert_called_once_with(1, count=2)
+    assert timer.reached.call_count == 2
+    timer.reset.assert_called_once_with()
+    assert owner.device.screenshot.call_count >= 6
+
+
+
+def test_key_confirmation_accepts_two_recognized_loading_frames_without_battle_inputs(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch, unknown_after=True)
+    owner.goal = StageGoal(EVENT, 'A1', goal='archive_prize')
+    owner.proof, owner.key_mode, owner.key_cost = proof, 'per_entry', 5
+    owner.reserved = owner.fleet_go_clicked = state.dialog = True
+    owner.key_confirm_clicked = owner.inspection = owner.fleet_inspection = False
+    campaign.is_combat_loading = lambda: state.confirmed
+    owner._confirm_data_key(campaign, Mock(), float('inf'))
+    assert state.events == ['confirm']
+    owner.device.click.assert_called_once_with(ex.ARCHIVE_KEY_CONFIRM)
+    assert owner.device.screenshot.call_count == 4
+
+
+def test_entry_proxy_consumes_go_before_transport_failure_and_restores_original_device(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
+    original_device = campaign.device
+    owner.device.click.side_effect = OSError('lost Go transport')
+    with pytest.raises(OSError, match='lost Go transport') as error:
+        invoke(owner, proof, prepare, reserve)
+    assert error.value.archive_reserved is True
+    assert owner.fleet_go_clicked is True and owner.key_confirm_clicked is False
+    owner.device.click.assert_called_once_with(ex.FLEET_PREPARATION)
+    assert campaign.device is original_device
+
+
+@pytest.mark.parametrize('button', [ex.POPUP_CONFIRM, ex.POPUP_CONFIRM_WHITE])
+def test_entry_proxy_never_forwards_generic_confirmation(button):
+    device = SimpleNamespace(click=Mock())
+    proxy = ex._ArchiveEntryDevice(device, Mock())
+    with pytest.raises(ex.ArchiveBlocked, match='unrecognized_entry_confirm'):
+        proxy.click(button)
+    device.click.assert_not_called()
