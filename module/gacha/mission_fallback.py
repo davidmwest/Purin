@@ -14,6 +14,7 @@ from module.config.utils import get_server_last_update
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
 from module.gacha.banner_assets import EVENT_BUILD_ORDERS
+from module.gacha.mission_order_assets import UR_CAP_TEXT, UR_CAP_CANCEL, UR_CAP_CONFIRM
 from module.gacha.mission_submit_assets import (
     BATCH_BUILD_TITLE, COUNT_CANCEL, COUNT_CONFIRM, COUNT_HEADER, COUNT_MINUS, COUNT_PLUS)
 from module.gacha.ui import GachaUI
@@ -97,6 +98,9 @@ class GachaFallbackObserver(GachaUI):
     def _count_dialog(self):
         return all(self._exact(button) for button in SHARED_COUNT_WITNESSES)
 
+    def _ur_cap_warning(self):
+        return all(self._exact(button) for button in (UR_CAP_TEXT, UR_CAP_CANCEL, UR_CAP_CONFIRM))
+
     def _wait_pool(self, pool):
         settled, frames = Timer(1, count=2).start(), 0
         for _ in self.loop(skip_first=False, timeout=8):
@@ -132,7 +136,7 @@ class GachaFallbackObserver(GachaUI):
         settled = Timer(1, count=2).start()
         previous, frames = None, 0
         for _ in self.loop(skip_first=False, timeout=15):
-            kind = ('count' if self._count_dialog()
+            kind = ('ur_cap' if self._ur_cap_warning() else 'count' if self._count_dialog()
                     else ('pool' if self._on_pool(record['pool']) else None))
             if kind is None or kind != previous:
                 previous, frames = kind, 1 if kind else 0
@@ -140,6 +144,18 @@ class GachaFallbackObserver(GachaUI):
                 continue
             frames += 1
             if frames < 3 or not settled.reached():
+                continue
+            if kind == 'ur_cap':
+                if record.get('warning_ack_clicks', 0):
+                    record.update(status='blocked', reason='ur_cap_warning_not_dismissed')
+                    return False
+                # This observed warning opens the count dialog; it cannot
+                # submit orders. Persist its independent once-only budget.
+                record['warning_ack_clicks'] = 1
+                persist()
+                self.device.click(UR_CAP_CONFIRM)
+                previous, frames = None, 0
+                settled.reset()
                 continue
             if kind == 'pool':
                 record['dialog_open'] = False
@@ -177,7 +193,7 @@ class GachaFallbackObserver(GachaUI):
         key = f'{CURRENT_EVENT}:{pool}:{FALLBACK_OBSERVATION_VERSION}'
         state = load_fallback_state(account, folder)
         previous = state.get(key, {})
-        for name in ('open_clicks', 'cancel_clicks'):
+        for name in ('open_clicks', 'cancel_clicks', 'warning_ack_clicks'):
             if name in previous and (type(previous[name]) is not int or not 0 <= previous[name] <= 1):
                 raise ScriptError('Invalid fallback observation budget')
         for name in ('dialog_open', 'count_captured', 'returned_main'):
@@ -188,13 +204,14 @@ class GachaFallbackObserver(GachaUI):
         if (previous.get('pool', pool) != pool or previous.get('event', CURRENT_EVENT) != CURRENT_EVENT
                 or type(previous.get('orders_submitted', 0)) is not int
                 or previous.get('orders_submitted', 0) != 0
+                or previous.get('warning_ack_clicks', 0) > previous.get('open_clicks', 0)
                 or previous.get('cancel_clicks', 0) > previous.get('open_clicks', 0)):
             raise ScriptError('Invalid fallback observation scope')
         if previous.get('count_captured') and previous.get('returned_main'):
             return dict(previous, reused=True)
         record = dict(status='observing', reason='fallback_pool_requires_capture', pool=pool,
                       period=self._period(), event=CURRENT_EVENT, open_clicks=0, cancel_clicks=0,
-                      orders_submitted=0, dialog_open=False, count_captured=False,
+                      orders_submitted=0, warning_ack_clicks=0, dialog_open=False, count_captured=False,
                       returned_main=False, diagnostics=[])
         record.update(previous)
         state[key] = record

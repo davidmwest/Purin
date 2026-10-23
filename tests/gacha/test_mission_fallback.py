@@ -12,6 +12,7 @@ from module.gacha.mission_fallback import (
     CURRENT_EVENT, FALLBACK_OBSERVATION_VERSION, GachaFallbackObserver,
     SHARED_COUNT_WITNESSES, fallback_state_path, load_fallback_state, save_fallback_state)
 from module.gacha.mission_submit_assets import COUNT_CANCEL, COUNT_CONFIRM
+from module.gacha.mission_order_assets import UR_CAP_CONFIRM
 from module.ui.page import page_build, page_main
 
 PERIOD = '2026-10-23T00:00:00'
@@ -36,6 +37,7 @@ def controller(monkeypatch, frames=20):
     helper._enter_pool = Mock(return_value=True)
     helper._on_pool = Mock(return_value=True)
     helper._count_dialog = Mock(return_value=False)
+    helper._ur_cap_warning = Mock(return_value=False)
     helper.loop = Mock(side_effect=lambda **kw: iter(range(frames)))
     def capture(record, tag):
         path = tag + '.png'
@@ -173,6 +175,39 @@ def test_cancel_budget_cannot_repeat_or_navigate_behind_dialog(tmp_path, monkeyp
     fallback.ensure_event_page.assert_not_called()
 
 
+def test_restart_recovers_known_ur_warning_then_captures_and_cancels(tmp_path, monkeypatch):
+    helper = controller(monkeypatch)
+    save_fallback_state('alas', {key(): dict(open_clicks=1, dialog_open=True)}, tmp_path)
+    phase = {'value': 'ur_cap'}
+    helper._ur_cap_warning.side_effect = lambda: phase['value'] == 'ur_cap'
+    helper._count_dialog.side_effect = lambda: phase['value'] == 'count'
+    helper._on_pool.side_effect = lambda pool: phase['value'] == 'pool'
+    def click(button):
+        audit = load_fallback_state('alas', tmp_path)[key()]
+        if button == UR_CAP_CONFIRM:
+            assert audit['warning_ack_clicks'] == 1 and audit['orders_submitted'] == 0
+            phase['value'] = 'count'
+        else:
+            assert button == COUNT_CANCEL and audit['count_captured'] and audit['cancel_clicks'] == 1
+            phase['value'] = 'pool'
+    helper.device.click.side_effect = click
+    result = helper.run(folder=tmp_path)
+    assert result['returned_main'] and result['count_captured']
+    assert result['orders_submitted'] == 0 and result['warning_ack_clicks'] == 1
+    helper._enter_pool.assert_not_called()
+    assert [call.args[0] for call in helper.device.click.call_args_list] == [UR_CAP_CONFIRM, COUNT_CANCEL]
+
+
+def test_ur_warning_acknowledgement_is_not_repeated(tmp_path, monkeypatch):
+    helper = controller(monkeypatch)
+    save_fallback_state('alas', {key(): dict(open_clicks=1, warning_ack_clicks=1, dialog_open=True)}, tmp_path)
+    helper._ur_cap_warning.return_value = True
+    result = helper.run(folder=tmp_path)
+    assert not result['returned_main'] and result['dialog_open']
+    helper.device.click.assert_not_called()
+    fallback.ensure_event_page.assert_not_called()
+
+
 def test_unrecognized_dialog_is_captured_and_left_for_review(tmp_path, monkeypatch):
     helper = controller(monkeypatch)
     helper._on_pool.side_effect = [True] + [False] * 20
@@ -225,7 +260,8 @@ def test_closed_game_spends_no_observation_budget(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('previous', [dict(open_clicks=True), dict(cancel_clicks=2),
-                                     dict(dialog_open=1), dict(diagnostics='x')])
+                                     dict(dialog_open=1), dict(diagnostics='x'),
+                                     dict(warning_ack_clicks=True), dict(warning_ack_clicks=1)])
 def test_invalid_observation_journal_fails_before_navigation(tmp_path, monkeypatch, previous):
     helper = controller(monkeypatch)
     save_fallback_state('alas', {key(): previous}, tmp_path)
