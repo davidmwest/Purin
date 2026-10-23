@@ -11,13 +11,14 @@ from datetime import datetime
 from time import monotonic
 
 from module.base.timer import Timer
-from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_SUPPLIES
+from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_MAIN_ENTRY, TEMPESTA_SUPPLIES
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
 from module.logger import logger
 from module.reward.assets import MISSION_EMPTY, MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
 from module.reward.reward import Reward
+from module.ui.assets import GOTO_MAIN
 from module.ui.page import page_event_list, page_main, page_mission, page_sp
 
 SUPPORTED_STORY_EVENTS = frozenset(('event_20251023_cn', 'event_20261022_cn'))
@@ -63,6 +64,90 @@ def save_reward_observations(account, state, folder=REWARD_OBSERVATION_DIR):
 
 
 class EventCompletion(Reward):
+    def _inspect_event_hub(self, record):
+        if not ensure_event_page(self, page_main):
+            record.update(status='blocked', reason='hub_main_unrecognized')
+            return
+        settled = Timer(1, count=2).start()
+        clicks = 0
+        for _ in self.loop(skip_first=False, timeout=20):
+            on_main = self.ui_page_appear(page_main)
+            known = on_main and self.match_template_color(
+                TEMPESTA_MAIN_ENTRY, offset=(3, 3), similarity=self.text_similarity)
+            if not known and not clicks:
+                settled.reset()
+                continue
+            if not settled.reached():
+                continue
+            if not on_main and clicks:
+                record.update(status='observed', reason='event_hub_assets_required')
+                return
+            if not known:
+                continue
+            if clicks >= 2:
+                record.update(status='blocked', reason='event_hub_did_not_open')
+                return
+            self.device.click(TEMPESTA_MAIN_ENTRY)
+            clicks += 1
+            record.update(hub_clicked=True, hub_clicks=clicks)
+            settled = Timer(3, count=4).start()
+        record.update(status='blocked', reason='event_hub_timeout' if clicks else 'event_logo_unrecognized')
+
+    def _return_event_hub_main(self):
+        """Exit only through the existing home template, never unknown hub controls."""
+        settled = Timer(2, count=2)
+        clicks = 0
+        for _ in self.loop(skip_first=False, timeout=10):
+            if self.ui_page_appear(page_main):
+                return True
+            if clicks >= 2 or not settled.reached():
+                continue
+            GOTO_MAIN.clear_offset()
+            if self.match_template_color(GOTO_MAIN, offset=(30, 30)):
+                self.device.click(GOTO_MAIN)
+                clicks += 1
+                settled.reset()
+        return False
+
+    def observe_event_hub(self, event, folder=REWARD_OBSERVATION_DIR):
+        """Open only the observed current-event logo and capture its hub once."""
+        if event not in REWARD_OBSERVATION_EVENTS:
+            return dict(status='unsupported', diagnostics=[])
+        ensure_event_running(self)
+        account = self.config.config_name
+        state = load_reward_observations(account, folder=folder)
+        key = event + ':hub'
+        if key in state:
+            record = dict(state[key])
+            if record.get('status') == 'observing':
+                record.update(status='blocked', reason='previous_hub_observation_interrupted')
+            record['reused'] = True
+            logger.attr('EventHubObservation', record)
+            return record
+        record = dict(status='observing', diagnostics=[], hub_clicked=False, returned_main=False,
+                      started=datetime.now().isoformat(timespec='seconds'))
+        state[key] = record
+        save_reward_observations(account, state, folder=folder)
+        try:
+            self._inspect_event_hub(record)
+            path = save_event_diagnostic(self.device, f'{account}_event_hub_{record["status"]}')
+            if path:
+                record['diagnostics'].append(path)
+            else:
+                record.update(status='blocked', reason='diagnostic_not_saved')
+        except Exception:
+            record.update(status='blocked', reason='hub_observation_exception')
+            raise
+        finally:
+            try:
+                record['returned_main'] = self._return_event_hub_main()
+                if not record['returned_main']:
+                    record['return_reason'] = 'main_return_unrecognized'
+            finally:
+                save_reward_observations(account, state, folder=folder)
+        logger.attr('EventHubObservation', record)
+        return record
+
     def observe_event_main(self, event, folder=REWARD_OBSERVATION_DIR):
         """Capture one fresh recognized main screen to identify the event hub entry."""
         if event not in REWARD_OBSERVATION_EVENTS:
@@ -323,6 +408,7 @@ class EventCompletion(Reward):
         result = dict(story='disabled', rewards='disabled', event_hub_rewards='disabled')
         if collect_rewards:
             result['event_main_observation'] = self.observe_event_main(event)
+            result['event_hub_observation'] = self.observe_event_hub(event)
         # Story detection taps entrances, so gate before constructing its controller.
         if complete_story:
             if event in SUPPORTED_STORY_EVENTS:

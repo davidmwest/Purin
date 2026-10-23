@@ -19,3 +19,9 @@ TEMPESTA_SUPPLIES = Button(
 TEMPESTA_EX_LOCKED = Button(
     area=(84, 447, 101, 467), color=(112, 123, 135), button=(84, 447, 101, 467),
     file=_TEMPESTA, name='TEMPESTA_EX_LOCKED')
+
+# Observed main-screen event entry, 2026-10-22_22-05-26_128271.
+# Only the event logo is retained; no account or main-screen scenery.
+TEMPESTA_MAIN_ENTRY = Button(
+    area=(1126, 370, 1254, 410), color=(63, 85, 137), button=(1140, 370, 1230, 405),
+    file='./assets/en/event_completion/TEMPESTA_MAIN_20261022.png', name='TEMPESTA_MAIN_ENTRY')

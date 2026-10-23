@@ -5,9 +5,11 @@ import pytest
 
 from module.campaign import event_completion as completion
 from module.campaign.event_completion import EventCompletion, load_reward_observations, save_reward_observations
-from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED, TEMPESTA_SUPPLIES
+from module.campaign.event_completion_assets import (
+    TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED, TEMPESTA_MAIN_ENTRY, TEMPESTA_SUPPLIES)
 from module.exception import GameNotRunningError, ScriptError
 from module.reward.assets import MISSION_MULTI, MISSION_SINGLE, MISSION_UNFINISH
+from module.ui.assets import GOTO_MAIN
 from module.ui.page import page_event_list, page_main, page_mission, page_sp
 
 
@@ -56,11 +58,13 @@ def test_mission_claims_do_not_report_the_unsupported_pt_ladder_as_collected():
     helper = controller()
     helper.collect_event_missions = Mock(return_value=True)
     helper.observe_event_main = Mock(return_value={'status': 'observed'})
+    helper.observe_event_hub = Mock(return_value={'status': 'observed'})
     helper.observe_event_rewards = Mock(return_value={'status': 'observed'})
     helper.observe_event_supplies = Mock(return_value={'status': 'observed'})
     result = helper.run('event_20261022_cn')
     assert result == {'story': 'disabled', 'rewards': 'complete', 'event_hub_rewards': 'unsupported',
                       'event_main_observation': {'status': 'observed'},
+                      'event_hub_observation': {'status': 'observed'},
                       'event_reward_observation': {'status': 'observed'},
                       'event_supplies_observation': {'status': 'observed'}}
     helper.observe_event_rewards.assert_called_once_with('event_20261022_cn')
@@ -122,6 +126,7 @@ def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch
     helper = controller()
     order = []
     helper.observe_event_main = Mock(side_effect=lambda event: order.append('main'))
+    helper.observe_event_hub = Mock(side_effect=lambda event: order.append('hub'))
     helper.observe_event_rewards = Mock(side_effect=lambda event: order.append('list'))
     helper.observe_event_supplies = Mock(side_effect=lambda event: order.append('supplies'))
     helper.collect_event_missions = Mock(side_effect=lambda: order.append('missions'))
@@ -129,7 +134,136 @@ def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch
     story.return_value.run.side_effect = lambda **kwargs: order.append('story')
     monkeypatch.setattr(completion, 'EventStory', story)
     helper.run('event_20261022_cn', complete_story=True)
-    assert order == ['main', 'story', 'list', 'supplies', 'missions']
+    assert order == ['main', 'hub', 'story', 'list', 'supplies', 'missions']
+
+
+def test_hub_budget_precedes_navigation_and_is_reused_after_capture(monkeypatch, tmp_path):
+    helper = controller()
+
+    def inspect(record):
+        assert load_reward_observations('f2p', folder=tmp_path)['event_20261022_cn:hub']['status'] == 'observing'
+        record.update(status='observed', reason='event_hub_assets_required', hub_clicked=True)
+
+    helper._inspect_event_hub = Mock(side_effect=inspect)
+    helper._return_event_hub_main = Mock(return_value=True)
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock(return_value='/tmp/hub.png'))
+    first = helper.observe_event_hub('event_20261022_cn', folder=tmp_path)
+    second = helper.observe_event_hub('event_20261022_cn', folder=tmp_path)
+    assert first['status'] == 'observed'
+    assert first['returned_main'] is True
+    assert first['diagnostics'] == ['/tmp/hub.png']
+    assert second['reused'] is True
+    helper._inspect_event_hub.assert_called_once()
+    helper._return_event_hub_main.assert_called_once()
+
+
+def test_interrupted_hub_observation_never_reopens_the_logo(tmp_path):
+    save_reward_observations('f2p', {'event_20261022_cn:hub': {'status': 'observing'}}, folder=tmp_path)
+    helper = controller()
+    helper._inspect_event_hub = Mock()
+    helper._return_event_hub_main = Mock()
+    result = helper.observe_event_hub('event_20261022_cn', folder=tmp_path)
+    assert result['reason'] == 'previous_hub_observation_interrupted'
+    helper._inspect_event_hub.assert_not_called()
+    helper._return_event_hub_main.assert_not_called()
+
+
+@pytest.mark.parametrize('event', ['campaign_main', 'event_20251023_cn'])
+def test_unsupported_hub_never_inspects_or_spends_budget(tmp_path, event):
+    helper = controller()
+    helper._inspect_event_hub = Mock()
+    assert helper.observe_event_hub(event, folder=tmp_path)['status'] == 'unsupported'
+    helper._inspect_event_hub.assert_not_called()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_closed_game_does_not_spend_hub_budget(tmp_path):
+    helper = controller()
+    helper.device.app_is_running.return_value = False
+    with pytest.raises(GameNotRunningError):
+        helper.observe_event_hub('event_20261022_cn', folder=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('on_main,logo', [(False, True), (True, False)])
+def test_hub_entry_requires_both_recognized_main_and_observed_logo(monkeypatch, on_main, logo):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(5)))
+    helper.ui_page_appear = Mock(return_value=on_main)
+    helper.match_template_color = Mock(return_value=logo)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    record = {}
+    helper._inspect_event_hub(record)
+    assert record['status'] == 'blocked'
+    helper.device.click.assert_not_called()
+
+
+def test_hub_entry_never_clicks_unknown_destination(monkeypatch):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(5)))
+    helper.ui_page_appear = Mock(side_effect=[True, False])
+    helper.match_template_color = Mock(return_value=True)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    interval = Mock()
+    interval.start.return_value = interval
+    interval.reached.return_value = True
+    monkeypatch.setattr(completion, 'Timer', Mock(return_value=interval))
+    record = {}
+    helper._inspect_event_hub(record)
+    assert record['status'] == 'observed'
+    helper.device.click.assert_called_once_with(TEMPESTA_MAIN_ENTRY)
+    helper.match_template_color.assert_called_once()
+
+
+def test_unchanged_main_logo_has_only_two_template_verified_entry_clicks(monkeypatch):
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(10)))
+    helper.ui_page_appear = Mock(return_value=True)
+    helper.match_template_color = Mock(return_value=True)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=True))
+    interval = Mock()
+    interval.start.return_value = interval
+    interval.reached.return_value = True
+    factory = Mock(return_value=interval)
+    monkeypatch.setattr(completion, 'Timer', factory)
+    record = {}
+    helper._inspect_event_hub(record)
+    assert record['reason'] == 'event_hub_did_not_open'
+    assert helper.device.click.call_count == record['hub_clicks'] == 2
+    assert all(call.args[0] is TEMPESTA_MAIN_ENTRY for call in helper.device.click.call_args_list)
+    assert [call.args for call in factory.call_args_list] == [(1,), (3,), (3,)]
+    assert factory.call_args_list[1].kwargs == {'count': 4}
+
+
+def test_hub_return_never_clicks_unrecognized_home_controls():
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(5)))
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.match_template_color = Mock(return_value=False)
+    assert helper._return_event_hub_main() is False
+    helper.device.click.assert_not_called()
+
+
+def test_hub_return_requires_home_template_and_verifies_main():
+    helper = controller()
+    helper.loop = Mock(return_value=iter(range(5)))
+    helper.ui_page_appear = Mock(side_effect=[False, True])
+    helper.match_template_color = Mock(return_value=True)
+    assert helper._return_event_hub_main() is True
+    helper.device.click.assert_called_once_with(GOTO_MAIN)
+    helper.match_template_color.assert_called_once_with(GOTO_MAIN, offset=(30, 30))
+
+
+def test_observed_tempesta_main_logo_is_specific_and_click_stays_inside_its_button():
+    from pathlib import Path
+    import numpy as np
+    from PIL import Image
+
+    image = np.asarray(Image.open(Path('assets/en/event_completion/TEMPESTA_MAIN_20261022.png')).convert('RGB'))
+    assert TEMPESTA_MAIN_ENTRY.match_template_color(image, offset=(3, 3), similarity=.85)
+    assert not TEMPESTA_MAIN_ENTRY.match_template_color(image * 0, offset=(3, 3), similarity=.85)
+    x1, y1, x2, y2 = TEMPESTA_MAIN_ENTRY._button
+    assert 1120 <= x1 < x2 <= 1264 and 357 <= y1 < y2 <= 419
 
 
 def test_supplies_budget_is_independent_and_saved_before_any_inspection(monkeypatch, tmp_path):
