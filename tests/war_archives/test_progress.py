@@ -750,16 +750,29 @@ def test_actual_sp_short_reset_still_requires_another_drag_to_physical_top(owner
     owner.device.click.assert_not_called()
 
 
-def test_actual_sp_bottom_with_only_unsupported_cards_is_scrollable_but_not_identified(owner, monkeypatch):
+@pytest.mark.parametrize('known_identities', [False, True])
+def test_actual_sp_bottom_clipped_cards_remain_scrollable_without_entry_proof(owner, monkeypatch,
+                                                                            known_identities):
     from module.base.utils import load_image
     owner.device.image = load_image('tests/war_archives/data/f2p_archive_sp_bottom.png')
     use_en_identities(monkeypatch)
+    if not known_identities:
+        monkeypatch.setattr(p, 'dic_archives_template', {
+            archive: template for archive, template in p.dic_archives_template.items()
+            if archive not in ('war_archives_20241024_cn', 'war_archives_20251023_cn')})
     use_en_buttons(owner)
     assert owner._list_page() and owner._category() == 'sp'
     assert owner._list_geometry() == ((88, 156, 148, 175), (722, 156, 782, 175))
     cards, scroll = owner._settled_list('sp')
-    assert cards == [] and scroll == dict(top=454, bottom=565, position=1.0)
-    owner.device.stuck_record_clear.assert_not_called()
+    if known_identities:
+        assert {card['archive'] for card in cards} == {'war_archives_20241024_cn',
+                                                      'war_archives_20251023_cn'}
+        assert all(card['card_area'] is None and card['completion'] is None
+                   and not card['completion_verified'] for card in cards)
+    else:
+        assert cards == []
+    assert scroll == dict(top=454, bottom=565, position=1.0)
+    assert owner.device.stuck_record_clear.call_count == int(known_identities)
     owner.device.click_record_remove.assert_not_called()
     current, persist = record(), Mock()
     assert owner._drag_scroll(scroll, True, current, persist)
@@ -895,6 +908,184 @@ def stage_screen(mode='normal', page=1, stage='a1', complete=False, raw_keys=80,
 def stage_record():
     return dict(navigation_inputs=[], diagnostics=[], verified_for_navigation=False,
                 verified_for_execution=False)
+
+
+@pytest.mark.parametrize('archive', sorted(p.BALL_PAGE_ARCHIVES))
+def test_ball_control_reuses_original_archive_geometry(owner, archive):
+    from importlib import import_module
+    original = import_module(f'campaign.{archive}.campaign_base').BALL
+    assert owner._archive_ball_control(archive) is original
+    assert owner._archive_ball_control(VISITORS) is None
+
+
+@pytest.mark.parametrize('archive', sorted(p.BALL_PAGE_ARCHIVES))
+@pytest.mark.parametrize('state', ['blue', 'red'])
+def test_original_ball_color_requires_known_undimmed_area(owner, archive, state):
+    # Source-documented color placed in its original observation rectangle;
+    # this is a control regression, not a fabricated live archive fixture.
+    left, top, right, bottom = owner._archive_ball_control(archive).area
+    owner.device.image[top:bottom, left:right] = p.BALL_PAGE_COLORS[state]
+    assert owner._archive_ball_state(archive) == state
+    owner.device.image[top:bottom, left:right] //= 2
+    assert owner._archive_ball_state(archive) is None
+    owner.device.image[top:bottom, left:right] = (30, 220, 40)
+    assert owner._archive_ball_state(archive) is None
+    owner.device.image[:] = 0
+    assert owner._archive_ball_state(archive) is None
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('archive', sorted(p.BALL_PAGE_ARCHIVES))
+def test_ball_routes_match_all_original_selection_rules(owner, archive):
+    from module.war_archives.catalog import get_archive
+    definition = get_archive(archive)
+    for stage in definition.normal_stages + definition.hard_stages:
+        prefix = stage.rstrip('0123456789')
+        number = int(stage[len(prefix):])
+        if archive == 'war_archives_20200917_cn':
+            expected = 'blue' if number in (1, 6) else 'red'
+        else:
+            expected = 'blue' if number <= (1 if prefix in ('ts', 'hts') else 3) else 'red'
+        assert owner._archive_goal_ball(archive, stage) == expected
+        assert owner._archive_stage_page_index(archive, stage) == 1
+    assert owner._archive_goal_ball(archive, 'sp1') is None
+    assert owner._archive_goal_ball(VISITORS, 't1') is None
+
+
+@pytest.mark.parametrize('archive,first_action', [
+    ('war_archives_20200917_cn', 'ball'), ('war_archives_20230525_cn', 'mode')])
+def test_ball_navigation_preserves_original_order_and_reserves_before_each_input(owner, archive, first_action):
+    from module.campaign.campaign_stars import StageGoal
+    target = 'ht2' if first_action == 'ball' else 'ht4'
+    start = dict(stage_screen(stage='t1'), event=archive, ball='blue')
+    if first_action == 'ball':
+        middle = dict(stage_screen(stage='t2'), event=archive, ball='red')
+    else:
+        middle = dict(stage_screen(mode='hard', stage='ht1'), event=archive, ball='blue')
+    final = dict(stage_screen(mode='hard', stage=target), event=archive, ball='red')
+    owner.loop = lambda **kwargs: iter(range(8))
+    owner._read_stage_screen = Mock(side_effect=[start, start, middle, middle, final, final])
+    owner.appear.return_value = True
+    current, events = stage_record(), []
+    owner.device.click.side_effect = lambda button: events.append(('click', button, list(current['navigation_inputs'])))
+    owner._navigate_goal(StageGoal(archive, target, 'hard', 'archive_clear'), current,
+                         lambda: events.append(('save', list(current['navigation_inputs']))))
+    ball = owner._archive_ball_control(archive)
+    expected = [ball, p.SWITCH_1_HARD] if first_action == 'ball' else [p.SWITCH_1_HARD, ball]
+    assert [item[1] for item in events if item[0] == 'click'] == expected
+    assert [item[0] for item in events] == ['save', 'click', 'save', 'click']
+    assert events[0][1] == events[1][2] and events[2][1] == events[3][2]
+    assert current['verified_for_navigation'] and current['verified_for_execution']
+
+
+def test_ball_transition_waits_for_three_seconds_and_fresh_matching_page(owner, monkeypatch):
+    from module.campaign.campaign_stars import StageGoal
+    timers = []
+    class TrackingTimer(ReadyTimer):
+        def __init__(self, limit, count):
+            timers.append((limit, count))
+    monkeypatch.setattr(p, 'Timer', TrackingTimer)
+    archive = 'war_archives_20200917_cn'
+    first = dict(stage_screen(stage='t1'), event=archive, ball='blue')
+    last = dict(stage_screen(stage='t2'), event=archive, ball='red')
+    owner._read_stage_screen = Mock(side_effect=[first, first, None, last, last])
+    current = stage_record()
+    owner._navigate_goal(StageGoal(archive, 't2', 'normal', 'archive_clear'), current, Mock())
+    assert timers == [(1, 2), (3, 2)]
+    assert current['verified_for_navigation']
+    owner.device.click.assert_called_once_with(owner._archive_ball_control(archive))
+
+
+def test_stale_or_reserved_ball_transition_never_replays_and_fresh_target_can_resume(owner):
+    from module.campaign.campaign_stars import StageGoal
+    archive = 'war_archives_20200917_cn'
+    goal = StageGoal(archive, 't2', 'normal', 'archive_clear')
+    owner._read_stage_screen = Mock(return_value=dict(stage_screen(stage='t1'), event=archive, ball='blue'))
+    current = stage_record()
+    owner._navigate_goal(goal, current, Mock())
+    assert current['navigation_inputs'] == ['ball:normal:blue:red']
+    assert not current['verified_for_navigation']
+    owner.device.click.assert_called_once()
+    owner.device.click.reset_mock()
+    owner._navigate_goal(goal, current, Mock())
+    owner.device.click.assert_not_called()
+    owner._read_stage_screen.return_value = dict(stage_screen(stage='t2'), event=archive, ball='red')
+    owner._navigate_goal(goal, current, Mock())
+    assert current['verified_for_navigation']
+    owner.device.click.assert_not_called()
+
+
+def test_unknown_ball_does_not_authorize_color_toggle_or_stage_proof(owner):
+    from module.campaign.campaign_stars import StageGoal
+    archive = 'war_archives_20200917_cn'
+    owner._read_stage_screen = Mock(return_value=dict(stage_screen(stage='t2'), event=archive, ball=None))
+    current = stage_record()
+    owner._navigate_goal(StageGoal(archive, 't2', 'normal', 'archive_clear'), current, Mock())
+    assert not current['verified_for_navigation'] and 'safe_target_return' not in current
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('names,archive,valid', [
+    (['T1', 'HT1'], p.INTERLUDE_ARCHIVE, True),
+    (['HT2'], p.INTERLUDE_ARCHIVE, True),
+    (['T1', 'HT1'], 'war_archives_20230525_cn', False),
+    (['T1', 'HT4'], p.INTERLUDE_ARCHIVE, False),
+    (['T1', 'T1'], p.INTERLUDE_ARCHIVE, False),
+])
+def test_interlude_reader_allows_only_its_known_shared_normal_hard_nodes(owner, monkeypatch, names, archive, valid):
+    owner._archive_identity = Mock(return_value=True)
+    buttons = [Button(area=(200 + i * 100, 200, 220 + i * 100, 220), color=(),
+                      button=(200 + i * 100, 200, 220 + i * 100, 220)) for i in range(len(names))]
+    owner.campaign_match_multi = Mock(side_effect=[buttons, []])
+    monkeypatch.setattr(p, 'Ocr', lambda *args, **kwargs: SimpleNamespace(ocr=lambda image: names))
+    monkeypatch.setattr(p.STAGE_KEYS, 'ocr', Mock(return_value='300/300'))
+    observed = owner._read_stage_screen(archive)
+    if valid:
+        assert observed['mode'] == 'combined' and observed['page'] == 1
+        assert set(observed['stages']) == {name.lower() for name in names}
+    else:
+        assert observed is None
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('mode,target', [('normal', 't1'), ('hard', 'ht1')])
+def test_interlude_proves_target_mode_from_known_node_without_switch_controls(owner, mode, target):
+    from module.campaign.campaign_stars import StageGoal
+    screen = dict(stage_screen(mode='combined', stage='t1'), event=p.INTERLUDE_ARCHIVE)
+    screen['stages']['ht1'] = dict(entrance_area=[600, 200, 620, 220], complete=False)
+    owner._read_stage_screen = Mock(return_value=screen)
+    current = stage_record()
+    owner._navigate_goal(StageGoal(p.INTERLUDE_ARCHIVE, target, mode, 'archive_clear'), current, Mock())
+    assert current['verified_for_navigation'] and current['verified_for_execution']
+    assert current['entrance_area'] == screen['stages'][target]['entrance_area']
+    owner.device.click.assert_not_called()
+    owner.appear.assert_not_called()
+
+
+def test_interlude_missing_hard_node_is_safely_locked_without_inventing_mode_control(owner):
+    from module.campaign.campaign_stars import StageGoal
+    owner._read_stage_screen = Mock(return_value=dict(stage_screen(mode='combined', stage='t1'),
+                                                    event=p.INTERLUDE_ARCHIVE))
+    current = stage_record()
+    owner._navigate_goal(StageGoal(p.INTERLUDE_ARCHIVE, 'ht1', 'hard', 'archive_clear'), current, Mock())
+    assert current['reason'] == 'target_locked_or_unreadable'
+    assert current['safe_target_return']['mode'] == 'hard'
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('phase', ['unknown_read', 'slow_read', 'before_input'])
+def test_stage_navigation_obeys_wall_deadline_even_with_unbounded_legacy_loop(owner, monkeypatch, phase):
+    owner.loop = lambda **kwargs: iter(range(100))
+    ticks = {'unknown_read': [0, 1, 46], 'slow_read': [0, 1, 46],
+             'before_input': [0, 1, 2, 3, 4, 46]}[phase]
+    monkeypatch.setattr(p, 'monotonic', Mock(side_effect=ticks))
+    owner._read_stage_screen = Mock(return_value=None if phase == 'unknown_read' else stage_screen())
+    owner.appear.return_value = True
+    current = stage_record()
+    owner._navigate_goal(stage_goal('c1', 'hard'), current, Mock())
+    assert current['reason'] == 'stage_navigation_unverified'
+    assert not current['verified_for_navigation'] and not current['navigation_inputs']
+    owner.device.click.assert_not_called()
 
 
 TEMPESTA_ARCHIVES = ('war_archives_20231026_cn', 'war_archives_20241024_cn',

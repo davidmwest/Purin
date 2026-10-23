@@ -43,6 +43,8 @@ The stage-information Start button opens fleet preparation; it does not itself d
 
 `EX` and `SP` below are archive-list categories, not battle difficulty. Most SP archives have a single route recorded as Normal. **Interlude of Illusions is an exception:** it has Normal T1–T3 and Hard HT1–HT3. Hard may fall back to the sole Normal route only when an SP archive truly has no Hard stages.
 
+Dreamwaker's Butterfly and Confluence of Nothingness retain their original ball controls, source color checks and stage-selection rules, with bounded waits and durable transition limits. Interlude of Illusions reads T and HT stages on its shared page without an invented mode switch. Each route still requires fresh exact archive, stage, page and key proof before entry.
+
 Stage lists retain the client chapter order. AS/BS/CS/DS/TS/HTS nodes must not be skipped merely because their names end in S: some are actual battle maps. Stage codes are lowercase local campaign identifiers; the game displays their uppercase equivalents.
 
 The client checks predecessor chapter groups, prerequisite story chapters and commander-level requirements separately. Hard preparation also enforces fleet composition and aggregate-stat requirements. These are live account gates, not assumptions that all Hard routes require all Normal stages first. The static catalog does not prove that a stage is unlocked, that a fleet can enter it, or that an account has completed it. No unverified global commander-level unlock is asserted here.

@@ -8,13 +8,14 @@ import os
 import re
 import tempfile
 from datetime import datetime
+from importlib import import_module
 from time import monotonic
 from uuid import uuid4
 
 from module.base.timer import Timer
 from module.base.button import Button
 from module.base.template import Template
-from module.base.utils import save_image, rgb2gray, crop
+from module.base.utils import save_image, rgb2gray, crop, get_color
 from module.campaign.assets import SWITCH_1_HARD, SWITCH_1_NORMAL, CHAPTER_PREV
 from module.campaign.campaign_ui import CampaignUI
 from module.combat.assets import BATTLE_PREPARATION, GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP
@@ -46,6 +47,11 @@ TEMPESTA_SPLIT_PAGE_ARCHIVES = frozenset({
     'war_archives_20241024_cn',
     'war_archives_20251023_cn',
 })
+BALL_PAGE_ARCHIVES = frozenset({'war_archives_20200917_cn', 'war_archives_20230525_cn'})
+INTERLUDE_ARCHIVE = 'war_archives_20240725_cn'
+# Both original archive campaign_base implementations document these colors.
+# Unlike their permissive channel argmax, unknown/dim artwork is not a control.
+BALL_PAGE_COLORS = {'blue': (93, 127, 182), 'red': (186, 116, 124)}
 STAGE_KEYS = Ocr((1188, 107, 1272, 131), lang='cnocr', letter=(255, 255, 255),
                  threshold=96, alphabet='0123456789/', name='ARCHIVE_STAGE_KEYS')
 STAGE_TITLE = Ocr((210, 70, 1100, 100), lang='cnocr', letter=(255, 255, 255),
@@ -555,6 +561,31 @@ class ArchiveProgress(CampaignUI):
             return 1 if int(stage[1:]) <= 3 else 2
         return self._campaign_get_chapter_index(self._campaign_separate_name(stage)[0])
 
+    def _archive_ball_control(self, archive):
+        if archive not in BALL_PAGE_ARCHIVES:
+            return None
+        # Reuse each original archive's exact observation and click rectangles.
+        return import_module(f'campaign.{archive}.campaign_base').BALL
+
+    def _archive_ball_state(self, archive):
+        button = self._archive_ball_control(archive)
+        if button is None:
+            return None
+        actual = get_color(self.device.image, button.area)
+        states = [state for state, expected in BALL_PAGE_COLORS.items()
+                  if max(abs(float(value) - reference) for value, reference in zip(actual, expected)) <= 25]
+        return states[0] if len(states) == 1 else None
+
+    @staticmethod
+    def _archive_goal_ball(archive, stage):
+        match = re.fullmatch(r'(t|ts|ht|hts)([1-6])', stage)
+        if archive not in BALL_PAGE_ARCHIVES or match is None:
+            return None
+        prefix, number = match[1], int(match[2])
+        if archive == 'war_archives_20200917_cn':
+            return 'blue' if number in (1, 6) else 'red'
+        return 'blue' if number <= (1 if prefix in ('ts', 'hts') else 3) else 'red'
+
     def _read_stage_screen(self, archive):
         """Read only unlocked Clear/% stage icons on the exact archive page."""
         from module.war_archives.catalog import get_archive
@@ -586,7 +617,13 @@ class ArchiveProgress(CampaignUI):
             stages[name] = dict(entrance_area=area, complete=index < len(clear))
         modes = [mode for mode in ('normal', 'hard')
                  if stages and set(stages).issubset(definition.stages(mode))]
-        if len(modes) != 1:
+        # Interlude's original campaign_ensure_mode deliberately has no switch:
+        # T and HT are separate nodes on the same page, not separate modes.
+        if archive == INTERLUDE_ARCHIVE:
+            mode = 'combined'
+        elif len(modes) == 1:
+            mode = modes[0]
+        else:
             return None
         try:
             pages = {self._archive_stage_page_index(archive, name) for name in stages}
@@ -595,17 +632,28 @@ class ArchiveProgress(CampaignUI):
         if len(pages) != 1:
             return None
         counter = parse_key_counter(STAGE_KEYS.ocr(image))
-        return dict(event=archive, mode=modes[0], page=pages.pop(), stages=stages,
-                    raw_keys=None if counter is None else counter['raw_keys'],
-                    key_capacity=None if counter is None else counter['key_capacity'])
+        screen = dict(event=archive, mode=mode, page=pages.pop(), stages=stages,
+                      raw_keys=None if counter is None else counter['raw_keys'],
+                      key_capacity=None if counter is None else counter['key_capacity'])
+        if archive in BALL_PAGE_ARCHIVES:
+            screen['ball'] = self._archive_ball_state(archive)
+            if screen['ball'] is None:
+                return None
+        return screen
 
     def _navigate_goal(self, goal, record, persist):
         target = goal.stage.lower()
         desired_page = self._archive_stage_page_index(goal.event, target)
+        desired_ball = self._archive_goal_ball(goal.event, target)
         previous = None
         settled = Timer(1, count=2).start()
+        deadline = monotonic() + 45
         for _ in self.loop(skip_first=False, timeout=45):
+            if monotonic() >= deadline:
+                break
             screen = self._read_stage_screen(goal.event)
+            if monotonic() >= deadline:
+                break
             if screen is None:
                 previous = None
                 settled.reset()
@@ -618,7 +666,10 @@ class ArchiveProgress(CampaignUI):
             if not settled.reached():
                 continue
             self.device.stuck_record_clear()
-            if screen['mode'] == goal.mode and target in screen['stages']:
+            mode_matches = (screen['mode'] == goal.mode or
+                            (goal.event == INTERLUDE_ARCHIVE and screen['mode'] == 'combined'))
+            ball_matches = desired_ball is None or screen.get('ball') == desired_ball
+            if mode_matches and ball_matches and target in screen['stages']:
                 stage = screen['stages'][target]
                 record.update(status='observed', reason='fresh_stage_verified',
                               verified_for_navigation=True, unlocked=True,
@@ -627,10 +678,20 @@ class ArchiveProgress(CampaignUI):
                               verified_for_execution=(screen['key_capacity'] == 300
                                   and type(screen['raw_keys']) is int and screen['raw_keys'] >= 5))
                 return
-            if screen['mode'] != goal.mode:
+            ball_action = False
+            # Preserve Dreamwaker's ball-before-mode and Confluence's
+            # mode-before-ball ordering from their original selection rules.
+            if (not ball_matches and (mode_matches or goal.event == 'war_archives_20200917_cn')
+                    and screen.get('ball') in BALL_PAGE_COLORS):
+                action = self._archive_ball_control(goal.event)
+                transition = f'ball:{screen["mode"]}:{screen["ball"]}:{desired_ball}'
+                ball_action = True
+            elif not mode_matches:
                 # Labels indicate the destination, unlike legacy Switch state names.
                 action = SWITCH_1_HARD if goal.mode == 'hard' else SWITCH_1_NORMAL
                 transition = f'mode:{screen["mode"]}:{goal.mode}'
+            elif not ball_matches:
+                continue
             elif desired_page != screen['page']:
                 action = ARCHIVE_NEXT if desired_page > screen['page'] else CHAPTER_PREV
                 transition = f'page:{goal.mode}:{screen["page"]}:{desired_page}'
@@ -644,13 +705,17 @@ class ArchiveProgress(CampaignUI):
             # A fresh known state may authorize one input, never a repeated click
             # on a stale animation or recovery of an uncertain reserved input.
             if (transition in record['navigation_inputs'] or len(record['navigation_inputs']) >= 6
-                    or not self.appear(action, offset=(3, 3))):
+                    or (not ball_action and not self.appear(action, offset=(3, 3)))):
                 continue
+            if monotonic() >= deadline:
+                break
             record['navigation_inputs'].append(transition)
             persist()
             self.device.click(action)
             previous = None
-            settled.reset()
+            # Original ball controls animate for three seconds. Fresh frames
+            # still have to agree after that wait, under the same wall deadline.
+            settled = Timer(3 if ball_action else 1, count=2).start()
         record.update(status='blocked', reason='stage_navigation_unverified')
 
     def observe_prize(self, archive, prize, folder='./log/war_archives', request_id=None):
