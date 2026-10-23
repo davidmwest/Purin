@@ -247,3 +247,54 @@ def test_list_scan_cache_and_fresh_target_probe(setup, monkeypatch, observed, ob
     assert bool(state.record('_list_scan').get('period')) is observed
     assert len(calls) == (0 if observe_only else 1)
     assert state.used(ArchiveCoordinator(config, state, observer, runner).period) == 0
+
+
+def test_unsupported_only_selection_never_reports_complete(setup, monkeypatch):
+    from module.war_archives import completion
+    config = setup[0]
+    config.Archive_Target = 'Frostfall'
+    config.Archive_Difficulty = 'hard'
+    config.Archive_Goal = 'stories'
+    config.Archive_Prize = 'auto'
+    config.task_delay = Mock()
+    monkeypatch.setattr(completion, 'build_plan', lambda *args: ((), ('Frostfall',)))
+    monkeypatch.setattr(completion, 'ArchiveProgress', lambda **kwargs: pytest.fail('no supported route'))
+    attribute = Mock()
+    monkeypatch.setattr(completion.logger, 'attr', attribute)
+    job = object.__new__(completion.WarArchivesComplete)
+    job.config, job.device = config, object()
+    job.run()
+    attribute.assert_called_once_with('WarArchivesResult', dict(
+        status='unsupported', sorties=0, unsupported_archives=('Frostfall',)))
+    config.task_delay.assert_called_once_with(server_update=True)
+
+
+@pytest.mark.parametrize('mode', ['normal', 'hard'])
+def test_diagnostic_preparation_uses_nonspending_inspection(setup, monkeypatch, mode):
+    from module.war_archives import completion
+    config, state, archive, goal, plan, observer = setup
+    goal = StageGoal(goal.event, goal.stage, mode, goal.goal)
+    plan = ArchivePlan(archive, mode, (goal,), ())
+    config.config_name, config.Archive_Target = 'f2p', 'all'
+    config.Archive_Difficulty, config.Archive_Goal = mode, 'items_and_stories'
+    config.Archive_Prize, config.Archive_ObserveOnly = 'auto', True
+    config.task_delay = Mock()
+    proof = dict(verified_for_navigation=True)
+    observer.proof_for_goal = Mock(return_value=proof)
+    observer.observe_prize = Mock(return_value=dict(verified=False))
+    runner = Mock()
+    runner.run_once.return_value = dict(status='observed', reserved=False)
+    monkeypatch.setattr(completion, 'build_plan', lambda *args: ((plan,), ()))
+    monkeypatch.setattr(completion, 'ArchiveProgress', lambda **kwargs: observer)
+    monkeypatch.setattr(completion, 'ArchiveState', lambda *args: state)
+    monkeypatch.setattr(completion, 'WarArchivesExecution', lambda **kwargs: runner)
+    job = object.__new__(completion.WarArchivesComplete)
+    job.config, job.device = config, object()
+    job.run()
+    args, kwargs = runner.run_once.call_args
+    assert args[0] == goal and args[1] is proof
+    assert args[2](goal) is False
+    assert kwargs['inspect_only'] is (mode == 'normal')
+    assert kwargs['inspect_fleet_only'] is (mode == 'hard')
+    observer.observe_prize.assert_called_once_with(archive, archive.prizes[0])
+    assert state.used(ArchiveCoordinator(config, state, observer, lambda: None).period) == 0

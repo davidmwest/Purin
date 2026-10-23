@@ -1676,7 +1676,7 @@
     },
     "Target": {
       "name": "Archive",
-      "help": "all, an archive ID, its campaign folder, or exact English title. The targeted prize job requires a specific archive."
+      "help": "all, an exact English archive title, or its campaign folder. Choose a specific archive here to target its guaranteed prize. See docs/WAR_ARCHIVES.md for the full catalog."
     },
     "Prize": {
       "name": "Prize",
@@ -1701,7 +1701,7 @@
     },
     "ObserveOnly": {
       "name": "Inspect archive screens only",
-      "help": "Save fresh archive list diagnostics without entering combat or claiming rewards."
+      "help": "Save fresh archive, stage and reward diagnostics without entering combat or claiming rewards."
     }
   },
   "Commission": {

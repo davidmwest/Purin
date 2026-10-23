@@ -162,6 +162,13 @@ class WarArchivesComplete(ModuleBase):
             self.config.Archive_Goal, self.config.Archive_Prize, prize_only)
         if unsupported:
             logger.warning('Archives awaiting map support: ' + ', '.join(unsupported))
+        if not plans:
+            # An unsupported-only selection has no executable route. Empty
+            # iteration must not turn that into a completion claim.
+            logger.attr('WarArchivesResult', dict(status='unsupported', sorties=0,
+                                                 unsupported_archives=unsupported))
+            self.config.task_delay(server_update=True)
+            return
         observer = ArchiveProgress(config=self.config, device=self.device)
         state = ArchiveState(self.config.config_name)
         coordinator = ArchiveCoordinator(
@@ -170,9 +177,22 @@ class WarArchivesComplete(ModuleBase):
         if self.config.Archive_ObserveOnly and plans:
             # Probe the selected goal directly; a full list census can take
             # several minutes and is not needed for identity-bound navigation.
-            # This provider performs no stage Start or prize claim.
+            # The runner inspects preparation without Fleet Go or a reservation.
             proof = observer.proof_for_goal(plans[0].stages[0])
             logger.attr('WarArchivesNavigationProbe', proof)
+            if proof.get('verified_for_navigation') is True:
+                goal = plans[0].stages[0]
+                runner = WarArchivesExecution(config=self.config, device=self.device)
+                result = runner.run_once(
+                    goal, proof, lambda *args, **kwargs: False,
+                    observer.prepare_goal, key_mode='per_entry', key_cost=5,
+                    inspect_only=goal.mode != 'hard', inspect_fleet_only=goal.mode == 'hard')
+                logger.attr('WarArchivesPreparationProbe', dict(goal=goal.key, **result))
+                if (result.get('status') in ('complete', 'incomplete', 'observed')
+                        and self.config.Archive_Goal == 'items_and_stories'
+                        and plans[0].archive.prizes):
+                    prize = plans[0].archive.prizes[0]
+                    logger.attr('WarArchivesPrizeProbe', observer.observe_prize(plans[0].archive, prize))
             self.config.task_delay(success=False)
             return
         if state.record('_list_scan').get('period') != coordinator.period:
@@ -184,6 +204,8 @@ class WarArchivesComplete(ModuleBase):
             else:
                 state.update('_list_scan', period=coordinator.period, journal=observation.get('journal'))
         result = coordinator.run(plans, observe_only=self.config.Archive_ObserveOnly)
+        if unsupported:
+            result['unsupported_archives'] = unsupported
         logger.attr('WarArchivesResult', result)
         if result['status'] == 'deferred':
             # Morale/preemption owns its already scheduled retry.
