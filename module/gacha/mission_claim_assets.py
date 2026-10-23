@@ -12,3 +12,9 @@ BUILD_MISSION_COMPLETE = Button(
 BUILD_MISSION_CLAIM = Button(
     area=(1118, 142, 1224, 172), color=(134, 180, 230),
     button=(1118, 142, 1224, 172), file=_FILE, name='BUILD_MISSION_CLAIM')
+
+# Actual current-event key currency and exact 300 reward, bound to the target row.
+BUILD_MISSION_EVENT_REWARD = Button(
+    area=(699, 104, 804, 210), color=(128, 174, 207),
+    button=(699, 104, 804, 210), file='./assets/en/gacha/BUILD_THREE_EVENT_REWARD_20261023.png',
+    name='BUILD_MISSION_EVENT_REWARD')

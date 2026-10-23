@@ -12,13 +12,15 @@ from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP
 from module.config.utils import get_server_last_update
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, save_event_diagnostic
 from module.exception import ScriptError
-from module.gacha.mission_claim_assets import BUILD_MISSION_CLAIM, BUILD_MISSION_COMPLETE
+from module.gacha.mission_claim_assets import (BUILD_MISSION_CLAIM, BUILD_MISSION_COMPLETE,
+                                               BUILD_MISSION_EVENT_REWARD)
 from module.logger import logger
 from module.reward.reward import Reward
 from module.ui.page import page_main, page_mission
 
 CLAIM_VERSION = 'build-three-claim-v1'
 DIALOGS_MAX = 8
+SHARED_MISSION_ID = 'event_20261022_cn:build-three:event-key-300'
 
 
 def claim_state_path(account, folder='./config/gacha'):
@@ -89,6 +91,22 @@ def earned_build_mission(image):
     if complete is None or claim is None:
         return None
     return Button(area=claim, color=(0, 0, 0), button=claim, name='BUILD_THREE_CLAIM')
+
+
+def shared_build_mission_identity(image):
+    """Exact event-marked Build3 row with the observed 300-key reward."""
+    from module.gacha.mission import locate_build_mission
+    from module.gacha.mission_assets import EVENT_MISSION_MARKER
+
+    row = locate_build_mission(image)
+    if row is None:
+        return None
+    y = row['title_area'][1]
+    if (_match_control(image, EVENT_MISSION_MARKER, (175, y - 39, 197, y + 35)) is not None
+            and _match_control(image, BUILD_MISSION_EVENT_REWARD,
+                               (696, y - 27, 807, y + 85)) is not None):
+        return SHARED_MISSION_ID
+    return None
 
 
 class GachaMissionClaim(Reward):
@@ -182,6 +200,15 @@ class GachaMissionClaim(Reward):
                 settled.reset()
                 continue
             if not record['claim_clicks']:
+                source = getattr(self, '_mirror_source', None)
+                if (row is None and source is not None
+                        and self._period() == record['period']
+                        and self._reward_get_state() is not None):
+                    record.update(status='complete', reason='shared_build_reward_receipt_verified',
+                                  mission_reward_claimed=True, pending_claim=False,
+                                  shared_identity=SHARED_MISSION_ID,
+                                  mirrored_source_tab=source['claim_tab'])
+                    return
                 record.update(status='blocked', reason='build_mission_not_earned_on_tab')
                 return
             if (row is None and record['claim_clicks'] and record['receipt_seen']
@@ -208,6 +235,10 @@ class GachaMissionClaim(Reward):
                 raise ScriptError('Invalid durable Gacha claim proof')
         if type(previous.get('claim_tab', upper)) is not int or previous.get('claim_tab', upper) != upper:
             raise ScriptError('Invalid durable Gacha claim tab')
+        if previous.get('mirrored_source_tab') is not None:
+            source = getattr(self, '_mirror_source', None)
+            if source is None or source.get('claim_tab') != previous['mirrored_source_tab']:
+                raise ScriptError('Shared Gacha claim lacks its owned receipt proof')
         if previous.get('mission_reward_claimed'):
             if not previous.get('returned_main'):
                 # Claim proof survives a failed Home return. Never repeat the
@@ -265,7 +296,7 @@ class GachaMissionClaim(Reward):
         return record
 
 
-    def run(self, folder='./config/gacha', tabs=(4,)):
+    def run(self, folder='./config/gacha', tabs=(4,), shared_identity=None):
         """Claim each independently proven Build3 tab with its own journal."""
         if (not isinstance(tabs, (list, tuple)) or not tabs
                 or any(type(tab) is not int or tab not in (4,6) for tab in tabs)
@@ -284,9 +315,27 @@ class GachaMissionClaim(Reward):
 
         # An Event receipt may be open while Daily has not been claimed yet.
         # Resume the owning tab before navigating to any fresh claim tab.
-        ordered = sorted(tabs, key=lambda upper: not pending(upper))
+        def verified_source(upper):
+            previous = state.get(prefix + (':tab6' if upper == 6 else ''), {})
+            return (shared_identity == SHARED_MISSION_ID
+                    and previous.get('claim_clicks') == 1
+                    and previous.get('receipt_seen') is True
+                    and previous.get('mission_reward_claimed') is True)
+
+        # A completed source receipt must also precede its mirrored target on
+        # later restarts, when there is no longer a pending receipt to sort first.
+        ordered = sorted(tabs, key=lambda upper: (not pending(upper), not verified_source(upper)))
         results=[]
         for upper in ordered:
+            # Only an owned, verified receipt for the exact previously observed
+            # shared mission can authorize its settled absence on another tab.
+            self._mirror_source = None
+            if shared_identity == SHARED_MISSION_ID and set(tabs) == {4, 6}:
+                self._mirror_source = next((item for item in results
+                    if item.get('claim_clicks') == 1 and item.get('receipt_seen') is True
+                    and item.get('mission_reward_claimed') is True
+                    and item.get('period') == self._period()
+                    and item.get('claim_tab') != upper), None)
             result=self._run_tab(folder=folder,upper=upper)
             results.append(result)
             if not result.get('returned_main'):

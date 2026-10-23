@@ -364,3 +364,95 @@ def test_verified_claim_can_recover_failed_home_without_reclaim(tmp_path, monkey
     navigate.assert_called_once_with(helper, page_main)
     helper._collect.assert_not_called()
     helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('name', ['build_three_earned_daily.png', 'build_three_earned_event.png'])
+def test_actual_mirrored_event_mission_identity_requires_same_title_marker_and_reward(name):
+    image = screenshot(name)
+    assert mission_claim.shared_build_mission_identity(image) == mission_claim.SHARED_MISSION_ID
+    assert earned_build_mission(image) is not None
+    for area in [(175, 87, 197, 163), (699, 104, 804, 210), (257, 128, 389, 153)]:
+        changed = image.copy()
+        x1, y1, x2, y2 = area
+        changed[y1:y2, x1:x2] = 0
+        assert mission_claim.shared_build_mission_identity(changed) is None
+
+
+def test_actual_claimed_event_list_does_not_itself_prove_a_reward():
+    image = screenshot('build_three_event_after_claim.png')
+    assert mission.locate_build_mission(image) is None
+    assert mission_claim.shared_build_mission_identity(image) is None
+
+
+@pytest.mark.parametrize('proof,receipt,source_clicks,valid_list,expected', [
+    (mission_claim.SHARED_MISSION_ID, True, 1, True, True),
+    (None, True, 1, True, False),
+    ('different-reward', True, 1, True, False),
+    (mission_claim.SHARED_MISSION_ID, False, 1, True, False),
+    (mission_claim.SHARED_MISSION_ID, True, 0, True, False),
+    (mission_claim.SHARED_MISSION_ID, True, 1, False, False),
+])
+def test_mirrored_counterpart_needs_exact_prior_identity_owned_receipt_and_fresh_valid_absence(
+        tmp_path, monkeypatch, proof, receipt, source_clicks, valid_list, expected):
+    helper = controller()
+    helper.device.image = screenshot('build_three_event_after_claim.png')
+    helper._daily_list = Mock(return_value=valid_list)
+    helper._reward_get_state = Mock(return_value=object())
+    helper.loop = lambda **kwargs: iter(range(4))
+    monkeypatch.setattr(mission_claim, 'Timer', ImmediateTimer)
+    monkeypatch.setattr(mission_claim, 'ensure_event_running', Mock())
+    monkeypatch.setattr(mission_claim, 'ensure_event_page', Mock(return_value=True))
+    source = record(claim_tab=4, claim_clicks=source_clicks, receipt_seen=receipt,
+                    mission_reward_claimed=True, returned_main=True, status='complete')
+    save_claim_state('alas', {day_key(): source}, tmp_path)
+    result = helper.run(folder=tmp_path, tabs=(4, 6), shared_identity=proof)
+    assert result['mission_reward_claimed'] is expected
+    assert result['tab_results'][6]['claim_clicks'] == 0
+    if expected:
+        target = load_claim_state('alas', tmp_path)[day_key() + ':tab6']
+        assert target['mirrored_source_tab'] == 4
+        assert target['shared_identity'] == mission_claim.SHARED_MISSION_ID
+        assert helper.run(folder=tmp_path, tabs=(4, 6), shared_identity=proof)['mission_reward_claimed']
+    helper.device.click.assert_not_called()
+
+
+def test_still_earned_counterpart_is_not_assumed_claimed_from_other_tab(monkeypatch):
+    helper = controller()
+    helper.device.image = screenshot('build_three_earned_event.png')
+    helper._daily_list = Mock(return_value=True)
+    helper._reward_get_state = Mock(return_value=object())
+    helper._mirror_source = dict(claim_tab=4)
+    helper.loop = lambda **kwargs: iter(range(3))
+    monkeypatch.setattr(mission_claim, 'Timer', ImmediateTimer)
+    audit = record()
+    helper._collect(audit, Mock())
+    assert audit['claim_clicks'] == 1 and not audit['mission_reward_claimed']
+    assert helper.device.click.call_count == 1
+
+
+def test_pending_event_source_then_daily_mirror_remains_verified_on_same_day_restart(tmp_path, monkeypatch):
+    helper = controller()
+    helper.device.image = screenshot('build_three_event_after_claim.png')
+    helper._daily_list = Mock(return_value=True)
+    helper._reward_get_state = Mock(return_value=object())
+    helper.loop = lambda **kwargs: iter(range(4))
+    monkeypatch.setattr(mission_claim, 'Timer', ImmediateTimer)
+    monkeypatch.setattr(mission_claim, 'ensure_event_running', Mock())
+    monkeypatch.setattr(mission_claim, 'ensure_event_page', Mock(return_value=True))
+    source = record(claim_tab=6, claim_clicks=1, receipt_seen=True, pending_claim=True)
+    save_claim_state('alas', {day_key() + ':tab6': source}, tmp_path)
+    original = helper._collect
+    def finish_source_or_verify_mirror(audit, persist):
+        if helper._claim_upper == 6:
+            audit.update(status='complete', mission_reward_claimed=True, pending_claim=False)
+        else:
+            original(audit, persist)
+    helper._collect = finish_source_or_verify_mirror
+    first = helper.run(folder=tmp_path, tabs=(4, 6), shared_identity=mission_claim.SHARED_MISSION_ID)
+    assert first['mission_reward_claimed']
+    assert list(first['tab_results']) == [6, 4]
+    assert first['tab_results'][4]['mirrored_source_tab'] == 6
+    again = helper.run(folder=tmp_path, tabs=(4, 6), shared_identity=mission_claim.SHARED_MISSION_ID)
+    assert again['mission_reward_claimed']
+    assert list(again['tab_results']) == [6, 4]
+    helper.device.click.assert_not_called()

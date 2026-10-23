@@ -21,13 +21,15 @@ KEY = f'{PERIOD}:{CURRENT_EVENT}:{ORDER_VERSION}'
 def controller(monkeypatch):
     helper = GachaMissionOrders.__new__(GachaMissionOrders)
     helper.config = SimpleNamespace(config_name='alas', Scheduler_ServerUpdate='00:00')
-    helper.device = SimpleNamespace(click=Mock())
+    helper.device = SimpleNamespace(click=Mock(), screenshot=Mock())
     helper.ui_get_current_page = Mock()
     helper._period = Mock(return_value=PERIOD)
     helper._capture_mission = Mock()
     helper._authorization = Mock(return_value=dict(current=0, earned=False))
     helper._submit_order = Mock()
+    helper._submission_return = Mock(return_value=True)
     monkeypatch.setattr(mission_orders, 'ensure_event_page', Mock(return_value=True))
+    monkeypatch.setattr(mission_orders, 'ensure_event_running', Mock())
     return helper
 
 
@@ -418,3 +420,77 @@ def test_verified_reward_with_failed_home_resumes_only_claim_recovery(tmp_path, 
     helper.ui_get_current_page.assert_not_called()
     helper._submit_order.assert_not_called()
     claim.assert_called_once_with(folder=tmp_path, tabs=(4,))
+
+
+@pytest.mark.parametrize('proof', [dict(submission_pending=True), dict(submit_clicks=1),
+                                   dict(orders_reserved=3)])
+def test_pending_spend_recovery_bypasses_banner_before_fresh_credit(tmp_path, monkeypatch, proof):
+    helper = controller(monkeypatch)
+    helper.ui_get_current_page.side_effect = AssertionError('generic UI must not precede owned recovery')
+    save_order_state('alas', {KEY: proof}, tmp_path)
+    helper._authorization.return_value = dict(current=3, earned=True)
+    claim = Mock(return_value=dict(status='complete', mission_reward_claimed=True, returned_main=True))
+    monkeypatch.setattr(mission_orders, 'GachaMissionClaim', Mock(return_value=SimpleNamespace(run=claim)))
+    monkeypatch.setattr(mission_orders, 'get_server_last_update', Mock(return_value=__import__('datetime').datetime.fromisoformat(PERIOD)))
+    assert mission_orders.mission_claim_recovery_due(helper.config, tmp_path)
+    result = helper.run(folder=tmp_path)
+    assert result['mission_reward_claimed']
+    helper.device.screenshot.assert_called_once()
+    helper._submission_return.assert_called_once()
+    helper.ui_get_current_page.assert_not_called()
+    helper._submit_order.assert_not_called()
+
+
+def test_unknown_pending_submission_page_never_probes_generic_ui_or_reenters_build(tmp_path, monkeypatch):
+    helper = controller(monkeypatch)
+    helper._submission_return.return_value = False
+    save_order_state('alas', {KEY: dict(submit_clicks=1, submission_pending=True, orders_reserved=3)}, tmp_path)
+    result = helper.run(folder=tmp_path)
+    assert result['reason'] == 'pending_submission_page_unrecognized'
+    assert result['submit_clicks'] == 1 and result['orders_reserved'] == 3
+    assert result['order_dialog_open'] and result['submission_pending']
+    helper.ui_get_current_page.assert_not_called()
+    helper._authorization.assert_not_called()
+    helper._submit_order.assert_not_called()
+    mission_orders.ensure_event_page.assert_not_called()
+
+
+def test_post_confirm_fresh_frames_recognize_orders_instead_of_only_event_pool(monkeypatch):
+    helper = controller(monkeypatch)
+    del helper._submission_return
+    helper.ui_page_appear = Mock(return_value=False)
+    helper.loop = lambda **kwargs: iter(range(3))
+    result = SimpleNamespace(orders_page_present=Mock(side_effect=[False, True]),
+                             return_to_main=Mock(return_value=True))
+    from module.gacha import mission_result
+    monkeypatch.setattr(mission_result, 'GachaSubmissionResult', Mock(return_value=result))
+    assert helper._pool_after_dialog(SimpleNamespace(on_event_pool=Mock(return_value=False)), submission=True)
+    assert result.orders_page_present.call_count == 2
+    result.return_to_main.assert_called_once()
+    helper.device.click.assert_not_called()
+
+
+def test_legacy_shared_identity_uses_only_own_exact_authorized_local_captures(tmp_path, monkeypatch):
+    from pathlib import Path
+    import shutil
+    from module.gacha.mission_claim import SHARED_MISSION_ID
+    destination = tmp_path / 'log/event_completion'
+    destination.mkdir(parents=True)
+    data = Path(__file__).parent / 'data'
+    paths = []
+    for tab in ('daily', 'event'):
+        path = destination / f'2026-10-23_01-50-00_alas_gacha_authorized_{tab}_credit.png'
+        shutil.copyfile(data / f'build_three_earned_{tab}.png', path)
+        paths.append(str(path))
+    for tab in ('daily', 'event'):
+        image = np.array(Image.open(data / f'build_three_earned_{tab}.png').convert('RGB'))
+        assert mission_orders.earned_build_mission(image) is not None
+        assert mission_orders.shared_build_mission_identity(image) == SHARED_MISSION_ID
+    monkeypatch.chdir(tmp_path)
+    audit = dict(diagnostics=paths)
+    assert mission_orders.prior_shared_mission_identity(audit, 'alas') == SHARED_MISSION_ID
+    assert mission_orders.prior_shared_mission_identity(audit, 'f2p') is None
+    assert mission_orders.prior_shared_mission_identity(dict(diagnostics=paths[:1]), 'alas') is None
+    outside = tmp_path / 'outside_alas_gacha_authorized_event_credit.png'
+    shutil.copyfile(paths[1], outside)
+    assert mission_orders.prior_shared_mission_identity(dict(diagnostics=[paths[0], str(outside)]), 'alas') is None

@@ -4,13 +4,16 @@ import os
 import re
 import tempfile
 
+import cv2
+
 from module.base.timer import Timer
 from module.config.utils import get_server_last_update
-from module.eventstory.eventstory import ensure_event_page
+from module.eventstory.eventstory import ensure_event_page, ensure_event_running
 from module.exception import ScriptError
 from module.gacha.mission import (CURRENT_EVENT, GachaMissionOrderObserver,
                                   read_build_mission, remaining_mission_builds)
-from module.gacha.mission_claim import GachaMissionClaim, earned_build_mission
+from module.gacha.mission_claim import (GachaMissionClaim, earned_build_mission,
+                                        shared_build_mission_identity, SHARED_MISSION_ID)
 from module.gacha.mission_submit_assets import (COUNT_WITNESSES, COUNT_MINUS, COUNT_PLUS,
                                                  COUNT_CANCEL, COUNT_CONFIRM)
 from module.logger import logger
@@ -111,7 +114,39 @@ def mission_claim_recovery_due(config, folder='./config/gacha'):
     period = get_server_last_update(config.Scheduler_ServerUpdate).isoformat()
     key = f'{period}:{CURRENT_EVENT}:{ORDER_VERSION}'
     previous = load_order_state(config.config_name, folder).get(key, {})
-    return type(previous.get('mission_credit')) is int and previous['mission_credit'] == 3
+    return ((type(previous.get('mission_credit')) is int and previous['mission_credit'] == 3)
+            or previous.get('submission_pending') is True
+            or (type(previous.get('submit_clicks')) is int and previous['submit_clicks'] == 1)
+            or (type(previous.get('orders_reserved')) is int and previous['orders_reserved'] > 0)
+            or (type(previous.get('orders_submitted')) is int and previous['orders_submitted'] > 0))
+
+
+def prior_shared_mission_identity(record, account):
+    """Recover exact prior identity from this job's authorized tab captures.
+
+    Older journals predate the identity field. Only their own local diagnostic
+    paths, carrying the exact account and authorization tag, are eligible.
+    """
+    identities = {item.get('tab'): item.get('shared_identity')
+                  for item in record.get('credit_evidence', []) if isinstance(item, dict)}
+    if all(identities.get(tab) == SHARED_MISSION_ID for tab in ('daily', 'event')):
+        return SHARED_MISSION_ID
+    base = os.path.realpath('./log/event_completion')
+    for tab in ('daily', 'event'):
+        suffix = f'_{account}_gacha_authorized_{tab}_credit.png'
+        for path in reversed(record.get('diagnostics', [])):
+            if (not isinstance(path, str) or not path.endswith(suffix)
+                    or os.path.dirname(os.path.realpath(path)) != base):
+                continue
+            image = cv2.imread(path)
+            if image is not None:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                if earned_build_mission(image) is not None:
+                    identities[tab] = shared_build_mission_identity(image)
+            break
+    if all(identities.get(tab) == SHARED_MISSION_ID for tab in ('daily', 'event')):
+        return SHARED_MISSION_ID
+    return None
 
 
 class GachaMissionOrders(GachaMissionOrderObserver):
@@ -131,6 +166,10 @@ class GachaMissionOrders(GachaMissionOrderObserver):
                     if numeric is not None:
                         value = dict(current=numeric['current'], total=3,
                                      earned=False, tab=name)
+                if value is not None:
+                    identity = shared_build_mission_identity(self.device.image)
+                    if identity is not None:
+                        value['shared_identity'] = identity
             if value is None or value != previous:
                 previous, frames = value, 1 if value else 0
                 settled.reset()
@@ -156,7 +195,11 @@ class GachaMissionOrders(GachaMissionOrderObserver):
 
     def _claim(self, record, folder):
         record['claim_status'] = 'resuming'
-        result = GachaMissionClaim(config=self.config, device=self.device).run(folder=folder, tabs=tuple(record.get('claim_tabs', [4])))
+        options = dict(folder=folder, tabs=tuple(record.get('claim_tabs', [4])))
+        shared = prior_shared_mission_identity(record, self.config.config_name)
+        if shared is not None:
+            options['shared_identity'] = shared
+        result = GachaMissionClaim(config=self.config, device=self.device).run(**options)
         record.update(mission_reward_claimed=bool(result.get('mission_reward_claimed')),
                       claim_status=result.get('status'), returned_main=bool(result.get('returned_main')))
         record['diagnostics'].extend(result.get('diagnostics', []))
@@ -197,10 +240,12 @@ class GachaMissionOrders(GachaMissionOrderObserver):
                 return value
         return None
 
-    def _pool_after_dialog(self, banner):
+    def _pool_after_dialog(self, banner, submission=False):
         frames = 0
         settled = Timer(1, count=2).start()
         for _ in self.loop(skip_first=False, timeout=12):
+            if submission and self._submission_return():
+                return True
             if not banner.on_event_pool():
                 frames = 0
                 settled.reset()
@@ -209,6 +254,14 @@ class GachaMissionOrders(GachaMissionOrderObserver):
             if frames >= 2 and settled.reached():
                 return True
         return False
+
+    def _submission_return(self):
+        from module.gacha.mission_result import GachaSubmissionResult
+
+        result = GachaSubmissionResult(config=self.config, device=self.device)
+        if result.orders_page_present():
+            return result.return_to_main()
+        return self.ui_page_appear(page_main) or self.ui_page_appear(page_mission)
 
     def _cancel_order(self, record, persist, banner):
         # This exact Cancel is the observed count dialog, never a purchase or
@@ -291,7 +344,7 @@ class GachaMissionOrders(GachaMissionOrderObserver):
         persist()
         # A return to Build is not proof that orders were accepted. Only fresh
         # mission credit below can prove submission and authorize reward claim.
-        if self._pool_after_dialog(banner):
+        if self._pool_after_dialog(banner, submission=True):
             record['order_dialog_open'] = False
         else:
             record.update(status='blocked', reason='submission_result_unrecognized')
@@ -330,7 +383,9 @@ class GachaMissionOrders(GachaMissionOrderObserver):
             return dict(previous, reused=True)
         # Generic page discovery may dismiss GET_ITEMS without recording this
         # claim's receipt. Resume verified credit directly through its journal.
-        if credit != 3:
+        pending_submission = (previous.get('submission_pending') or previous.get('submit_clicks')
+                              or previous.get('orders_reserved') or previous.get('orders_submitted'))
+        if credit != 3 and not pending_submission:
             self.ui_get_current_page()
         record = dict(status='reading', reason='fresh_build_mission_required', period=period,
                       event=CURRENT_EVENT, diagnostics=[], mission_tabs=[],
@@ -341,7 +396,8 @@ class GachaMissionOrders(GachaMissionOrderObserver):
         record.update({name: previous[name] for name in (
             'submit_clicks', 'orders_submitted', 'submission_pending',
             'mission_credit', 'diagnostics', 'dialog_opens', 'adjust_clicks', 'cancel_clicks',
-            'orders_reserved', 'warning_ack_clicks', 'submit_click_performed', 'claim_tabs') if name in previous})
+            'orders_reserved', 'warning_ack_clicks', 'submit_click_performed', 'claim_tabs',
+            'credit_evidence') if name in previous})
         state[key] = record
 
         def persist():
@@ -349,6 +405,14 @@ class GachaMissionOrders(GachaMissionOrderObserver):
 
         persist()
         try:
+            if credit != 3 and pending_submission:
+                ensure_event_running(self)
+                self.device.screenshot()
+                if not self._submission_return():
+                    record.update(status='blocked', reason='pending_submission_page_unrecognized',
+                                  order_dialog_open=True)
+                    return record
+                record['order_dialog_open'] = False
             # Durable credit can outlive a claimed row that Reward removed.
             # The independent claim journal resumes receipts or verifies its
             # own completed claim; it cannot submit or open Build.
