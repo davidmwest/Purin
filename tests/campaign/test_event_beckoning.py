@@ -20,9 +20,9 @@ from module.ui.assets import GOTO_MAIN
 from module.ui.page import page_main
 
 
-def controller(frames=8):
+def controller(frames=8, account='f2p'):
     helper = BeckoningTickets.__new__(BeckoningTickets)
-    helper.config = SimpleNamespace(config_name='f2p')
+    helper.config = SimpleNamespace(config_name=account)
     helper.device = SimpleNamespace(click=Mock(), screenshot=Mock(), app_is_running=Mock(return_value=True),
                                     image=None, display_scale=1)
     helper.loop = Mock(side_effect=lambda **kwargs: iter(range(frames)))
@@ -336,37 +336,41 @@ def test_rejected_card_click_is_bounded_without_unknown_confirmation(immediate):
     helper.device.click.assert_called_once_with(BECKONING_FIRST_LOCK)
 
 
-@pytest.mark.parametrize('event,account', [(EVENT, 'alas'), ('campaign_main', 'f2p')])
+@pytest.mark.parametrize('event,account', [
+    (EVENT, 'other_bot'), ('campaign_main', 'f2p'), ('campaign_main', 'alas'),
+    ('event_20251218_cn', 'f2p'), ('event_20251218_cn', 'alas'),
+])
 def test_unrequested_account_or_event_has_no_navigation_or_audit(tmp_path, event, account):
-    helper = controller()
-    helper.config.config_name = account
+    helper = controller(account=account)
     assert helper.run(event, folder=tmp_path)['status'] == 'unsupported'
     assert list(tmp_path.iterdir()) == []
     helper.device.app_is_running.assert_not_called()
     helper.device.click.assert_not_called()
 
 
-def test_closed_game_does_not_spend_any_budget(tmp_path):
-    helper = controller()
+@pytest.mark.parametrize('account', ['alas', 'f2p'])
+def test_closed_game_does_not_spend_any_budget(tmp_path, account):
+    helper = controller(account=account)
     helper.device.app_is_running.return_value = False
     with pytest.raises(GameNotRunningError):
         helper.run(EVENT, folder=tmp_path)
     assert list(tmp_path.iterdir()) == []
 
 
-def test_run_preserves_row_audits_and_returns_through_known_helper(immediate, monkeypatch, tmp_path):
+@pytest.mark.parametrize('account', ['alas', 'f2p'])
+def test_run_preserves_row_audits_and_returns_through_known_helper(immediate, monkeypatch, tmp_path, account):
     from module.campaign import event_beckoning_story
     stories = Mock()
     stories.resume_viewer.return_value = True
     stories.collect_milestones.return_value = True
     monkeypatch.setattr(event_beckoning_story, 'BeckoningStoryContinuation', Mock(return_value=stories))
     previous = dict(monthly=dict(clicks=1, pending=False, verified=True))
-    save_reward_observations('f2p', {EVENT + ':beckoning_ticket_collection': dict(rows=previous)}, folder=tmp_path)
-    helper = controller()
+    save_reward_observations(account, {EVENT + ':beckoning_ticket_collection': dict(rows=previous)}, folder=tmp_path)
+    helper = controller(account=account)
     helper._on_choice.side_effect = [False, True]
 
     def navigate(audit, **kwargs):
-        saved = load_reward_observations('f2p', folder=tmp_path)
+        saved = load_reward_observations(account, folder=tmp_path)
         assert saved[EVENT + ':beckoning_ticket_collection']['rows'] == previous
         audit['status'] = 'observed'
 
@@ -383,4 +387,57 @@ def test_run_preserves_row_audits_and_returns_through_known_helper(immediate, mo
     stories.collect_milestones.assert_called_once_with()
     stories.run_cards.assert_called_once_with()
     assert navigator._return_event_hub_main.call_count == 2
-    assert load_reward_observations('f2p', folder=tmp_path)[EVENT + ':beckoning_ticket_collection']['returned_main'] is True
+    assert load_reward_observations(account, folder=tmp_path)[EVENT + ':beckoning_ticket_collection']['returned_main'] is True
+
+
+def test_main_resumes_its_own_story_budget_without_using_f2p_proof(immediate, monkeypatch, tmp_path):
+    from module.campaign.event_beckoning_story import BeckoningStoryContinuation
+
+    ticket_key = EVENT + ':beckoning_ticket_collection'
+    story_key = EVENT + ':beckoning_stories_v1'
+    main_card = dict(clicks=1, pending=True, complete=False, story_seen=True,
+                     tickets_before=2, unlock_paid=True, handler_calls=2)
+    main_rows = dict(monthly=dict(clicks=1, pending=False, verified=True))
+    save_reward_observations('alas', {
+        ticket_key: dict(rows=main_rows, invocations=2),
+        story_key: dict(cards={'1': main_card}, milestones={}),
+    }, folder=tmp_path)
+    f2p_state = {
+        ticket_key: dict(rows={'victories': dict(clicks=1, pending=True, tickets_before=0)}),
+        story_key: dict(cards={str(index): dict(clicks=1, complete=True, pending=False)
+                              for index in range(1, 7)}, milestones={}, final_reward_collected=True),
+    }
+    save_reward_observations('f2p', f2p_state, folder=tmp_path)
+    f2p_before = (tmp_path / 'f2p-event-rewards.json').read_bytes()
+    captured = []
+
+    def observe_own_cards(stories):
+        captured.append(deepcopy(stories.ledger))
+        assert stories.cards == {'1': main_card}
+        # Keep the existing pending action; this test must not authorize another
+        # input or copy the other account's completed cards/reward proof.
+        stories.record.update(status='observed', story_complete=False,
+                              reason='remaining_stories_require_evidence_or_tickets')
+        stories.persist()
+
+    monkeypatch.setattr(BeckoningStoryContinuation, 'resume_viewer', Mock(return_value=True))
+    monkeypatch.setattr(BeckoningStoryContinuation, 'observe_unlock_payment', Mock(return_value=True))
+    monkeypatch.setattr(BeckoningStoryContinuation, 'collect_milestones', Mock(return_value=True))
+    monkeypatch.setattr(BeckoningStoryContinuation, 'run_cards', observe_own_cards)
+    navigator = Mock()
+    navigator._return_event_hub_main.return_value = True
+    monkeypatch.setattr(beckoning, 'EventCompletion', Mock(return_value=navigator))
+    helper = controller(account='alas')
+    helper._enter_choice = Mock(return_value=True)
+    helper._collect = Mock(return_value=True)
+
+    audit = helper.run(EVENT, folder=tmp_path)
+
+    assert audit['rows'] == main_rows and audit['invocations'] == 3
+    assert audit['stories'] == captured[0]
+    assert audit['story_complete'] is False and not audit.get('final_reward_collected')
+    saved = load_reward_observations('alas', folder=tmp_path)
+    assert saved[story_key]['cards'] == {'1': main_card}
+    assert not saved[story_key].get('final_reward_collected')
+    assert (tmp_path / 'f2p-event-rewards.json').read_bytes() == f2p_before
+    helper.device.click.assert_not_called()

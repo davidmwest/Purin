@@ -16,6 +16,7 @@ from module.logger import logger
 from module.reward.reward import Reward
 
 EVENT = 'event_20261022_cn'
+SUPPORTED_ACCOUNTS = frozenset(('alas', 'f2p'))
 ROWS = (('monthly', BECKONING_MONTHLY_EARNED, BECKONING_MONTHLY_COLLECT),
         ('victories', BECKONING_VICTORY_MISSION, BECKONING_VICTORY_COLLECT))
 RECEIPTS_MAX = 8
@@ -191,7 +192,7 @@ class BeckoningTickets(Reward):
         record['unlock'] = dict(status='deferred', reason='ticket_count_unstable')
 
     def run(self, event, folder='./config/stars'):
-        if event != EVENT or self.config.config_name != 'f2p':
+        if event != EVENT or self.config.config_name not in SUPPORTED_ACCOUNTS:
             return dict(status='unsupported', diagnostics=[], story_complete=False)
         ensure_event_running(self)
         state = load_reward_observations(self.config.config_name, folder=folder)
