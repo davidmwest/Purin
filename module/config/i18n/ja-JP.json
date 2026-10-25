@@ -1918,6 +1918,10 @@
       "name": "Dorm.Feed.name",
       "help": "Dorm.Feed.help"
     },
+    "FeedWhenAwakened": {
+      "name": "Dorm.FeedWhenAwakened.name",
+      "help": "Dorm.FeedWhenAwakened.help"
+    },
     "FeedFilter": {
       "name": "Dorm.FeedFilter.name",
       "help": "Dorm.FeedFilter.help"

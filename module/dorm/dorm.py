@@ -331,11 +331,20 @@ class RewardDorm(UI):
         """
         has_food = [self._dorm_has_food(button) for button in self._dorm_food.buttons]
         amount = self._dorm_food_ocr.ocr(self.device.image)
+        counter = OCR_FILL.ocr(self.device.image)
+        if (not isinstance(amount, list) or len(amount) != len(FOOD_FEED_AMOUNT)
+                or any(type(a) is not int or not 0 <= a <= 999999 for a in amount)
+                or not isinstance(counter, (tuple, list)) or len(counter) != 3
+                or any(type(a) is not int for a in counter)):
+            logger.warning('Dorm food counts unreadable; skip feeding')
+            return [], -1
+        current, fill, total = counter
+        if not (0 <= current <= total <= 999999 and total > 0
+                and 0 <= fill <= total and current + fill == total):
+            logger.warning(f'Dorm food capacity inconsistent: {counter}; skip feeding')
+            return [], -1
         amount = [a if hf else 0 for a, hf in zip(amount, has_food)]
         food = [Food(feed=f, amount=a) for f, a in zip(FOOD_FEED_AMOUNT, amount)]
-        _, fill, total = OCR_FILL.ocr(self.device.image)
-        if total == 0:
-            fill = -1
         logger.info(f'Dorm food: {[f.amount for f in food]}, to fill: {fill}')
         return food, fill
 
@@ -350,28 +359,35 @@ class RewardDorm(UI):
         timeout = Timer(1.5, count=3).start()
         food: t.List[Food] = []
         fill: int = 0
+        previous = None
+        settled = False
         for _ in self.loop():
             # End
             if timeout.reached():
-                logger.warning('Get dorm food timeout, probably because food is empty')
+                logger.warning('Get dorm food timeout; no settled food count')
                 break
 
             if self.handle_info_bar():
+                previous = None
                 continue
 
             # Get
             food, fill = self.dorm_food_get()
             if fill == -1:
+                previous = None
                 continue
-            if sum([f.amount for f in food]) > 0:
+            snapshot = (tuple(f.amount for f in food), fill)
+            if snapshot == previous:
+                settled = True
                 break
-        if fill < 0:
-            fill = 0
+            previous = snapshot
+        if not settled:
+            return False
 
         FOOD_FILTER.load(self.config.Dorm_FeedFilter)
         for selected in FOOD_FILTER.apply(food):
             button = self._dorm_food.buttons[food.index(selected)]
-            if selected.amount > 0 and fill > selected.feed:
+            if selected.amount > 0 and fill >= selected.feed:
                 count = min(fill // selected.feed, selected.amount)
                 self._dorm_feed_click(button=button, count=count)
                 return True
@@ -519,14 +535,14 @@ class RewardDorm(UI):
         self.dorm_buy_food_confirm()
         self.dorm_feed_quit()
 
-    def dorm_run(self, feed=True, collect=True, buy_furniture=False):
+    def dorm_run(self, feed=True, collect=True, buy_furniture=False, feed_when_awakened=False):
         """
         Pages:
             in: Any page
             out: page_dorm
         """
-        if not feed and not collect and not buy_furniture:
-            return
+        if not feed and not collect and not buy_furniture and not feed_when_awakened:
+            return False
 
         self.ui_ensure(page_dormmenu)
         self.handle_info_bar()
@@ -537,6 +553,11 @@ class RewardDorm(UI):
         #     if not feed and not buy_furniture:
         #         return
         self.ui_goto(page_dorm, skip_first_screenshot=True)
+
+        if not feed and feed_when_awakened:
+            # Read live residents and EXP, never the inventory's synthesized EXP fields.
+            from module.dorm.awakening import DormAwakening
+            feed = DormAwakening(self.config, self.device).can_feed()
 
         # Feed first to handle DORM_INFO
         # DORM_INFO may cover dorm coins and loves
@@ -553,6 +574,7 @@ class RewardDorm(UI):
         if buy_furniture:
             logger.hr('Dorm buy furniture', level=1)
             BuyFurniture(self.config, self.device).run()
+        return feed
 
     def get_dorm_ship_amount(self):
         """
@@ -629,17 +651,21 @@ class RewardDorm(UI):
             in: Any page
             out: page_dorm
         """
-        if not self.config.Dorm_Feed and not self.config.Dorm_Collect \
+        conditional = getattr(self.config, 'Dorm_FeedWhenAwakened', False)
+        if not self.config.Dorm_Feed and not conditional and not self.config.Dorm_Collect \
                 and not self.config.BuyFurniture_Enable:
             self.config.Scheduler_Enable = False
             self.config.task_stop()
 
-        self.dorm_run(feed=self.config.Dorm_Feed,
-                      collect=self.config.Dorm_Collect,
-                      buy_furniture=self.config.BuyFurniture_Enable)
+        fed = self.dorm_run(feed=self.config.Dorm_Feed,
+                           collect=self.config.Dorm_Collect,
+                           buy_furniture=self.config.BuyFurniture_Enable,
+                           feed_when_awakened=conditional)
 
         # Scheduler
         ships = self.get_dorm_ship_amount()
         delay = self.cal_dorm_delay(ships)
+        if conditional and not self.config.Dorm_Feed and not fed:
+            delay = min(delay, 30)
         logger.info(f'Ships in dorm: {ships}, task to delay: {delay}')
         self.config.task_delay(minute=delay)

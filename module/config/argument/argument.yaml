@@ -514,6 +514,7 @@ Research:
 Dorm:
   Collect: true
   Feed: true
+  FeedWhenAwakened: false
   FeedFilter: 20000 > 10000 > 5000 > 3000 > 2000 > 1000
 BuyFurniture:
   Enable: false

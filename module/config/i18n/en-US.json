@@ -1918,6 +1918,10 @@
       "name": "Restock Dorm Snacks",
       "help": ""
     },
+    "FeedWhenAwakened": {
+      "name": "Refill When All Residents Are Awakened",
+      "help": "When Restock Dorm Snacks is off, refill using owned food only after a fresh check confirms every resident on both floors has reached cognitive awakening and can still gain EXP. Ships below Lv100, capped or unreadable ships, and empty training rosters skip bulk feeding and retry in 30 minutes. The one-snack daily mission is separate."
+    },
     "FeedFilter": {
       "name": "Snack Filter",
       "help": "Generally does not need to be modified or re-arranged but can do so if desired"

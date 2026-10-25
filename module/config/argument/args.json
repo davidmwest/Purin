@@ -11119,6 +11119,10 @@
         "type": "checkbox",
         "value": true
       },
+      "FeedWhenAwakened": {
+        "type": "checkbox",
+        "value": false
+      },
       "FeedFilter": {
         "type": "textarea",
         "value": "20000 > 10000 > 5000 > 3000 > 2000 > 1000"
