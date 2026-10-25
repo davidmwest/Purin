@@ -38,6 +38,12 @@ def test_awakening_boundaries_require_live_exp(level):
     assert not level_can_gain_exp(level)
 
 
+@pytest.mark.parametrize('level', [1, 11, 70, 91, 99])
+def test_lower_levels_require_fresh_info_instead_of_guessing_a_missing_digit(level):
+    assert needs_exp_read(level)
+    assert not level_can_gain_exp(level)
+
+
 @pytest.mark.parametrize('level', [None, 0, -1, 1, 11, 70, 99, 125, 126, True, '101'])
 def test_unknown_or_capped_levels_do_not_authorize_food(level):
     assert not level_can_gain_exp(level)
@@ -166,17 +172,18 @@ def test_underread_residents_cannot_pass_by_repeating(gate, monkeypatch):
     assert gate.device.screenshot.call_count == awakening.CENSUS_READS
 
 
-def test_dorm_requires_occupied_training_floor_even_if_rest_is_valid_empty(gate):
-    gate._food_floor = Mock(side_effect=[[], []])
+def test_dorm_requires_occupied_training_floor_without_inspecting_rest(gate):
+    gate._food_floor = Mock(return_value=[])
     with pytest.raises(DormReadError, match='training floor is empty'):
         gate._food_residents()
-    assert gate._food_floor.call_args_list[0].args == ('train',)
-    assert gate._food_floor.call_args_list[1].args == ('rest',)
+    gate._food_floor.assert_called_once_with('train')
 
 
-def test_rest_may_be_explicitly_empty(gate):
-    gate._food_floor = Mock(side_effect=[[ship()], []])
-    assert len(gate._food_residents()) == 1
+def test_food_census_only_reads_the_training_floor(gate):
+    training = [ship()]
+    gate._food_floor = Mock(return_value=training)
+    assert gate._food_residents() == training
+    gate._food_floor.assert_called_once_with('train')
 
 
 def test_bad_census_still_closes_the_resident_list(gate):
@@ -186,8 +193,8 @@ def test_bad_census_still_closes_the_resident_list(gate):
     gate.dorm_ship_list_quit.assert_called_once()
 
 
-def test_every_floor_is_checked_before_food_is_permitted(gate):
-    gate._food_residents = Mock(return_value=[ship(level=101), ship('Tirpitz', 125, 'rest')])
+def test_capped_training_resident_denies_food(gate):
+    gate._food_residents = Mock(return_value=[ship(level=101), ship('Tirpitz', 125)])
     gate._food_boundary_exp = Mock()
     assert not gate.can_feed()
     gate._food_boundary_exp.assert_not_called()
@@ -195,17 +202,27 @@ def test_every_floor_is_checked_before_food_is_permitted(gate):
 
 
 def test_all_nonboundary_residents_allow_food_without_inventory(gate):
-    gate._food_residents = Mock(return_value=[ship(level=101), ship('Tirpitz', 119, 'rest')])
+    gate._food_residents = Mock(return_value=[ship(level=101), ship('Tirpitz', 119)])
     gate._food_boundary_exp = Mock()
     assert gate.can_feed()
     gate._food_boundary_exp.assert_not_called()
 
 
-def test_low_floor_read_never_authorizes_food_from_a_missing_leading_digit(gate):
-    gate._food_residents = Mock(return_value=[ship(level=11)])
+def test_unawakened_rest_residents_are_irrelevant_to_food(gate, monkeypatch):
+    def floor(image, place):
+        if place == 'rest':
+            return [ship('Tanikaze', 91, 'rest'), ship('Hamakaze', 95, 'rest')], 6
+        return [ship(level=101)], 6
+
+    reads = Mock(side_effect=floor)
+    monkeypatch.setattr(awakening, 'read_dorm_floor', reads)
+    monkeypatch.setattr(awakening.OCR_DORM_SHIP_COUNT, 'ocr', Mock(return_value=(1, 5, 6)))
     gate._food_boundary_exp = Mock()
-    assert not gate.can_feed()
+    assert gate.can_feed()
     gate._food_boundary_exp.assert_not_called()
+    assert reads.call_count == 4
+    assert all(call.args[1] == 'train' for call in reads.call_args_list)
+    assert all(call.args == ('train',) for call in gate.dorm_ship_list_set_tab.call_args_list)
 
 
 def test_fresh_resident_change_after_dock_checks_denies_food(gate):
@@ -230,8 +247,8 @@ def test_final_census_rejects_new_portrait_with_the_same_name_and_level(gate):
     assert not gate.can_feed()
 
 
-def test_low_or_capped_resident_skips_unnecessary_boundary_searches(gate):
-    gate._food_residents = Mock(return_value=[ship(level=100), ship('Tanikaze', 91, 'rest')])
+def test_capped_resident_skips_unnecessary_boundary_searches(gate):
+    gate._food_residents = Mock(return_value=[ship(level=100), ship('Tanikaze', 125)])
     gate._food_boundary_exp = Mock()
     assert not gate.can_feed()
     gate._food_boundary_exp.assert_not_called()
@@ -323,6 +340,40 @@ def info_reader(monkeypatch, exp=('20/500', '20/500'), names=('Haruna', 'Haruna'
     reader.ocr_exp.ocr.side_effect = exp
     monkeypatch.setattr(awakening, 'InfoReader', Mock(return_value=reader))
     return reader
+
+
+@pytest.mark.parametrize('level', [1, 11, 70, 91, 99])
+def test_lower_level_training_ship_with_exact_fresh_agreeing_exp_allows_food(gate, monkeypatch, level):
+    resident = ship(level=level)
+    gate._food_residents = Mock(return_value=[resident])
+    gate._food_boundary_card = Mock(return_value=object())
+    gate.inventory_open_card = Mock(return_value=(object(), object(), 4))
+    info_reader(monkeypatch, levels=(level, level))
+    assert gate.can_feed()
+    gate._food_boundary_card.assert_called_once_with(resident)
+    assert gate.inventory_open_card.call_count == 2
+    assert gate._food_residents.call_count == 2
+
+
+@pytest.mark.parametrize('floor_level,info_level', [(1, 101), (11, 111), (15, 115), (25, 125)])
+def test_missing_leading_digit_cannot_match_higher_info_level(gate, monkeypatch, floor_level, info_level):
+    gate._food_residents = Mock(return_value=[ship(level=floor_level)])
+    gate._food_boundary_card = Mock(return_value=object())
+    gate.inventory_open_card = Mock(return_value=(object(), object(), 4))
+    info_reader(monkeypatch, levels=(info_level, info_level))
+    assert not gate.can_feed()
+    assert gate.inventory_open_card.call_count == 1
+
+
+@pytest.mark.parametrize('level', [1, 91, 100, 105, 110, 115, 120])
+@pytest.mark.parametrize('exp', ['500/MAX', '500/500', 'unreadable'])
+def test_training_ship_waiting_for_awakening_or_without_proven_exp_room_denies_food(
+        gate, monkeypatch, level, exp):
+    gate._food_residents = Mock(return_value=[ship(level=level)])
+    gate._food_boundary_card = Mock(return_value=object())
+    gate.inventory_open_card = Mock(return_value=(object(), object(), 4))
+    info_reader(monkeypatch, exp=(exp, exp), levels=(level, level))
+    assert not gate.can_feed()
 
 
 def test_fresh_positive_agreeing_boundary_exp_allows_food(gate, monkeypatch):

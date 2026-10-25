@@ -1919,8 +1919,8 @@
       "help": "Dorm.Feed.help"
     },
     "FeedWhenAwakened": {
-      "name": "Dorm.FeedWhenAwakened.name",
-      "help": "Dorm.FeedWhenAwakened.help"
+      "name": "訓練中の全艦船が経験値を獲得できる場合に補充",
+      "help": "通常の餌補充がオフの場合、訓練階の全艦船が経験値を獲得でき、認識覚醒待ちではないことを毎回確認し、所持している食糧だけを補充します。Lv100未満でも経験値の余地を確認できれば対象になります。レベル上限、読み取り不能、訓練階が空の場合は補充せず、30分後に再確認します。休憩階の艦船は判定に影響しません。毎日の餌1個の任務は別に実行します。"
     },
     "FeedFilter": {
       "name": "Dorm.FeedFilter.name",

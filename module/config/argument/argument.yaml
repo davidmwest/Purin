@@ -514,6 +514,7 @@ Research:
 Dorm:
   Collect: true
   Feed: true
+  # Refill only when every training-floor ship can gain EXP; the rest floor is irrelevant.
   FeedWhenAwakened: false
   FeedFilter: 20000 > 10000 > 5000 > 3000 > 2000 > 1000
 BuyFurniture:

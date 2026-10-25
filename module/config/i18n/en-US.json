@@ -1919,8 +1919,8 @@
       "help": ""
     },
     "FeedWhenAwakened": {
-      "name": "Refill When All Residents Are Awakened",
-      "help": "When Restock Dorm Snacks is off, refill using owned food only after a fresh check confirms every resident on both floors has reached cognitive awakening and can still gain EXP. Ships below Lv100, capped or unreadable ships, and empty training rosters skip bulk feeding and retry in 30 minutes. The one-snack daily mission is separate."
+      "name": "Refill When Training Ships Can Gain EXP",
+      "help": "When Restock Dorm Snacks is off, refill using owned food only after a fresh check confirms every training-floor ship can gain EXP and none is waiting for awakening. Ships below Lv100 are eligible when EXP room is verified. Capped or unreadable ships, and an empty training floor, skip bulk feeding and retry in 30 minutes. Rest-floor ships do not affect this check. The one-snack daily mission is separate."
     },
     "FeedFilter": {
       "name": "Snack Filter",

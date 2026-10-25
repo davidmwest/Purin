@@ -100,23 +100,25 @@ def census_key(ships, count):
 
 
 def needs_exp_read(level):
-    return level in AWAKENING_LEVELS
+    # Low dorm OCR may lose a leading 1, so it needs exact fresh Info proof too.
+    return type(level) is int and (1 <= level <= 100 or level in AWAKENING_LEVELS)
 
 
 def level_can_gain_exp(level):
-    """Prove awakening and room for EXP without any saved inventory data.
+    """Prove room for EXP directly from a trustworthy nonboundary dorm level.
 
-    A dorm level can lose its leading 1 (101 reads as 11), so a low read never
-    authorizes food. It either is unawakened or cannot be trusted for this gate.
+    Levels below 100 can gain EXP, but a dorm read can lose its leading 1
+    (101 reads as 11). Those levels require exact matching fresh Info instead.
     """
     return type(level) is int and 101 <= level < 125 and not needs_exp_read(level)
 
 
 class DormAwakening(DormRest, LevelingFleet, Inventory):
-    """Inspects both floors and, at awakening boundaries, the actual ship Info tab.
+    """Inspects training residents and, when needed, the actual ship Info tab.
 
     This helper never changes residents, awakens ships, buys food, or writes inventory.
     Its caller retains control over feeding and the separate one-snack daily mission.
+    The rest floor recovers morale without food and does not gate training EXP.
     """
 
     def _food_floor(self, place):
@@ -143,13 +145,12 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
         self.dorm_ship_list_enter()
         try:
             train = self._food_floor('train')
-            rest = self._food_floor('rest')
         finally:
             # A denied census still needs to close this modal before ui_ensure.
             self.dorm_ship_list_quit()
         if not train:
             raise DormReadError('Dorm food: training floor is empty')
-        return train + rest
+        return train
 
     def _food_search_cards(self):
         # Retain all positions, including unreadable levels, so an unread duplicate
@@ -233,13 +234,13 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
         return True
 
     def can_feed(self):
-        """Permit food only with awakened, EXP-active residents on both floors."""
+        """Permit food only while every training resident can keep gaining EXP."""
         try:
             residents = self._food_residents()
-            # Read all residents before opening any details: one unawakened or
-            # ambiguous low level, or one fully capped ship, already forbids food.
-            if any(type(ship.level) is not int or not 100 <= ship.level < 125 for ship in residents):
-                logger.info('Dorm food: a resident is unawakened, capped at 125, or has an uncertain low level')
+            # Read every training resident before details: an invalid or fully
+            # capped level already forbids food. Low levels need fresh Info proof.
+            if any(type(ship.level) is not int or not 1 <= ship.level < 125 for ship in residents):
+                logger.info('Dorm food: a training resident is capped at 125 or has an unreadable level')
                 return False
             for resident in residents:
                 if level_can_gain_exp(resident.level):
@@ -254,7 +255,7 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
             final = self._food_residents()
             if not same_residents(residents, final):
                 raise DormReadError('Dorm food: residents changed during awakening checks')
-            logger.info('Dorm food: every resident is awakened with room for EXP; owned food may fill the store')
+            logger.info('Dorm food: every training resident has room for EXP; owned food may fill the store')
             return True
         except DormReadError as exc:
             logger.warning(f'Dorm food stays unchanged: {exc}')
