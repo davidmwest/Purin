@@ -5,26 +5,83 @@ from functools import lru_cache
 from module.inventory.info import InfoReader, parse_exp
 from module.inventory.inventory import Inventory
 from module.leveling.fleet import LevelingFleet, area_button, card_name_area
-from module.leveling.plan import load_ship_data
+from module.leveling.plan import load_ship_data, name_key
 from module.logger import logger
 from module.mood.dorm_rest import (DIALOG_SLOTS, DormReadError, DormRest, OCR_DORM_SHIP_COUNT,
                                    read_dorm_floor)
-from module.mood.ship import name_key
+from module.mood.ship import name_similarity, portrait_similarity
 from module.ocr.ocr import Ocr
 from module.retire.scanner import ShipScanner
 from module.ui.page import page_dock, page_dorm
 
 CENSUS_READS = 4
 AWAKENING_LEVELS = (100, 105, 110, 115, 120)
+FOOD_PORTRAIT_SIMILARITY = .995
 
 
 @lru_cache(maxsize=1)
-def short_ship_names():
-    return frozenset(name_key(name) for name in load_ship_data() if len(name_key(name)) == 2)
+def ship_name_keys():
+    return frozenset(name_key(name) for name in load_ship_data())
 
 
 def valid_name(key):
-    return len(key) >= 3 or key in short_ship_names()
+    return len(key) >= 3 or key in ship_name_keys()
+
+
+@lru_cache(maxsize=256)
+def canonical_names(key):
+    """Known identities consistent with an exact name or a scrolling fragment.
+
+    A complete base name identifies the base ship, rather than all of its META
+    and retrofit variants. A fragment such as "Deviluke" is ambiguous.
+    Unknown/new names may still be checked by their portrait and strong overlap.
+    """
+    if key in ship_name_keys():
+        return frozenset((key,))
+    return frozenset(known for known in ship_name_keys() if len(key) >= 4 and key in known)
+
+
+def same_name(first, second):
+    """Accept scrolling text only when it supports the same ship identity."""
+    first, second = name_key(first), name_key(second)
+    if not valid_name(first) or not valid_name(second):
+        return False
+    known_first, known_second = canonical_names(first), canonical_names(second)
+    if len(known_first) > 1 or len(known_second) > 1:
+        return False
+    if first == second:
+        return True
+    if known_first and known_second:
+        return known_first == known_second
+    # A full base name plus unread suffix is not scrolling evidence: "Arizona
+    # METn" may be Arizona META. Do not let generic substring similarity turn
+    # an unresolved variant into the known base identity.
+    if ((first in ship_name_keys() and first in second)
+            or (second in ship_name_keys() and second in first)):
+        return False
+    return name_similarity(first, second) >= 1.
+
+
+def valid_portrait(signature):
+    # Uniform or missing histograms cannot corroborate a roster identity.
+    return (isinstance(signature, (tuple, list)) and len(signature) == 144
+            and all(type(value) is int and 0 <= value <= 255 for value in signature)
+            and sum(value > 0 for value in signature) >= 4
+            and min(signature) < max(signature))
+
+
+def same_residents(first, second):
+    """Compare fresh cards in order, retaining floor, level and portrait identity.
+
+    Dorm names animate horizontally. Their exact OCR strings need not repeat,
+    but neither text overlap nor a portrait alone may authorize feeding.
+    """
+    return len(first) == len(second) and all(
+        before.place == after.place and before.level == after.level
+        and valid_portrait(before.sig) and valid_portrait(after.sig)
+        and portrait_similarity(before.sig, after.sig) >= FOOD_PORTRAIT_SIMILARITY
+        and same_name(before.name, after.name)
+        for before, after in zip(first, second))
 
 
 def census_key(ships, count):
@@ -37,7 +94,7 @@ def census_key(ships, count):
             or vacant < 0 or current + vacant != total or len(ships) != current):
         return None
     if any(type(ship.level) is not int or not 1 <= ship.level <= 125
-           or not valid_name(name_key(ship.name)) for ship in ships):
+           or not valid_name(name_key(ship.name)) or not valid_portrait(ship.sig) for ship in ships):
         return None
     return tuple((name_key(ship.name), ship.level) for ship in ships), tuple(count)
 
@@ -73,11 +130,12 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
             ships, _ = read_dorm_floor(self.device.image, place)
             count = OCR_DORM_SHIP_COUNT.ocr(self.device.image)
             current = census_key(ships, count)
-            if current is not None and current == previous:
+            if (current is not None and previous is not None
+                    and current[1] == previous[1] and same_residents(previous[0], ships)):
                 logger.info(f'Dorm food {place}: {[(ship.name, ship.level) for ship in ships]}, '
                             f'occupied {count[0]}/{count[2]}')
                 return ships
-            previous = current
+            previous = (ships, tuple(count)) if current is not None else None
         raise DormReadError(f'Dorm food {place}: no two complete agreeing resident reads')
 
     def _food_residents(self):
@@ -194,8 +252,7 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
             # Detail checks leave the dorm for the dock. A person may have moved
             # ships meanwhile; only the same fresh census may authorize food.
             final = self._food_residents()
-            identity = lambda ships: [(ship.place, name_key(ship.name), ship.level) for ship in ships]
-            if identity(final) != identity(residents):
+            if not same_residents(residents, final):
                 raise DormReadError('Dorm food: residents changed during awakening checks')
             logger.info('Dorm food: every resident is awakened with room for EXP; owned food may fill the store')
             return True

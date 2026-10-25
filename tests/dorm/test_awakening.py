@@ -4,13 +4,15 @@ from unittest.mock import Mock
 import pytest
 
 import module.dorm.awakening as awakening
-from module.dorm.awakening import DormAwakening, census_key, level_can_gain_exp, needs_exp_read
+from module.dorm.awakening import (DormAwakening, census_key, level_can_gain_exp, needs_exp_read,
+                                   same_residents)
 from module.mood.dorm_rest import DormReadError, DormShip
 from module.ui.page import page_dock, page_dorm
 
 
 def ship(name='Haruna', level=101, place='train'):
-    return DormShip(place=place, name=name, level=level, mood=150, speed=40)
+    return DormShip(place=place, name=name, level=level, mood=150, speed=40,
+                    sig=list(range(144)))
 
 
 @pytest.fixture
@@ -74,6 +76,88 @@ def test_census_needs_two_new_agreeing_frames(gate, monkeypatch):
     gate.dorm_ship_list_set_tab.assert_called_once_with('train')
 
 
+def test_scrolling_names_can_agree_with_stable_portrait_level_and_counts(gate, monkeypatch):
+    names = ['Nana Astar Devilu', 'ana Astar Deviluk']
+    reads = Mock(side_effect=[([ship(name, 114)], 6) for name in names])
+    monkeypatch.setattr(awakening, 'read_dorm_floor', reads)
+    monkeypatch.setattr(awakening.OCR_DORM_SHIP_COUNT, 'ocr', Mock(return_value=(1, 5, 6)))
+    assert gate._food_floor('train')[0].name == names[-1]
+    assert gate.device.screenshot.call_count == 2
+
+
+def test_scrolling_ocr_edge_error_still_requires_strong_name_overlap():
+    assert same_residents([ship('Nana Astar Devilu')], [ship('lana Astar Deviluk')])
+
+
+@pytest.mark.parametrize('first,second', [
+    ('Nana Astar Devilu', 'ana Astar Deviluk'),
+    ('ana Astar Deviluk', 'na Astar Deviluke'),
+    ('Nana Astar Devilu', 'Astar Deviluke'),
+    ('Future Ship Alpha', 'uture Ship Alpha'),
+    ('Future Ship Alpha', 'Future Ship Alpha'),
+])
+def test_observed_scrolling_fragments_and_unlisted_ship_names_remain_supported(first, second):
+    assert same_residents([ship(first)], [ship(second)])
+
+
+@pytest.mark.parametrize('first,second', [
+    ('Nana Astar Deviluke', 'Momo Astar Deviluke'),
+    ('Arizona', 'Arizona META'),
+    ('Arizona', 'Arizona METn'),
+    ('Hiei', 'Hiei META'),
+    ('Hiei', 'Hiei METn'),
+    ('Cleveland', 'Cleveland µ'),
+    ('Cleveland', 'Cleveland μ'),
+    ('Nana Astar Deviluke', 'Deviluke'),
+    ('Deviluke', 'Deviluke'),
+    ('Ning Hai Retrofit', 'ing Hai Retrofit'),
+    ('Ning Hai', 'Ning Hai Retrotit'),
+    ('Haruna', 'Unrelated New Ship'),
+    ('Future Ship Alpha', 'Future Ship Beta'),
+])
+def test_ambiguous_fragment_or_changed_name_denies_even_with_same_portrait(first, second):
+    assert not same_residents([ship(first)], [ship(second)])
+
+
+@pytest.mark.parametrize('signature', [None, [], [1] * 144, [0] * 144, [0] * 143 + [255],
+                                       [0] * 143, [-1] + list(range(143))])
+def test_missing_or_blank_portrait_never_authorizes_identity(signature):
+    resident = ship()
+    resident.sig = signature
+    assert census_key([resident], (1, 5, 6)) is None
+    assert not same_residents([resident], [ship()])
+
+
+def test_changed_portrait_denies_even_when_name_and_level_repeat():
+    after = ship()
+    after.sig.reverse()
+    assert not same_residents([ship()], [after])
+
+
+def test_census_does_not_accept_name_overlap_without_stable_portrait(gate, monkeypatch):
+    original, changed = ship('Nana Astar Devilu'), ship('ana Astar Deviluk')
+    changed.sig.reverse()
+    reads = Mock(side_effect=[([original], 6), ([changed], 6)] * 2)
+    monkeypatch.setattr(awakening, 'read_dorm_floor', reads)
+    monkeypatch.setattr(awakening.OCR_DORM_SHIP_COUNT, 'ocr', Mock(return_value=(1, 5, 6)))
+    with pytest.raises(DormReadError, match='no two complete agreeing'):
+        gate._food_floor('train')
+
+
+def test_complete_count_must_also_agree_across_frames(gate, monkeypatch):
+    monkeypatch.setattr(awakening, 'read_dorm_floor', Mock(return_value=([ship()], 6)))
+    monkeypatch.setattr(awakening.OCR_DORM_SHIP_COUNT, 'ocr',
+                        Mock(side_effect=[(1, 5, 6), (1, 4, 5)] * 2))
+    with pytest.raises(DormReadError):
+        gate._food_floor('train')
+
+
+def test_order_and_floor_stay_part_of_resident_identity():
+    original = [ship('Haruna'), ship('Tirpitz')]
+    assert not same_residents(original, original[::-1])
+    assert not same_residents([ship()], [ship(place='rest')])
+
+
 def test_underread_residents_cannot_pass_by_repeating(gate, monkeypatch):
     monkeypatch.setattr(awakening, 'read_dorm_floor', Mock(return_value=([ship()], 6)))
     monkeypatch.setattr(awakening.OCR_DORM_SHIP_COUNT, 'ocr', Mock(return_value=(2, 4, 6)))
@@ -126,6 +210,22 @@ def test_low_floor_read_never_authorizes_food_from_a_missing_leading_digit(gate)
 
 def test_fresh_resident_change_after_dock_checks_denies_food(gate):
     gate._food_residents = Mock(side_effect=[[ship(level=100)], [ship(level=101)]])
+    gate._food_boundary_exp = Mock(return_value=True)
+    assert not gate.can_feed()
+
+
+def test_final_census_accepts_scrolling_text_with_unchanged_residents(gate):
+    gate._food_residents = Mock(side_effect=[
+        [ship('Nana Astar Devilu', 114)], [ship('na Astar Deviluke', 114)]])
+    gate._food_boundary_exp = Mock()
+    assert gate.can_feed()
+    gate._food_boundary_exp.assert_not_called()
+
+
+def test_final_census_rejects_new_portrait_with_the_same_name_and_level(gate):
+    after = ship(level=100)
+    after.sig.reverse()
+    gate._food_residents = Mock(side_effect=[[ship(level=100)], [after]])
     gate._food_boundary_exp = Mock(return_value=True)
     assert not gate.can_feed()
 
