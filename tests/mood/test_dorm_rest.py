@@ -11,7 +11,7 @@ import module.config.server as server
 from module.base.button import Button
 from module.base.utils import crop
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
-from module.mood.dorm_rest import DormRest, DormReadError, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
+from module.mood.dorm_rest import DormRest, DormReadError, PickerOverlapError, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
     picker_fleets_ended, picker_is_top, picker_low_mood_ended, picker_name_similarity, picker_row_tops, \
     read_dorm_floor, read_picker_row, ship_list_tab, update_moods
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
@@ -147,7 +147,7 @@ def test_picker_alignment_rejects_an_estimate_that_would_skip_a_new_row(monkeypa
         dorm.picker_align(227, [76, 303])
 
 
-def test_picker_scan_keeps_one_full_row_of_overlap(monkeypatch):
+def test_picker_scan_uses_half_row_gestures_to_allow_adb_overshoot(monkeypatch):
     dorm = DormRest.__new__(DormRest)
     dorm.device = SimpleNamespace(image=None, click_record_clear=Mock())
     dorm.dock_favourite_set = Mock()
@@ -162,9 +162,132 @@ def test_picker_scan_keeps_one_full_row_of_overlap(monkeypatch):
 
     found = dorm.picker_scan([])
 
-    dorm.picker_scroll.assert_called_once_with(0, rows=1)
+    dorm.picker_scroll.assert_called_once_with(0, rows=0.5)
     assert {entry.row for entry in found} == {0, 1, 2}
     assert len(found) == 21
+
+
+def physical_picker(monkeypatch, overshoot):
+    """Run real scan/alignment against a list that moves farther than the requested drag."""
+    dorm = DormRest.__new__(DormRest)
+    state = {'offset': 0, 'up': [], 'resets': 0}
+
+    def drag(start, end, **kwargs):
+        distance = start[1] - end[1]
+        if distance > 0:
+            state['up'].append(distance)
+            state['offset'] += distance * overshoot
+        else:
+            state['resets'] += 1
+            state['offset'] = max(0, state['offset'] + distance * overshoot)
+
+    def tops(image):
+        return [76 + row * 227 - state['offset'] for row in range(10)
+                if 0 <= 76 + row * 227 - state['offset'] <= 640]
+
+    def read(image, top, row):
+        actual = round((top + state['offset'] - 76) / 227)
+        names = [f'Row {actual} ship {col}' for col in range(7)]
+        if actual == 0:
+            names[0] = ''
+        if actual == 1:
+            names[6] = 'Tirpitz'
+        if actual == 2:
+            names[5] = 'Isokaze'
+        return [card(row * 7 + col, name, fleet=1, remove=actual == 0 and col == 0)
+                for col, name in enumerate(names)]
+
+    dorm.device = SimpleNamespace(image=None, drag=Mock(side_effect=drag), screenshot=Mock(),
+                                  click_record_clear=Mock())
+    dorm.handle_dock_cards_loading = Mock()
+    dorm.dock_favourite_set = Mock()
+    dorm.dock_filter_set = Mock()
+    dorm.dock_sort_method_dsc_set = Mock()
+    monkeypatch.setattr('module.mood.dorm_rest.picker_row_tops', tops)
+    monkeypatch.setattr('module.mood.dorm_rest.read_picker_row', read)
+    monkeypatch.setattr('module.mood.dorm_rest.picker_fleets_ended',
+                        lambda cards, residents: any(c.name == 'Isokaze' for c in cards.values()))
+    return dorm, state
+
+
+def test_actual_double_adb_movement_preserves_tirpitz_and_isokaze(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+
+    found = dorm.picker_scan([])
+
+    assert {c.row for c in found} == {0, 1, 2}
+    assert len(found) == 21
+    assert next(c for c in found if c.name == 'Tirpitz').row == 1
+    assert next(c for c in found if c.name == 'Isokaze').row == 2
+    assert state['up'] == [114]
+    assert state['resets'] == 0
+
+
+def test_larger_adb_overshoot_restarts_from_verified_top_with_smaller_drag(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=4)
+
+    found = dorm.picker_scan([])
+
+    assert {c.row for c in found} == {0, 1, 2}
+    assert len(found) == 21
+    assert state['up'] == [114, 57]
+    assert state['resets'] == 1
+
+
+def test_picker_overlap_retries_are_bounded_without_trusting_an_estimate(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+    dorm.picker_scroll = Mock(side_effect=PickerOverlapError('Dorm picker lost row overlap'))
+    original_top = dorm.picker_scroll_top
+    dorm.picker_scroll_top = Mock(side_effect=original_top)
+
+    with pytest.raises(PickerOverlapError, match='lost row overlap'):
+        dorm.picker_scan([])
+
+    assert [call.kwargs['rows'] for call in dorm.picker_scroll.call_args_list] == [0.5, 0.25, 0.125]
+    assert dorm.picker_scroll_top.call_count == 3
+    assert set(dorm._picker_rows) == {0, 1}
+
+
+def test_unverified_picker_top_cannot_be_relabelled_as_row_zero(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+    dorm._picker_rows = {0: [card(i, f'Known {i}') for i in range(7)]}
+    monkeypatch.setattr('module.mood.dorm_rest.read_picker_row',
+                        lambda image, top, row: [card(i, f'Wrong {i}') for i in range(7)])
+
+    with pytest.raises(DormReadError, match='can not get back to the top'):
+        dorm.picker_scroll_top()
+
+    assert state['resets'] == 8
+
+
+def test_picker_no_progress_fails_instead_of_returning_a_partial_scan(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+    dorm.picker_scroll = Mock(return_value=(0, [76, 303]))
+
+    with pytest.raises(DormReadError, match='did not advance'):
+        dorm.picker_scan([])
+
+    dorm.picker_scroll.assert_called_once()
+
+
+def test_picker_find_small_drag_does_not_skip_isokaze_under_double_adb_movement(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+    dorm._picker_rows = {}
+    dorm.picker_find_on_screen = Mock(side_effect=lambda name: (100, 302)
+                                     if 76 + 2 * 227 - state['offset'] <= 454 else None)
+
+    assert dorm.picker_find('Isokaze') == (100, 302)
+    assert state['up'] == [114]
+
+
+@pytest.mark.parametrize('read, expected', [('Isokaz', (93, 76)), ('Isokae', None), ('Hamakaze', None)])
+def test_picker_find_requires_same_ship_name_not_weak_similarity(monkeypatch, read, expected):
+    dorm = DormRest.__new__(DormRest)
+    dorm.device = SimpleNamespace(image=None)
+    monkeypatch.setattr('module.mood.dorm_rest.picker_row_tops', lambda image: [76])
+    monkeypatch.setattr('module.mood.dorm_rest.Ocr', Mock(return_value=SimpleNamespace(ocr=lambda image: [read])))
+
+    assert dorm.picker_find_on_screen('Isokaze') == expected
 
 
 def test_ships_in_fleets_end_with_two_cards_without_a_badge():

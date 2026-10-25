@@ -1213,6 +1213,68 @@ def test_actual_enigma_title_bar_excludes_clouds_and_reads_the_complete_title(ow
     owner.device.click.assert_not_called()
 
 
+def test_actual_fjord_dark_background_border_reads_sp0_and_current_keys(owner):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/alas_fjord_stages.png')
+    use_actual_en_page_detectors(owner)
+    assert p.stage_title_area(owner.device.image) == (210, 70, 533, 100)
+    result = owner._read_stage_screen('war_archives_20200903_cn')
+    assert result['event'] == 'war_archives_20200903_cn'
+    assert result['mode'] == 'normal' and result['page'] == 1
+    assert set(result['stages']) == {'sp0'}
+    assert result['stages']['sp0']['complete'] is False
+    assert result['raw_keys'] == 300 and result['key_capacity'] == 300
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('readable_keys', [True, False])
+def test_actual_fjord_goal_proof_requires_current_readable_keys(owner, monkeypatch, readable_keys):
+    from module.base.utils import load_image
+    from module.campaign.campaign_stars import StageGoal
+    owner.device.image = load_image('tests/war_archives/data/alas_fjord_stages.png')
+    use_actual_en_page_detectors(owner)
+    if not readable_keys:
+        monkeypatch.setattr(p.STAGE_KEYS, 'ocr', Mock(return_value=''))
+    current = stage_record()
+    owner._navigate_goal(StageGoal('war_archives_20200903_cn', 'sp0', 'normal', 'archive_clear'),
+                         current, Mock())
+    assert current['verified_for_navigation'] and current['unlocked'] is True
+    assert current['stage_complete'] is False
+    assert current['verified_for_execution'] is readable_keys
+    assert current['raw_keys'] == (300 if readable_keys else None)
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('negative', ['wrong_archive', 'dimmed', 'occluded_title',
+                                      'missing_edge', 'different_band_edges',
+                                      'partial_bright_edge', 'overlay', 'no_stages'])
+def test_actual_fjord_border_keeps_identity_and_stage_guards(owner, negative):
+    from module.base.utils import load_image
+    owner.device.image = load_image('tests/war_archives/data/alas_fjord_stages.png')
+    use_actual_en_page_detectors(owner)
+    archive = 'war_archives_20200903_cn'
+    if negative == 'wrong_archive':
+        archive = 'war_archives_20200806_cn'
+    elif negative == 'dimmed':
+        owner.device.image = (owner.device.image * .5).astype(np.uint8)
+    elif negative == 'occluded_title':
+        owner.device.image[77:97, 375:525] = 0
+    elif negative == 'missing_edge':
+        owner.device.image[70:104, 533:1100] = 80
+    elif negative == 'different_band_edges':
+        owner.device.image[100:104, 533:550] = 80
+        owner.device.image[100:104, 550] = 200
+        owner.device.image[100:104, 551:554] = 80
+    elif negative == 'partial_bright_edge':
+        owner.device.image[72, 533] = 80
+    elif negative == 'overlay':
+        owner._archive_stage_page = Mock(return_value=False)
+    elif negative == 'no_stages':
+        owner.device.image[117:636, 87:1151] = 0
+    assert owner._read_stage_screen(archive) is None
+    owner.device.click.assert_not_called()
+
+
 @pytest.mark.parametrize('negative', ['wrong_archive', 'dimmed', 'occluded_title',
                                       'missing_edge', 'different_band_edges'])
 def test_actual_enigma_title_requires_full_title_and_undimmed_bar(owner, negative):

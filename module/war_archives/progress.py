@@ -64,7 +64,8 @@ def stage_title_area(image):
     The current EN title bar has dark text-free bands above and below its
     lettering. Its width varies with the full title; the bright map beyond it
     can otherwise become extra OCR letters. Both bands must prove the same
-    edge, followed by the bright background, before narrowing the OCR crop.
+    edge before narrowing the OCR crop. Some maps have dark artwork beyond a
+    thin bright border; require that full border between dark columns instead.
     """
     ends = []
     for top, bottom in ((70, 76), (100, 104)):
@@ -73,7 +74,11 @@ def stage_title_area(image):
         if not len(bright) or not 80 <= int(bright[0]) < 887:
             return None
         edge = int(bright[0])
-        if band[:, edge + 1:edge + 4].min() < 145:
+        bright_background = band[:, edge + 1:edge + 4].min() >= 145
+        bright_border = (band[:, edge].min() >= 145
+                         and band[:, edge - 2:edge].max() < 120
+                         and band[:, edge + 1:edge + 4].max() < 145)
+        if not (bright_background or bright_border):
             return None
         ends.append(edge)
     if abs(ends[0] - ends[1]) > 2:

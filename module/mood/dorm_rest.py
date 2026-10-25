@@ -9,6 +9,7 @@ lowest mood first, then the others lowest mood first. The ships selected there r
 once confirmed.
 """
 import re
+from math import ceil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -75,6 +76,11 @@ TAP_TOP_MAX = 500
 PICKER_DRAG = ((640, 560), (640, 106))
 PICKER_DRAG_MOVES = 409
 PICKER_MAX_ROWS = 10
+# ADB's drag fallback can move twice the requested distance. A half-row gesture still leaves
+# an identified row visible; a lost overlap retries from the verified top with a shorter gesture.
+PICKER_SCROLL_ROWS = 0.5
+PICKER_SCAN_RETRIES = 2
+PICKER_SCAN_SECONDS = 120
 SELECTED_SIMILARITY = 0.55
 REMOVE_SIMILARITY = 0.8
 LV_SIMILARITY = 0.75
@@ -646,6 +652,10 @@ class DormReadError(Exception):
     pass
 
 
+class PickerOverlapError(DormReadError):
+    """A scan may retry from the top, but cannot assign row indexes from a drag estimate."""
+
+
 def picker_drawn(cards):
     """
     A picker read before it is drawn gives names like 'NN-d- AMET', and no fleet badges.
@@ -809,13 +819,25 @@ class DormRest(Dock):
                         return PICKER_FIRST_TOP + row * ROW_HEIGHT - top
             # An inaccurate drag estimate can label a new row as one already cached and skip it.
             # A scan without overlap cannot safely decide which fleets were actually read.
-            raise DormReadError('Dorm picker lost row overlap')
+            raise PickerOverlapError('Dorm picker lost row overlap')
         if tops:
             # An estimate within half a row tells which row is where
             top = tops[0]
             row = round((top + estimate - PICKER_FIRST_TOP) / ROW_HEIGHT)
             return PICKER_FIRST_TOP + row * ROW_HEIGHT - top
         return estimate
+
+    def _picker_drag(self, rows):
+        """Move without assigning row identities; selection can reorder the cached rows."""
+        (x1, y1), (x2, y2) = PICKER_DRAG
+        if rows < 0:
+            (x1, y1), (x2, y2) = (x2, y2), (x1, y1)
+        distance = abs(rows) / 2
+        y2 = int(y1 + (y2 - y1) * distance)
+        self.device.drag((x1, y1), (x2, y2), point_random=(0, 0, 0, 0), hold_duration=0.5)
+        self.handle_dock_cards_loading()
+        self.device.screenshot()
+        return distance
 
     def picker_scroll(self, offset, rows):
         """
@@ -828,14 +850,7 @@ class DormRest(Dock):
         Returns:
             tuple[int, list[int]]: The new offset, the tops of the rows on screen.
         """
-        (x1, y1), (x2, y2) = PICKER_DRAG
-        if rows < 0:
-            (x1, y1), (x2, y2) = (x2, y2), (x1, y1)
-        distance = abs(rows) / 2
-        y2 = int(y1 + (y2 - y1) * distance)
-        self.device.drag((x1, y1), (x2, y2), point_random=(0, 0, 0, 0), hold_duration=0.5)
-        self.handle_dock_cards_loading()
-        self.device.screenshot()
+        distance = self._picker_drag(rows)
         tops = picker_row_tops(self.device.image)
         estimate = max(offset + int(PICKER_DRAG_MOVES * distance) * (1 if rows > 0 else -1), 0)
         return self.picker_align(estimate, tops), tops
@@ -857,9 +872,7 @@ class DormRest(Dock):
             previous = first
             self.device.drag((640, 150), (640, 600), point_random=(0, 0, 0, 0), hold_duration=0.5)
             self.handle_dock_cards_loading()
-        logger.warning('Dorm picker can not get back to the top')
-        self.device.screenshot()
-        return 0, picker_row_tops(self.device.image)
+        raise DormReadError('Dorm picker can not get back to the top')
 
     def picker_scan(self, residents, low_mood=False):
         """
@@ -883,28 +896,46 @@ class DormRest(Dock):
         self.dock_sort_method_dsc_set(False)
 
         self._picker_rows = {}
-        offset, tops = self.picker_scroll_top()
-        for _ in range(PICKER_MAX_ROWS):
-            image = self.device.image
-            for top in tops:
-                if not ROW_TOP_MIN <= top <= ROW_TOP_MAX:
-                    continue
-                row = round((top + offset - PICKER_FIRST_TOP) / ROW_HEIGHT)
-                if row in self._picker_rows:
-                    continue
-                self._picker_rows[row] = read_picker_row(image, top, row)
-            cards = {card.index: card for row in self._picker_rows.values() for card in row}
-            if low_mood:
-                ended = picker_low_mood_ended(cards, residents)
-            else:
-                ended = picker_fleets_ended(cards, residents)
-            if ended or len(self._picker_rows) >= PICKER_MAX_ROWS:
-                break
-            # Leave a whole row of overlap, including when a drag moves farther than expected.
-            offset, tops = self.picker_scroll(offset, rows=1)
-            if not tops:
-                logger.warning('No card found after scrolling the picker')
-                break
+        timeout = Timer(PICKER_SCAN_SECONDS).start()
+        rows = PICKER_SCROLL_ROWS
+        for attempt in range(PICKER_SCAN_RETRIES + 1):
+            if timeout.reached():
+                raise DormReadError('Dorm picker scan timed out')
+            # Keep the prior first-row identity until the reset is verified, then read a fresh scan.
+            offset, tops = self.picker_scroll_top()
+            self._picker_rows = {}
+            try:
+                for _ in range(ceil(PICKER_MAX_ROWS * 1.25 / rows)):
+                    if timeout.reached():
+                        raise DormReadError('Dorm picker scan timed out')
+                    image = self.device.image
+                    for top in tops:
+                        if not ROW_TOP_MIN <= top <= ROW_TOP_MAX:
+                            continue
+                        row = round((top + offset - PICKER_FIRST_TOP) / ROW_HEIGHT)
+                        if row in self._picker_rows:
+                            continue
+                        self._picker_rows[row] = read_picker_row(image, top, row)
+                    cards = {card.index: card for row in self._picker_rows.values() for card in row}
+                    if low_mood:
+                        ended = picker_low_mood_ended(cards, residents)
+                    else:
+                        ended = picker_fleets_ended(cards, residents)
+                    if ended or len(self._picker_rows) >= PICKER_MAX_ROWS:
+                        break
+                    previous = offset
+                    offset, tops = self.picker_scroll(offset, rows=rows)
+                    if not tops or offset <= previous:
+                        raise DormReadError('Dorm picker did not advance')
+                else:
+                    raise DormReadError('Dorm picker scan exceeded scroll limit')
+            except PickerOverlapError:
+                if attempt >= PICKER_SCAN_RETRIES:
+                    raise
+                rows /= 2
+                logger.warning(f'Dorm picker lost overlap; restart from top with {rows:g}-row drags')
+                continue
+            break
 
         cards = [card for row in sorted(self._picker_rows) for card in self._picker_rows[row]]
         for card in cards:
@@ -928,7 +959,8 @@ class DormRest(Dock):
             tuple[int, int]: x and top of the card of a ship on screen, None if not there.
         """
         image = self.device.image
-        best, score = None, 0.
+        # name_similarity documents only scores above one as the same ship.
+        best, score = None, 1.
         for top in picker_row_tops(image):
             if not ROW_TOP_MIN <= top <= ROW_TOP_MAX:
                 continue
@@ -953,13 +985,11 @@ class DormRest(Dock):
         if found:
             return found
         self.picker_scroll_top()
-        for _ in range(PICKER_MAX_ROWS):
+        for _ in range(ceil(PICKER_MAX_ROWS * 1.25 / PICKER_SCROLL_ROWS)):
             found = self.picker_find_on_screen(name)
             if found:
                 return found
-            self.device.drag(*PICKER_DRAG, point_random=(0, 0, 0, 0), hold_duration=0.5)
-            self.handle_dock_cards_loading()
-            self.device.screenshot()
+            self._picker_drag(PICKER_SCROLL_ROWS)
         return None
 
     def picker_toggle(self, card):
