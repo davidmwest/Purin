@@ -860,6 +860,16 @@ class DormRest(Dock):
             return PICKER_FIRST_TOP + row * ROW_HEIGHT - top
         return estimate
 
+    def _picker_gesture(self, start, end):
+        """Scroll without the ADB drag fallback's extra tap on a ship card."""
+        if self.config.Emulator_ControlMethod == 'ADB':
+            # Control.swipe scales ADB duration by 2.5, keeping the old 0.5-second swipe.
+            self.device.swipe(start, end, duration=0.2, name=PICKER_SCROLL_NAME)
+            self.device.sleep(0.5)
+        else:
+            self.device.drag(start, end, point_random=(0, 0, 0, 0), hold_duration=0.5,
+                             name=PICKER_SCROLL_NAME)
+
     def _picker_drag(self, rows):
         """Move without assigning row identities; selection can reorder the cached rows."""
         (x1, y1), (x2, y2) = PICKER_DRAG
@@ -867,8 +877,7 @@ class DormRest(Dock):
             (x1, y1), (x2, y2) = (x2, y2), (x1, y1)
         distance = abs(rows) / 2
         y2 = int(y1 + (y2 - y1) * distance)
-        self.device.drag((x1, y1), (x2, y2), point_random=(0, 0, 0, 0), hold_duration=0.5,
-                         name=PICKER_SCROLL_NAME)
+        self._picker_gesture((x1, y1), (x2, y2))
         self.handle_dock_cards_loading()
         self.device.screenshot()
         return distance
@@ -930,8 +939,7 @@ class DormRest(Dock):
                         self.device.click_record_remove(PICKER_SCROLL_NAME)
                     previous_offset = aligned
             previous = first
-            self.device.drag((640, 150), (640, 600), point_random=(0, 0, 0, 0), hold_duration=0.5,
-                             name=PICKER_SCROLL_NAME)
+            self._picker_gesture((640, 150), (640, 600))
             self.handle_dock_cards_loading()
         raise DormReadError('Dorm picker can not get back to the top')
 
@@ -1268,7 +1276,10 @@ class DormRest(Dock):
         # Make room first
         for card in sorted(toggle, key=lambda c: (not c.selected, c.index)):
             logger.info(f'{"Unselect" if card.selected else "Select"} {card.ship}')
-            self.picker_toggle(card)
+            if self.picker_toggle(card) != (card.ship in wanted):
+                # A full picker or unread selection count must never confirm a partial plan.
+                self.picker_confirm(DORM_PICKER_CANCEL)
+                raise DormReadError(f'Dorm picker could not set {card.ship} selected={card.ship in wanted}')
         self.device.screenshot()
         current, _, total = OCR_DOCK_SELECTED.ocr(self.device.image)
         logger.attr('Selected', f'{current}/{total}')

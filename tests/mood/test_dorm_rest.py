@@ -12,8 +12,8 @@ import module.config.server as server
 from module.base.button import Button
 from module.base.utils import crop
 from module.device.device import Device
-from module.exception import GameTooManyClickError
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
+from module.mood.assets import DORM_PICKER_CANCEL
 from module.mood.dorm_rest import DormRest, DormReadError, PickerOverlapError, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
     picker_fleets_ended, picker_is_top, picker_low_mood_ended, picker_name_similarity, picker_row_tops, \
     read_dorm_floor, read_picker_row, resident_level, ship_list_tab, update_moods
@@ -174,6 +174,7 @@ def test_picker_scan_uses_half_row_gestures_to_allow_adb_overshoot(monkeypatch):
 def physical_picker(monkeypatch, overshoot):
     """Run real scan/alignment against a list that moves farther than the requested drag."""
     dorm = DormRest.__new__(DormRest)
+    dorm.config = SimpleNamespace(Emulator_ControlMethod='minitouch')
     state = {'offset': 0, 'up': [], 'resets': 0}
 
     def drag(start, end, **kwargs):
@@ -264,6 +265,40 @@ def test_unverified_picker_top_cannot_be_relabelled_as_row_zero(monkeypatch):
     assert state['resets'] == 8
 
 
+@pytest.mark.parametrize('scroll', ['down', 'top'])
+def test_adb_picker_scroll_does_not_tap_endpoint_or_change_selection(monkeypatch, scroll):
+    dorm, state = physical_picker(monkeypatch, overshoot=1)
+    dorm.config.Emulator_ControlMethod = 'ADB'
+    device = dorm.device
+    device.config = dorm.config
+    device.handle_control_check = Mock()
+    physical_drag = device.drag.side_effect
+    device.swipe_adb = Mock(side_effect=physical_drag)
+    # Use the real ADB dispatch paths: drag would also tap a card and change this count.
+    state['selected'] = 5
+
+    def endpoint_click(*args):
+        state['selected'] += 1
+
+    device.click = Mock(side_effect=endpoint_click)
+    device.swipe = Mock(wraps=Device.swipe.__get__(device))
+    device.drag = Mock(wraps=Device.drag.__get__(device))
+    if scroll == 'down':
+        dorm._picker_drag(0.5)
+        start, end = (640, 560), (640, 446)
+    else:
+        dorm._picker_rows = {0: [card(i, f'Row 0 ship {i}', remove=i == 0) for i in range(7)]}
+        state['offset'] = 227
+        assert dorm.picker_scroll_top()[0] == 0
+        start, end = (640, 150), (640, 600)
+
+    device.swipe_adb.assert_called_once_with(list(start), list(end), duration=0.5)
+    device.handle_control_check.assert_called_once_with(PICKER_SCROLL_NAME)
+    device.click.assert_not_called()
+    device.drag.assert_not_called()
+    assert state['selected'] == 5
+
+
 def test_picker_no_progress_fails_instead_of_returning_a_partial_scan(monkeypatch):
     dorm, state = physical_picker(monkeypatch, overshoot=2)
     dorm.picker_scroll = Mock(return_value=(0, [76, 303]))
@@ -275,7 +310,7 @@ def test_picker_no_progress_fails_instead_of_returning_a_partial_scan(monkeypatc
 
 
 def real_picker_click_guard(dorm):
-    """Use the actual device guard, including ADB drag's second endpoint click."""
+    """Use the actual device guard, once per gesture as control dispatch does."""
     device = dorm.device
     device.click_record = deque(maxlen=15)
     device.user_input_check = Mock()
@@ -286,7 +321,6 @@ def real_picker_click_guard(dorm):
     original_drag = device.drag
 
     def drag(*args, **kwargs):
-        device.handle_control_check(kwargs['name'])
         device.handle_control_check(kwargs['name'])
         original_drag(*args, **kwargs)
 
@@ -309,7 +343,7 @@ def test_verified_scan_progress_survives_real_adb_click_guard(monkeypatch):
     found = dorm.picker_scan([])
 
     assert len(found) == 70
-    assert len(state['up']) > 6  # More than twelve ADB control records were checked.
+    assert len(state['up']) > 12
     assert list(device.click_record) == ['UNRELATED_CONFIRM']
 
 
@@ -322,7 +356,7 @@ def test_picker_stagnant_or_wrong_direction_does_not_clear_history(monkeypatch, 
 
     assert dorm.picker_scroll(0, 0.5)[0] == aligned
 
-    assert list(device.click_record) == [PICKER_SCROLL_NAME] * 2
+    assert list(device.click_record) == [PICKER_SCROLL_NAME]
 
 
 def test_picker_unverified_top_retains_real_stuck_guard(monkeypatch):
@@ -332,11 +366,12 @@ def test_picker_unverified_top_retains_real_stuck_guard(monkeypatch):
     monkeypatch.setattr('module.mood.dorm_rest.read_picker_row',
                         lambda *args, **kwargs: [card(i, f'Wrong {i}') for i in range(7)])
 
-    with pytest.raises(GameTooManyClickError, match=PICKER_SCROLL_NAME):
+    with pytest.raises(DormReadError, match='can not get back to the top'):
         dorm.picker_scroll_top()
 
-    assert device.drag.call_count == 6
-    assert state['resets'] == 5  # Sixth input is refused before the physical drag.
+    assert device.drag.call_count == 8
+    assert state['resets'] == 8
+    assert list(device.click_record) == [PICKER_SCROLL_NAME] * 8
 
 
 def test_verified_top_removes_only_picker_history(monkeypatch):
@@ -378,7 +413,7 @@ def test_permanently_garbled_overlap_keeps_history_and_read_bound(monkeypatch):
     assert dorm.picker_align.call_count == 3
     assert device.screenshot.call_count == 3
     assert device.sleep.call_count == 2
-    assert list(device.click_record) == [PICKER_SCROLL_NAME] * 2
+    assert list(device.click_record) == [PICKER_SCROLL_NAME]
 
 
 def test_picker_find_small_drag_does_not_skip_isokaze_under_double_adb_movement(monkeypatch):
@@ -870,6 +905,41 @@ def test_post_confirmation_repairs_floor_level_only_for_freshly_observed_residen
     rest.picker_confirm.assert_called_once()
 
 
+def test_failed_required_selection_cancels_partial_plan_and_retries_without_saving(monkeypatch):
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=1, mood=145, time=NOW)
+    moods.ships['Gangut'] = ShipMood('Gangut', level=100, fleet=1, mood=100, time=NOW)
+    moods.save = Mock()
+    monkeypatch.setattr('module.mood.dorm_rest.ShipMoods', lambda config: moods)
+    monkeypatch.setattr('module.mood.dorm_rest.upcoming_jobs', lambda *args: [])
+    monkeypatch.setattr('module.mood.dorm_rest.rest_plan', lambda *args, **kwargs: ['Gangut', 'Hakuhou'])
+    rest = DormRest.__new__(DormRest)
+    rest.config = SimpleNamespace(data={}, task_delay=Mock())
+    rest.device = SimpleNamespace(click=Mock(), sleep=Mock(), screenshot=Mock(), click_record_clear=Mock())
+    for name in ('ui_ensure', 'ui_goto_main', 'dorm_ship_list_enter', 'picker_enter', 'dock_filter_set',
+                 'dock_sort_method_dsc_set', 'picker_confirm', 'dorm_ship_list_quit', 'handle_info_bar'):
+        setattr(rest, name, Mock())
+    rest.handle_dorm_food_popup = Mock(return_value=False)
+    rest.dorm_floor_read = Mock(side_effect=[([], 6),
+                                           ([DormShip(place='rest', name='Gangut', level=100,
+                                                      mood=100, speed=50)], 6)])
+    rest.picker_scan = Mock(return_value=[card(0, '', remove=True), card(1, 'Gangut', fleet=1),
+                                        card(2, 'Hakuhou', level=101, fleet=1, mood=145)])
+    rest.picker_find = Mock(return_value=(100, 76))
+    # The first selection succeeds. Hakuhou then cannot enter a full picker on any attempt.
+    rest.picker_selected_count = Mock(side_effect=[4, 5, 6, 6, 6, 6, 6, 6])
+
+    rest.run()
+
+    rest.picker_confirm.assert_called_once_with(DORM_PICKER_CANCEL)
+    assert rest.device.click.call_count == 4
+    rest.config.task_delay.assert_called_once_with(minute=10)
+    rest.ui_goto_main.assert_called_once()
+    moods.save.assert_not_called()
+    assert rest.dorm_floor_read.call_count == 2
+    rest.dock_filter_set.assert_not_called()
+
+
 def test_badge_diagnostic_saves_current_frame_and_keeps_at_most_ten_per_account(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     dorm = DormRest.__new__(DormRest)
@@ -908,7 +978,7 @@ def test_badge_diagnostic_failure_is_nonfatal_and_counts_as_the_scan_attempt(mon
 def test_scan_saves_only_one_unread_badge_frame_even_across_adaptive_retries(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     dorm, state = physical_picker(monkeypatch, overshoot=4)
-    dorm.config = SimpleNamespace(config_name='alas')
+    dorm.config = SimpleNamespace(config_name='alas', Emulator_ControlMethod='minitouch')
     moods = ShipMoods(Config())
     moods.ships['Tirpitz'] = ShipMood('Tirpitz', level=100, fleet=1)
     moods.ships['Isokaze'] = ShipMood('Isokaze', level=100, fleet=1)
