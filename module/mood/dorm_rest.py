@@ -81,6 +81,8 @@ PICKER_MAX_ROWS = 10
 PICKER_SCROLL_ROWS = 0.5
 PICKER_SCAN_RETRIES = 2
 PICKER_SCAN_SECONDS = 120
+PICKER_SCROLL_NAME = 'DORM_PICKER_SCROLL'
+PICKER_ALIGN_READS = 3
 SELECTED_SIMILARITY = 0.55
 REMOVE_SIMILARITY = 0.8
 LV_SIMILARITY = 0.75
@@ -834,7 +836,8 @@ class DormRest(Dock):
             (x1, y1), (x2, y2) = (x2, y2), (x1, y1)
         distance = abs(rows) / 2
         y2 = int(y1 + (y2 - y1) * distance)
-        self.device.drag((x1, y1), (x2, y2), point_random=(0, 0, 0, 0), hold_duration=0.5)
+        self.device.drag((x1, y1), (x2, y2), point_random=(0, 0, 0, 0), hold_duration=0.5,
+                         name=PICKER_SCROLL_NAME)
         self.handle_dock_cards_loading()
         self.device.screenshot()
         return distance
@@ -851,9 +854,24 @@ class DormRest(Dock):
             tuple[int, list[int]]: The new offset, the tops of the rows on screen.
         """
         distance = self._picker_drag(rows)
-        tops = picker_row_tops(self.device.image)
         estimate = max(offset + int(PICKER_DRAG_MOVES * distance) * (1 if rows > 0 else -1), 0)
-        return self.picker_align(estimate, tops), tops
+        for read in range(PICKER_ALIGN_READS):
+            tops = picker_row_tops(self.device.image)
+            try:
+                aligned = self.picker_align(estimate, tops)
+            except PickerOverlapError:
+                if read + 1 >= PICKER_ALIGN_READS:
+                    raise
+                # Card names can be briefly covered by the scrolling animation. Re-read a fresh
+                # settled frame without another gesture; never infer identity from the estimate.
+                self.device.sleep(0.3)
+                self.device.screenshot()
+                continue
+            if self._picker_rows and (aligned - offset) * rows > 0:
+                # Only verified directional progress acknowledges this scan's own gestures.
+                # Other buttons retain their normal stuck-detection history.
+                self.device.click_record_remove(PICKER_SCROLL_NAME)
+            return aligned, tops
 
     def picker_scroll_top(self):
         """
@@ -861,6 +879,7 @@ class DormRest(Dock):
             tuple[int, list[int]]: Offset 0, tops of the rows on screen.
         """
         previous = None
+        previous_offset = None
         for _ in range(8):
             self.device.screenshot()
             tops = picker_row_tops(self.device.image)
@@ -868,9 +887,20 @@ class DormRest(Dock):
             if tops and abs(tops[0] - PICKER_FIRST_TOP) <= 3:
                 first = read_picker_row(self.device.image, tops[0], row=0)
                 if picker_is_top(first, self._picker_rows, previous):
+                    self.device.click_record_remove(PICKER_SCROLL_NAME)
                     return 0, tops
+            if self._picker_rows:
+                try:
+                    aligned = self.picker_align(0, tops)
+                except PickerOverlapError:
+                    aligned = None
+                if aligned is not None:
+                    if previous_offset is not None and aligned < previous_offset:
+                        self.device.click_record_remove(PICKER_SCROLL_NAME)
+                    previous_offset = aligned
             previous = first
-            self.device.drag((640, 150), (640, 600), point_random=(0, 0, 0, 0), hold_duration=0.5)
+            self.device.drag((640, 150), (640, 600), point_random=(0, 0, 0, 0), hold_duration=0.5,
+                             name=PICKER_SCROLL_NAME)
             self.handle_dock_cards_loading()
         raise DormReadError('Dorm picker can not get back to the top')
 

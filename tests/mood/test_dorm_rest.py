@@ -1,4 +1,5 @@
 import os
+from collections import deque
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -10,10 +11,13 @@ import pytest
 import module.config.server as server
 from module.base.button import Button
 from module.base.utils import crop
+from module.device.device import Device
+from module.exception import GameTooManyClickError
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
 from module.mood.dorm_rest import DormRest, DormReadError, PickerOverlapError, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
     picker_fleets_ended, picker_is_top, picker_low_mood_ended, picker_name_similarity, picker_row_tops, \
     read_dorm_floor, read_picker_row, ship_list_tab, update_moods
+from module.mood.dorm_rest import PICKER_SCROLL_NAME
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
 from module.mood.ship import ShipMood, ShipMoods, portrait_signature
 from module.ocr.ocr import Digit
@@ -198,7 +202,7 @@ def physical_picker(monkeypatch, overshoot):
                 for col, name in enumerate(names)]
 
     dorm.device = SimpleNamespace(image=None, drag=Mock(side_effect=drag), screenshot=Mock(),
-                                  click_record_clear=Mock())
+                                  click_record_clear=Mock(), click_record_remove=Mock(), sleep=Mock())
     dorm.handle_dock_cards_loading = Mock()
     dorm.dock_favourite_set = Mock()
     dorm.dock_filter_set = Mock()
@@ -268,6 +272,113 @@ def test_picker_no_progress_fails_instead_of_returning_a_partial_scan(monkeypatc
         dorm.picker_scan([])
 
     dorm.picker_scroll.assert_called_once()
+
+
+def real_picker_click_guard(dorm):
+    """Use the actual device guard, including ADB drag's second endpoint click."""
+    device = dorm.device
+    device.click_record = deque(maxlen=15)
+    device.user_input_check = Mock()
+    device.stuck_record_clear = Mock()
+    for method in ('handle_control_check', 'click_record_add', 'click_record_check',
+                   'click_record_clear', 'click_record_remove'):
+        setattr(device, method, getattr(Device, method).__get__(device))
+    original_drag = device.drag
+
+    def drag(*args, **kwargs):
+        device.handle_control_check(kwargs['name'])
+        device.handle_control_check(kwargs['name'])
+        original_drag(*args, **kwargs)
+
+    device.drag = Mock(side_effect=drag)
+    return device
+
+
+def test_verified_scan_progress_survives_real_adb_click_guard(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=1)
+    device = real_picker_click_guard(dorm)
+    original_clear = device.click_record_clear
+
+    def initial_clear():
+        original_clear()
+        device.click_record_add('UNRELATED_CONFIRM')
+
+    device.click_record_clear = initial_clear
+    monkeypatch.setattr('module.mood.dorm_rest.picker_fleets_ended', lambda *args: False)
+
+    found = dorm.picker_scan([])
+
+    assert len(found) == 70
+    assert len(state['up']) > 6  # More than twelve ADB control records were checked.
+    assert list(device.click_record) == ['UNRELATED_CONFIRM']
+
+
+@pytest.mark.parametrize('aligned', [0, -20])
+def test_picker_stagnant_or_wrong_direction_does_not_clear_history(monkeypatch, aligned):
+    dorm, state = physical_picker(monkeypatch, overshoot=0)
+    device = real_picker_click_guard(dorm)
+    dorm._picker_rows = {0: [card(i, f'Known {i}') for i in range(7)]}
+    dorm.picker_align = Mock(return_value=aligned)
+
+    assert dorm.picker_scroll(0, 0.5)[0] == aligned
+
+    assert list(device.click_record) == [PICKER_SCROLL_NAME] * 2
+
+
+def test_picker_unverified_top_retains_real_stuck_guard(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=0)
+    device = real_picker_click_guard(dorm)
+    dorm._picker_rows = {0: [card(i, f'Known {i}') for i in range(7)]}
+    monkeypatch.setattr('module.mood.dorm_rest.read_picker_row',
+                        lambda *args, **kwargs: [card(i, f'Wrong {i}') for i in range(7)])
+
+    with pytest.raises(GameTooManyClickError, match=PICKER_SCROLL_NAME):
+        dorm.picker_scroll_top()
+
+    assert device.drag.call_count == 6
+    assert state['resets'] == 5  # Sixth input is refused before the physical drag.
+
+
+def test_verified_top_removes_only_picker_history(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+    device = real_picker_click_guard(dorm)
+    dorm._picker_rows = {}
+    device.click_record.extend(['UNRELATED_CONFIRM', PICKER_SCROLL_NAME, PICKER_SCROLL_NAME])
+
+    assert dorm.picker_scroll_top() == (0, [76, 303, 530])
+
+    assert list(device.click_record) == ['UNRELATED_CONFIRM']
+
+
+def test_garbled_overlap_uses_fresh_settled_reads_without_more_drag(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+    device = real_picker_click_guard(dorm)
+    dorm._picker_rows = {0: [card(i, f'Known {i}') for i in range(7)]}
+    dorm.picker_align = Mock(side_effect=[PickerOverlapError('garbled'),
+                                        PickerOverlapError('garbled'), 227])
+
+    assert dorm.picker_scroll(0, 0.5)[0] == 227
+
+    assert device.drag.call_count == 1
+    assert device.screenshot.call_count == 3
+    assert device.sleep.call_args_list == [((0.3,),), ((0.3,),)]
+    assert not device.click_record
+
+
+def test_permanently_garbled_overlap_keeps_history_and_read_bound(monkeypatch):
+    dorm, state = physical_picker(monkeypatch, overshoot=2)
+    device = real_picker_click_guard(dorm)
+    dorm._picker_rows = {0: [card(i, f'Known {i}') for i in range(7)]}
+    dorm.picker_align = Mock(side_effect=PickerOverlapError('garbled'))
+
+    with pytest.raises(PickerOverlapError, match='garbled'):
+        dorm.picker_scroll(0, 0.5)
+
+    assert device.drag.call_count == 1
+    assert dorm.picker_align.call_count == 3
+    assert device.screenshot.call_count == 3
+    assert device.sleep.call_count == 2
+    assert list(device.click_record) == [PICKER_SCROLL_NAME] * 2
 
 
 def test_picker_find_small_drag_does_not_skip_isokaze_under_double_adb_movement(monkeypatch):
