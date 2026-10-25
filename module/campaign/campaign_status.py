@@ -8,6 +8,7 @@ import module.config.server as server
 from module.base.timer import Timer
 from module.base.utils import color_similar, get_color
 from module.campaign.assets import OCR_COIN, OCR_EVENT_PT, OCR_OIL, OCR_OIL_CHECK
+from module.exception import GamePageUnknownError
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr
 from module.ui.ui import UI
@@ -41,6 +42,10 @@ class PtOcr(Ocr):
 
 
 OCR_PT = PtOcr(OCR_EVENT_PT)
+
+
+class OilReadError(GamePageUnknownError):
+    """The current screen did not provide a trustworthy oil amount."""
 
 
 class CampaignStatus(UI):
@@ -106,9 +111,12 @@ class CampaignStatus(UI):
     def get_oil(self, skip_first_screenshot=True):
         """
         Returns:
-            int: Oil amount
+            int: Verified oil amount (at least 100).
+
+        Raises:
+            OilReadError: The icon or digits could not be read. A blank OCR
+                result is also zero, so readings below 100 remain unverified.
         """
-        amount = 0
         timeout = Timer(1, count=2).start()
         while 1:
             if skip_first_screenshot:
@@ -117,8 +125,7 @@ class CampaignStatus(UI):
                 self.device.screenshot()
 
             if timeout.reached():
-                logger.warning('Get oil timeout')
-                break
+                raise OilReadError('Oil amount could not be verified before timeout')
 
             if not self.appear(OCR_OIL_CHECK, offset=(10, 2)):
                 logger.info('No oil icon')
@@ -126,9 +133,7 @@ class CampaignStatus(UI):
 
             amount = self._get_oil()
             if amount >= 100:
-                break
-
-        return amount
+                return amount
 
     def is_balancer_task(self):
         """

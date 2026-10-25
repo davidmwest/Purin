@@ -620,8 +620,9 @@ def update_moods(moods, dorm, cards, now):
     # Those not followed yet, known by level and portrait
     learn_lineup_ships(moods, cards, now)
 
-    # Ships not seen are out of the dorm and of the fleets, they may still be in the lineup of a stage.
-    # They are forgotten after a while.
+    # The floor lists establish who left the dorm. A missing picker card does not establish that
+    # she left her fleet: a clipped or unread row must not remove her from the fleet's mood check.
+    # Only a freshly identified card above clears membership; stale ships expire after a while.
     seen = {card.ship for card in cards if card.ship} | taken
     in_lineups = moods.in_lineups()
     for name in list(moods.ships):
@@ -634,7 +635,6 @@ def update_moods(moods, dorm, cards, now):
         if ship.place != 'dock':
             ship.mood, ship.time = ship.at(now), now
             ship.place, ship.speed = 'dock', DOCK_SPEED
-        ship.fleet = 0
     moods.read = now
 
 
@@ -801,12 +801,15 @@ class DormRest(Dock):
             int: Offset of the list.
         """
         readable = [top for top in tops if ROW_TOP_MIN <= top <= ROW_TOP_MAX]
-        if readable and self._picker_rows:
-            top = readable[0]
-            cards = read_picker_row(self.device.image, top, row=-1)
-            for row, known in self._picker_rows.items():
-                if same_row(cards, known):
-                    return PICKER_FIRST_TOP + row * ROW_HEIGHT - top
+        if self._picker_rows:
+            for top in readable:
+                cards = read_picker_row(self.device.image, top, row=-1)
+                for row, known in self._picker_rows.items():
+                    if same_row(cards, known):
+                        return PICKER_FIRST_TOP + row * ROW_HEIGHT - top
+            # An inaccurate drag estimate can label a new row as one already cached and skip it.
+            # A scan without overlap cannot safely decide which fleets were actually read.
+            raise DormReadError('Dorm picker lost row overlap')
         if tops:
             # An estimate within half a row tells which row is where
             top = tops[0]
@@ -897,8 +900,8 @@ class DormRest(Dock):
                 ended = picker_fleets_ended(cards, residents)
             if ended or len(self._picker_rows) >= PICKER_MAX_ROWS:
                 break
-            # Less than two rows, the first row on screen after it is one read already
-            offset, tops = self.picker_scroll(offset, rows=1.5)
+            # Leave a whole row of overlap, including when a drag moves farther than expected.
+            offset, tops = self.picker_scroll(offset, rows=1)
             if not tops:
                 logger.warning('No card found after scrolling the picker')
                 break
@@ -1084,6 +1087,10 @@ class DormRest(Dock):
         # Ships whose card was not read can not be selected, like those of a lineup not low on mood
         on_picker = {card.ship for card in cards if card.ship}
         for job in jobs:
+            missing = set(job.names) - on_picker
+            if missing:
+                logger.warning(f'Task {job.task}: fleet members not read on picker, keeping mood history: '
+                               f'{sorted(missing)}')
             job.names = [name for name in job.names if name in on_picker]
             logger.info(f'Task {job.task}: {job.names}, weight {job.weight}')
         rest_names = [ship.known for ship in rest if ship.known]

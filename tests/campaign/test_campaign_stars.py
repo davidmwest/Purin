@@ -10,6 +10,7 @@ from module.campaign.campaign_stars import (CampaignStars, EventExtra, EventStar
                                             StarProgress, campaign_plan, complete_stage, event_plan,
                                             stage_overrides)
 from module.campaign.run import CampaignRun
+from module.campaign.campaign_status import OilReadError
 from module.config.config import TaskEnd
 from module.exception import CampaignEnd, GameNotRunningError, GamePageUnknownError, ScriptEnd
 from module.handler.fast_forward import FastForwardHandler
@@ -883,16 +884,39 @@ def test_oil_stop_preserves_delay_and_only_refunds_pre_sortie_reservation(
     assert runner.config.Scheduler_NextRun == recovered
 
 
-def test_mid_sortie_oil_stop_does_not_retry_or_overwrite_rest_delay(monkeypatch, tmp_path):
+@pytest.mark.parametrize('result', ['oil_exhausted', 'oil_unverified'])
+def test_mid_sortie_oil_stop_does_not_retry_or_overwrite_rest_delay(monkeypatch, tmp_path, result):
     goal = StageGoal('event_20261022_cn', 'T1')
-    job, progress, runner, _ = make_job(monkeypatch, tmp_path, [goal], 'oil_exhausted')
+    job, progress, runner, _ = make_job(monkeypatch, tmp_path, [goal], result)
     recovered = datetime.now() + timedelta(hours=3)
     job.config.Scheduler_NextRun = recovered
     job.run()
-    assert progress.record(goal) == dict(attempts=1, status='oil_exhausted')
+    assert progress.record(goal) == dict(attempts=1, status=result)
     assert job.config.Scheduler_NextRun == recovered
     runner.run_goal.assert_called_once_with(goal, inspect_only=False)
     job.config.task_delay.assert_not_called()
     job.config.task_call.assert_not_called()
     job.collect.assert_called_once_with(before=True)
     job.extra_objectives.assert_not_called()
+
+
+@pytest.mark.parametrize('entered', [False, True])
+def test_unknown_oil_retry_refunds_only_a_proven_pre_sortie_star_reservation(monkeypatch, tmp_path, entered):
+    runner = StageStarsRunner.__new__(StageStarsRunner)
+    runner.config = config()
+    runner.config.task_delay = Mock()
+    runner.config.task_call = Mock()
+    runner.campaign = SimpleNamespace(run_lost=False)
+
+    def unreadable(*args, **kwargs):
+        runner.attempt_started = entered
+        raise OilReadError('Oil remains unreadable')
+
+    monkeypatch.setattr(runner, '_run', unreadable)
+    goal = StageGoal('event_20261022_cn', 'SP', goal='clear')
+    progress = StarProgress('alas', 'EventStars', tmp_path)
+    status = 'oil_unverified' if entered else 'deferred'
+    assert complete_stage(goal, progress, runner.run_goal) == status
+    assert progress.record(goal) == dict(attempts=int(entered), status=status)
+    runner.config.task_delay.assert_called_once_with(minute=1)
+    runner.config.task_call.assert_not_called()

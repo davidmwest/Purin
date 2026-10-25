@@ -7,9 +7,12 @@ from PIL import Image
 import pytest
 
 from module.campaign.campaign_stars import StageGoal
+from module.campaign.campaign_status import OilReadError
 from module.config.config import TaskEnd
 from module.exception import OilExhausted, ScriptEnd
 from module.war_archives import execution as ex
+from module.war_archives.completion import ArchiveCoordinator
+from module.war_archives.state import ArchiveState
 
 
 EVENT = 'war_archives_20190321_en'
@@ -169,6 +172,63 @@ def test_daily_four_and_surplus_have_distinct_oil_floors(monkeypatch, kind, oil,
         assert result['reason'] == 'oil_reserve'
         reserve.assert_not_called()
         owner.defer_for_oil.assert_called_once()
+
+
+@pytest.mark.parametrize('kind,oil,spent_before', [('daily', 500, 0), ('extra', 5000, 4)])
+@pytest.mark.parametrize('boundary', ['preflight', 'reservation', 'between_battles'])
+def test_unreadable_oil_short_retry_preserves_shared_archive_budget(
+        monkeypatch, tmp_path, kind, oil, spent_before, boundary):
+    owner, campaign, state, proof, prepare, _ = controller(monkeypatch)
+    owner.config.Scheduler_ServerUpdate = '00:00'
+    owner.config.Archive_DailyTickets = 4
+    owner.config.Archive_ExtraOilReserve = 5000
+    owner.config.task_delay = Mock()
+    owner.config.task_call = Mock()
+    ledger = ArchiveState('alas', str(tmp_path))
+    observer = SimpleNamespace(proof_for_goal=lambda goal: dict(proof), prepare_goal=prepare)
+    coordinator = ArchiveCoordinator(owner.config, ledger, observer, lambda: owner)
+    goal = StageGoal(EVENT, 'A1', goal='archive_clear')
+    for _ in range(spent_before):
+        assert ledger.reserve(coordinator.period, goal.key, oil=5000, raw_keys=300)
+        ledger.finish(coordinator.period, goal.key, 'won')
+    readings_before_failure = {'preflight': 0, 'reservation': 1, 'between_battles': 2}[boundary]
+    owner.get_oil.side_effect = [oil] * readings_before_failure + [OilReadError('unreadable')]
+
+    result = coordinator._attempt(goal)
+
+    entered = boundary == 'between_battles'
+    assert result == dict(status='deferred', reason='oil_unverified', reserved=entered,
+                         boss_won=False, stage_complete=False)
+    assert owner.oil_floor == (500 if kind == 'daily' else 5000)
+    assert state.starts == int(entered)
+    assert ledger.used(coordinator.period) == spent_before + int(entered)
+    assert not ledger.has_loss(coordinator.period)
+    assert not ledger.record(goal.key).get('complete')
+    if entered:
+        assert ledger.entries(coordinator.period)[-1]['status'] == 'uncertain'
+        campaign.withdraw.assert_called_once_with(timeout=20)
+    else:
+        assert all(entry['status'] == 'won' for entry in ledger.entries(coordinator.period))
+        campaign.withdraw.assert_not_called()
+        owner._cancel_preparation.assert_called_once_with(campaign)
+    owner.config.task_delay.assert_called_once_with(minute=1)
+    owner.config.task_call.assert_not_called()
+    owner.defer_for_oil.assert_not_called()
+    assert owner.oil_deferred is False
+    owner.device.click.assert_not_called()
+
+
+def test_unreadable_oil_preserves_short_retry_if_preparation_cleanup_fails(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    owner.config.task_delay = Mock()
+    owner.get_oil.side_effect = OilReadError('unreadable')
+    owner._cancel_preparation.side_effect = ex.ArchiveBlocked('preparation_return_unrecognized')
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['status'] == 'deferred' and result['reason'] == 'oil_unverified'
+    assert result['reserved'] is False and state.starts == 0
+    reserve.assert_not_called()
+    owner.config.task_delay.assert_called_once_with(minute=1)
+    owner.defer_for_oil.assert_not_called()
 
 
 def test_extra_reserve_is_cutoff_not_base_plus_reserve(monkeypatch):

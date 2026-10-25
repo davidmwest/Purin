@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from module.base.timer import Timer
+from module.campaign.campaign_status import OilReadError
 from module.campaign.run import CampaignRun
 from module.campaign.stage import stage_names
 from module.config.config import TaskEnd
@@ -559,7 +560,7 @@ class WarArchivesExecution(CampaignRun):
                         raise ArchiveBlocked('reservation_rejected')
                     self.reserved = True
                     self._check_switch()
-            except (ScriptEnd, TaskEnd) as error:
+            except (ScriptEnd, TaskEnd, OilReadError) as error:
                 try:
                     self._cancel_preparation(campaign)
                 except ArchiveBlocked as cleanup_error:
@@ -739,6 +740,15 @@ class WarArchivesExecution(CampaignRun):
             if self.fleet_inspection:
                 return self._result('observed', str(error))
             return self._result('complete' if self.stage_complete else ('won' if self.boss_won else 'incomplete'))
+        except OilReadError as error:
+            # A hidden/unreadable counter cannot authorize entry or establish a
+            # shortage. Before Start there is no reservation; after entry the
+            # coordinator retains the spent reservation as an uncertain result.
+            logger.warning(error)
+            self.config.task_delay(minute=1)
+            if self.reserved:
+                self._withdraw_between_battles()
+            return self._result('deferred', 'oil_unverified')
         except ArchiveBlocked as error:
             # defer_for_oil owns NextRun; the coordinator must not replace that
             # recovery time with its generic blocked/interrupted delay.

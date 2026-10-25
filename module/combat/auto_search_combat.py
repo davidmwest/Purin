@@ -105,20 +105,19 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         This will set auto_search_oil_limit_triggered.
         """
         if not checked:
-            oil = self._get_oil()
-            if oil == 0:
-                logger.warning('Oil not found')
+            # A hidden icon or blank OCR is an unknown reading, not zero oil.
+            # Let CampaignRun withdraw and retry shortly if it cannot verify
+            # this amount, without inventing a long low-oil scheduler delay.
+            oil = self.get_oil()
+            if oil < max(500, self.config.StopCondition_OilLimit):
+                logger.info('Reach oil limit')
                 self.auto_search_oil_limit_triggered = True
             else:
-                if oil < max(500, self.config.StopCondition_OilLimit):
-                    logger.info('Reach oil limit')
-                    self.auto_search_oil_limit_triggered = True
-                else:
-                    if self.auto_search_oil_limit_triggered:
-                        logger.warning('auto_search_oil_limit_triggered but oil recovered, '
-                                       'probably because of wrong OCR result before')
-                    self.auto_search_oil_limit_triggered = False
-                checked = True
+                if self.auto_search_oil_limit_triggered:
+                    logger.warning('auto_search_oil_limit_triggered but oil recovered, '
+                                   'probably because of wrong OCR result before')
+                self.auto_search_oil_limit_triggered = False
+            checked = True
 
         return checked
 

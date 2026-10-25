@@ -11,7 +11,7 @@ import module.config.server as server
 from module.base.button import Button
 from module.base.utils import crop
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
-from module.mood.dorm_rest import DormRest, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
+from module.mood.dorm_rest import DormRest, DormReadError, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
     picker_fleets_ended, picker_is_top, picker_low_mood_ended, picker_name_similarity, picker_row_tops, \
     read_dorm_floor, read_picker_row, ship_list_tab, update_moods
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
@@ -123,6 +123,50 @@ def card(index, name, fleet=0, mood=150, level=100, submarine=False, truncated=F
                       submarine=submarine, truncated=truncated, remove=remove)
 
 
+def test_picker_alignment_uses_the_second_readable_row_when_it_is_the_overlap(monkeypatch):
+    dorm = DormRest.__new__(DormRest)
+    dorm.device = SimpleNamespace(image=None)
+    known = [card(7 + i, f'Known {i}') for i in range(7)]
+    dorm._picker_rows = {1: known}
+    unknown = [card(i, f'New {i}') for i in range(7)]
+    monkeypatch.setattr('module.mood.dorm_rest.read_picker_row',
+                        lambda image, top, row: known if top == 303 else unknown)
+
+    assert dorm.picker_align(0, [76, 303]) == 0
+
+
+def test_picker_alignment_rejects_an_estimate_that_would_skip_a_new_row(monkeypatch):
+    dorm = DormRest.__new__(DormRest)
+    dorm.device = SimpleNamespace(image=None)
+    dorm._picker_rows = {0: [card(i, f'Old {i}') for i in range(7)],
+                         1: [card(7 + i, f'Previous {i}') for i in range(7)]}
+    monkeypatch.setattr('module.mood.dorm_rest.read_picker_row',
+                        lambda image, top, row: [card(i, f'New {top} {i}') for i in range(7)])
+
+    with pytest.raises(DormReadError, match='lost row overlap'):
+        dorm.picker_align(227, [76, 303])
+
+
+def test_picker_scan_keeps_one_full_row_of_overlap(monkeypatch):
+    dorm = DormRest.__new__(DormRest)
+    dorm.device = SimpleNamespace(image=None, click_record_clear=Mock())
+    dorm.dock_favourite_set = Mock()
+    dorm.dock_filter_set = Mock()
+    dorm.dock_sort_method_dsc_set = Mock()
+    dorm.picker_scroll_top = Mock(return_value=(0, [76, 303]))
+    dorm.picker_scroll = Mock(return_value=(227, [76, 303]))
+    monkeypatch.setattr('module.mood.dorm_rest.picker_fleets_ended', Mock(side_effect=[False, True]))
+    monkeypatch.setattr('module.mood.dorm_rest.read_picker_row',
+                        lambda image, top, row: [card(7 * row + i, f'Row {row} ship {i}', fleet=1)
+                                                 for i in range(7)])
+
+    found = dorm.picker_scan([])
+
+    dorm.picker_scroll.assert_called_once_with(0, rows=1)
+    assert {entry.row for entry in found} == {0, 1, 2}
+    assert len(found) == 21
+
+
 def test_ships_in_fleets_end_with_two_cards_without_a_badge():
     residents = ['Hatakaze', 'Dmitri Donskoi']
     cards = {c.index: c for c in [
@@ -162,14 +206,35 @@ def test_update_follows_the_dorm_and_the_fleets():
     assert sorted(moods.ships) == ['Hiei', 'In a lineup', 'Kawakaze META', 'Left the dorm', 'London (Ret',
                                    'lana Astar Deviluk']
     left = moods.ships['Left the dorm']
-    # Counted on the second floor until now, out of it from now on
-    assert (left.mood, left.time, left.place, left.speed, left.fleet) == (150, NOW, 'dock', 20, 0)
+    # The floor lists prove she left the dorm, but an omitted picker card cannot prove she left fleet 3.
+    assert (left.mood, left.time, left.place, left.speed, left.fleet) == (150, NOW, 'dock', 20, 3)
     kawakaze = moods.ships['Kawakaze META']
     assert (kawakaze.mood, kawakaze.place, kawakaze.speed, kawakaze.fleet, kawakaze.time) == (124, 'rest', 50, 1, NOW)
     assert (moods.ships['Hiei'].place, moods.ships['Hiei'].fleet) == ('train', 2)
     london = moods.ships['London (Ret']
     assert (london.mood, london.place, london.speed, london.level, london.fleet) == (119, 'dock', 20, 118, 2)
     assert moods.read == NOW
+
+
+def test_skipped_picker_row_cannot_remove_an_exhausted_ship_from_fleet_morale():
+    moods = ShipMoods(Config())
+    moods.ships['Tirpitz'] = ShipMood('Tirpitz', mood=101, time=NOW - timedelta(hours=1), level=103, fleet=1)
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', mood=140, time=NOW, level=101, fleet=1)
+
+    update_moods(moods, [], [card(1, 'Hakuhou', mood=140, level=101, fleet=1)], NOW)
+
+    assert set(moods.fleet(1)) == {'Hakuhou', 'Tirpitz'}
+    assert moods.ships['Tirpitz'].at(NOW) == 119
+
+
+def test_fresh_picker_badge_repairs_previously_lost_fleet_membership():
+    moods = ShipMoods(Config())
+    moods.ships['Tirpitz'] = ShipMood('Tirpitz', mood=101, time=NOW - timedelta(hours=1), level=103, fleet=0)
+
+    update_moods(moods, [], [card(14, 'Tirpitz', mood=119, level=103, fleet=1)], NOW)
+
+    assert moods.fleet(1) == ['Tirpitz']
+    assert moods.ships['Tirpitz'].mood == 119
 
 
 NEVADA_CARD = [10, 200, 30, 5]

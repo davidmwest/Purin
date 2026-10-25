@@ -280,6 +280,10 @@ class StageStarsRunner(CampaignRun):
             # Keep a reservation once map execution began; only a pre-sortie
             # reserve check is refundable. Both outcomes preserve the oil delay.
             return 'oil_exhausted' if self.attempt_started else 'deferred'
+        if getattr(self, 'oil_unverified', False) and self.attempt_started:
+            # A safe withdrawal still consumed the already-started attempt.
+            # Preserve its short retry without refunding an SP/EX reservation.
+            return 'oil_unverified'
         next_run = getattr(self.config, 'Scheduler_NextRun', None)
         if self.scheduler_deferred or (not self.attempt_started and
                 isinstance(next_run, datetime) and next_run != next_run_before and next_run > datetime.now()):
@@ -362,7 +366,7 @@ class CampaignStars(CampaignRun):
             runner = StageStarsRunner(config=self.config, device=self.device)
             result = complete_stage(goal, progress, runner.run_goal, self.config.StarPass_MaxRunsPerStage)
             logger.attr('Star_pass_stage', f'{goal.key}: {result}')
-            if result in ('deferred', 'oil_exhausted'):
+            if result in ('deferred', 'oil_exhausted', 'oil_unverified'):
                 # The stage's own oil/morale handler already scheduled its retry
                 # and any DormRest work. Do not replace that time or dispatch farm.
                 return

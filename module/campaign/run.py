@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from module.campaign.campaign_base import CampaignBase
 from module.campaign.campaign_event import CampaignEvent
+from module.campaign.campaign_status import OilReadError
 from module.campaign.campaign_ui import MODE_SWITCH_1
 from module.campaign.stage import StageNotFound, load_stage, stage_names
 from module.campaign.star_pass import STAR_RUNS_MAX, add_star_run, clear_star_runs, star_stage_key
@@ -39,6 +40,25 @@ class CampaignRun(CampaignEvent):
         self.config.task_delay(minute=(120, 240))
         # This task only collects free supplies under the user's reward settings.
         self.config.task_call('Reward', force_call=False)
+
+    def sortie_oil(self):
+        """Read fresh oil, leaving only a recognized post-clear menu if needed."""
+        try:
+            return self.get_oil()
+        except OilReadError:
+            if not self.campaign.is_in_auto_search_menu():
+                raise
+
+        # Some event Continue menus hide the resource bar. Keep Continue on
+        # readable menus; otherwise return to the stage list before reading.
+        logger.info('Oil is hidden in the auto search menu, return to the stage list')
+        clicks = 0
+        for _ in self.loop(skip_first=False, timeout=10):
+            if self.campaign.is_in_stage():
+                return self.get_oil(skip_first_screenshot=False)
+            if clicks < 3 and self.campaign.is_in_auto_search_menu() and self.campaign.handle_auto_search_exit():
+                clicks += 1
+        raise OilReadError('Oil amount remains unverified after leaving the auto search menu')
 
     def load_campaign(self, name, folder='campaign_main'):
         """
@@ -108,7 +128,7 @@ class CampaignRun(CampaignEvent):
             return True
         # Oil limit
         if oil_check:
-            if self.get_oil() < max(OIL_FLOOR, self.config.StopCondition_OilLimit):
+            if self.sortie_oil() < max(OIL_FLOOR, self.config.StopCondition_OilLimit):
                 logger.hr('Triggered stop condition: Oil limit')
                 self.defer_for_oil()
                 return True
@@ -490,9 +510,20 @@ class CampaignRun(CampaignEvent):
 
     def run(self, name, folder='campaign_main', mode='normal', total=0):
         self.oil_deferred = False
+        self.oil_unverified = False
+        self.scheduler_deferred = False
         self.run_count = 0
         try:
             return self._run(name, folder=folder, mode=mode, total=total)
+        except OilReadError as error:
+            # Unknown oil is neither permission to enter nor proof of a low
+            # reserve. Preserve sortie quotas and retry without the long wait
+            # used for a verified shortage or an unnecessary Reward call.
+            logger.warning(error)
+            logger.warning('Oil remains unreadable, retry this task in one minute')
+            self.config.task_delay(minute=1)
+            self.oil_unverified = True
+            self.scheduler_deferred = True
         except OilExhausted as error:
             logger.warning(error)
             self.defer_for_oil()
@@ -581,6 +612,15 @@ class CampaignRun(CampaignEvent):
             self.device.click_record_clear()
             try:
                 self.campaign.run()
+            except OilReadError:
+                # Auto-search can keep spending oil independently of this
+                # worker. Leave the active sortie before the short retry; an
+                # unsafe withdrawal escalates through normal page recovery.
+                try:
+                    self.campaign.withdraw(timeout=20)
+                except CampaignEnd:
+                    pass
+                raise
             except ScriptEnd as e:
                 logger.hr('Script end')
                 logger.info(str(e))

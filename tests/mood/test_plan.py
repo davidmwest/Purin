@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 from module.mood.plan import Job, fleet_roles, rest_plan, upcoming_jobs
 from module.mood.ship import ShipMood, ShipMoods
 
@@ -128,3 +130,60 @@ def test_resting_ship_is_not_swapped_for_a_few_points():
     ships = {'Resting': (105, 0, 'rest'), 'Docked': (100, 0, 'dock')}
 
     assert plan(ships, [job(['Resting', 'Docked'], 40)], rest=['Resting'], capacity=1) == ['Resting']
+
+
+def archive(stages=4, observe=False, **kwargs):
+    config = task(fleet1=6, order='fleet1_all_fleet2_standby', **kwargs)
+    config['Archive'] = {'StagesPerRun': stages, 'ObserveOnly': observe}
+    return config
+
+
+def test_archive_weight_uses_the_bounded_batch_and_observers_need_no_rest():
+    moods = make_moods({'Archive ship': (150, 6, 'rest')})
+    data = {'WarArchivesComplete': archive(), 'WarArchivesPrize': archive(stages=2)}
+
+    assert [(entry.task, entry.weight) for entry in upcoming_jobs(data, moods)] == [
+        ('WarArchivesComplete', 20), ('WarArchivesPrize', 10)]
+    data['WarArchivesPrize']['Archive']['ObserveOnly'] = True
+    assert [(entry.task, entry.weight) for entry in upcoming_jobs(data, moods)] == [('WarArchivesComplete', 20)]
+
+
+def test_active_farming_recovers_the_fleet_that_archives_kept_out_of_dorm():
+    archive_names = [f'Archive {index}' for index in range(6)]
+    moods = make_moods({**{name: (150, 6, 'rest') for name in archive_names},
+                        'Hakuhou': (140, 1, 'dock'), 'Tirpitz': (119, 1, 'dock')})
+    event = task(next_run=NOW, order='fleet1_all_fleet2_standby')
+    event['Emotion']['Fleet1Control'] = 'keep_exp_bonus'
+    data = {'WarArchivesComplete': archive(next_run=NOW), 'Event': event}
+
+    chosen = rest_plan(upcoming_jobs(data, moods), moods, archive_names, [], 6, NOW)
+
+    assert chosen[:2] == ['Tirpitz', 'Hakuhou']
+    assert len(set(chosen) & set(archive_names)) == 4
+
+
+def test_hourly_bonus_wait_has_explicit_priority_even_over_more_combined_work():
+    ships = {'Farming': (119, 1, 'dock'), 'Archive': (150, 6, 'rest')}
+    jobs = [Job('Event', ['Farming'], 50, NOW + timedelta(hours=1), keep_exp_bonus=True),
+            Job('WarArchivesComplete', ['Archive'], 600, NOW)]
+
+    assert plan(ships, jobs, rest=['Archive'], capacity=1) == ['Farming']
+
+
+def test_archives_can_use_slots_while_bonus_farming_waits_for_oil():
+    ships = {'Farming': (119, 1, 'rest'), 'Archive': (100, 6, 'dock')}
+    jobs = [Job('Event', ['Farming'], 200, NOW + timedelta(hours=3), keep_exp_bonus=True),
+            Job('WarArchivesComplete', ['Archive'], 20, NOW)]
+
+    assert plan(ships, jobs, rest=['Farming'], capacity=1) == ['Archive']
+
+
+@pytest.mark.parametrize('mode', ['calculate', 'calculate_ignore'])
+def test_bonus_priority_follows_the_fleet_control_and_calculation_mode(mode):
+    moods = make_moods({'Mob': (119, 1, 'dock'), 'Boss': (150, 2, 'train')})
+    config = task()
+    config['Emotion'].update(Mode=mode, Fleet1Control='keep_exp_bonus', Fleet2Control='prevent_yellow_face')
+
+    assert [entry.keep_exp_bonus for entry in upcoming_jobs({'Event': config}, moods)] == [True, False]
+    config['Emotion']['Mode'] = 'ignore'
+    assert not any(entry.keep_exp_bonus for entry in upcoming_jobs({'Event': config}, moods))
