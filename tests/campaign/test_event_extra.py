@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from module.campaign import event_extra
+from module.campaign.campaign_status import OilReadError
 from module.campaign.event_extra import (EventExtraRunner, EventExtraScout, load_extra_state,
                                          save_extra_state, valid_extra_fleet_options)
 from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
@@ -15,7 +16,8 @@ from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED
                                                EX_MAP_FLEET_AMMO, EX_MAP_BOSS_SHIFTED,
                                                EX_MAP_FLEET_AMMO_SHIFTED)
 from module.config import server
-from module.exception import GameNotRunningError, ScriptError
+from module.config.config import TaskEnd
+from module.exception import GameNotRunningError, GamePageUnknownError, ScriptError
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION
 
 EVENT = 'event_20261022_cn'
@@ -266,6 +268,89 @@ def test_combat_exception_keeps_budget_spent(monkeypatch, tmp_path):
     assert result['status'] == 'blocked'
     assert result['combat_attempted'] is True
     helper._direct_extra_battle.assert_called_once()
+
+
+def test_unreadable_oil_preflight_keeps_ex_job_enabled_and_retries_without_spending_attempt(
+        monkeypatch, tmp_path):
+    from module.campaign.campaign_stars import EventExtra
+
+    helper = runner_controller()
+    helper.config.Campaign_Event = EVENT
+    helper.config.Scheduler_Enable = True
+    helper.config.task_delay = Mock()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
+    helper.get_oil.side_effect = OilReadError('oil is hidden')
+    helper._fleet_operators = Mock()
+    helper._prepare_extra_fleet = lambda record: EventExtraRunner._prepare_extra_fleet(helper, record)
+    helper._direct_extra_battle = Mock()
+    run = helper.run
+    helper.run = lambda event: run(event, folder=tmp_path)
+    monkeypatch.setattr(event_extra, 'EventExtraRunner', Mock(return_value=helper))
+    job = EventExtra.__new__(EventExtra)
+    job.config, job.device = helper.config, helper.device
+    job.ui_get_current_page = Mock()
+    job.call_then_task = Mock()
+
+    with pytest.raises(TaskEnd, match='retry in one minute'):
+        job.run()
+
+    saved = load_extra_state('f2p', tmp_path)[f'{EVENT}/combat']
+    assert saved['status'] == 'deferred' and saved['reason'] == 'oil_unverified'
+    assert saved['combat_attempted'] is False and saved['returned_event'] is True
+    assert helper.config.Scheduler_Enable is True
+    helper.config.task_delay.assert_called_once_with(minute=1)
+    job.call_then_task.assert_not_called()
+    helper._fleet_operators.assert_not_called()
+    helper._direct_extra_battle.assert_not_called()
+    helper.device.click.assert_not_called()
+    assert helper.config.override.call_args_list[-1].kwargs == {'STAGE_ENTRANCE': ['old']}
+
+    helper._prepare_extra_fleet = Mock(return_value=(True, 'fleet_6_verified'))
+    helper._direct_extra_battle.side_effect = lambda record, reserve: (reserve() or 'complete', 'battle_won')
+    result = helper.run(EVENT)
+    assert result['status'] == 'complete' and result['combat_attempted'] is True
+    assert helper._inspect_extra.call_count == 2
+    helper._direct_extra_battle.assert_called_once()
+
+
+def test_unreadable_oil_preflight_unknown_return_remains_blocked(monkeypatch, tmp_path):
+    helper = runner_controller()
+    helper.config.task_delay = Mock()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
+    helper._prepare_extra_fleet.side_effect = OilReadError('oil is hidden')
+    helper._return_extra_event = Mock(return_value=False)
+    helper._direct_extra_battle = Mock()
+
+    with pytest.raises(GamePageUnknownError, match='return could not be verified'):
+        helper.run(EVENT, folder=tmp_path)
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['status'] == 'blocked' and result['reason'] == 'oil_unverified'
+    assert result['combat_attempted'] is False and result['returned_event'] is False
+    assert result['reused'] is True
+    helper._inspect_extra.assert_called_once()
+    helper._direct_extra_battle.assert_not_called()
+    helper.config.task_delay.assert_not_called()
+
+
+def test_unreadable_oil_after_ex_entry_keeps_attempt_spent(monkeypatch, tmp_path):
+    helper = runner_controller()
+    helper.config.task_delay = Mock()
+    monkeypatch.setattr(event_extra, 'ensure_event_page', Mock(return_value=True))
+    helper._return_extra_event = Mock()
+
+    def battle(record, reserve):
+        reserve()
+        raise OilReadError('oil became hidden after entry')
+
+    helper._direct_extra_battle = Mock(side_effect=battle)
+    with pytest.raises(OilReadError, match='after entry'):
+        helper.run(EVENT, folder=tmp_path)
+    result = helper.run(EVENT, folder=tmp_path)
+    assert result['status'] == 'blocked' and result['reason'] == 'combat_exception'
+    assert result['combat_attempted'] is True and result['reused'] is True
+    helper._direct_extra_battle.assert_called_once()
+    helper._return_extra_event.assert_not_called()
+    helper.config.task_delay.assert_not_called()
 
 
 def fleet_options(selected=6):

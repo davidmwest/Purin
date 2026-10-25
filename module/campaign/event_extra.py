@@ -10,6 +10,7 @@ import numpy as np
 
 from module.base.timer import Timer
 from module.campaign.campaign_ui import ASIDE_SWITCH_20241219, MODE_SWITCH_20241219, CampaignUI
+from module.campaign.campaign_status import OilReadError
 from module.campaign.event_completion import EventCompletion
 from module.campaign.event_completion_assets import TEMPESTA_CAMPAIGN, TEMPESTA_EX_LOCKED
 from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED_SUBMARINE,
@@ -19,8 +20,9 @@ from module.campaign.event_extra_assets import (EX_DISABLED_FLEET_2, EX_DISABLED
                                                EX_MAP_BOSS_SHIFTED, EX_MAP_FLEET_AMMO_SHIFTED)
 from module.combat.assets import AUTOMATION_ON, BATTLE_PREPARATION, DEFEAT_TIPS
 from module.combat.combat import Combat
+from module.config.config import TaskEnd
 from module.eventstory.eventstory import ensure_event_page, ensure_event_running, ensure_event_switch, save_event_diagnostic
-from module.exception import CampaignNameError, ScriptError
+from module.exception import CampaignNameError, GamePageUnknownError, ScriptError
 from module.handler.assets import IN_MAP
 from module.logger import logger
 from module.map.assets import (FLEET_1_ADVICE, FLEET_1_BAR, FLEET_1_CHOOSE, FLEET_1_CLEAR,
@@ -264,7 +266,7 @@ class EventExtraRunner(EventExtraScout, Combat):
         if (self.config.Fleet_Fleet1 != 6 or self.config.Fleet_Fleet2
                 or self.config.Submarine_Fleet):
             return False, 'requires_fleet_6_only'
-        # A missing oil read returns zero; never authorize a sortie from it.
+        # An unreadable counter raises OilReadError before any fleet changes.
         if self.get_oil() < max(100, self.config.StopCondition_OilLimit):
             return False, 'oil_floor_reached'
         fleet, secondary, submarine = self._fleet_operators()
@@ -522,7 +524,11 @@ class EventExtraRunner(EventExtraScout, Combat):
         # An earlier scout, including a locked one, cannot consume this budget.
         key = f'{event}/combat'
         saved = state.get(key)
-        if saved and (saved.get('combat_attempted') or saved.get('status') != 'locked'):
+        oil_retry = (saved and saved.get('status') == 'deferred'
+                     and saved.get('reason') == 'oil_unverified'
+                     and saved.get('combat_attempted') is False
+                     and saved.get('returned_event') is True)
+        if saved and not oil_retry and (saved.get('combat_attempted') or saved.get('status') != 'locked'):
             result = dict(saved, reused=True)
             if result.get('status') == 'preparing':
                 result.update(status='blocked', reason='previous_preparation_interrupted')
@@ -577,6 +583,25 @@ class EventExtraRunner(EventExtraScout, Combat):
             record['returned_event'] = self._return_extra_event(record)
             if not record['returned_event'] and status == 'complete':
                 record.update(status='blocked', reason='battle_won_but_event_return_unverified')
+        except OilReadError as error:
+            if record.get('combat_attempted'):
+                record.update(status='blocked', reason='combat_exception')
+                self._extra_capture(record, 'exception')
+                raise
+            # Preserve the one-attempt budget until a known safe return proves
+            # this oil preflight never entered the sortie. An unknown return
+            # keeps the journal blocked and uses normal page recovery.
+            record.update(status='blocked', reason='oil_unverified', returned_event=False)
+            self._extra_capture(record, 'oil_unverified')
+            record['returned_event'] = self._return_extra_event(record)
+            if record['returned_event'] is not True:
+                raise GamePageUnknownError('EX oil preflight return could not be verified') from error
+            record['status'] = 'deferred'
+            logger.warning(error)
+            self.config.task_delay(minute=1)
+            # Leave the scheduler job enabled; its wrapper disables completed
+            # or blocked invocations after a normal return.
+            raise TaskEnd('EX oil remains unreadable; retry in one minute')
         except Exception:
             record.update(status='blocked', reason='combat_exception')
             self._extra_capture(record, 'exception')

@@ -16,7 +16,7 @@ from module.exception import GameTooManyClickError
 from module.map.lineup_rotation import SLOTS_PER_FLEET, lineup_slot
 from module.mood.dorm_rest import DormRest, DormReadError, PickerOverlapError, PickerCard, DormShip, dorm_mood, is_dorm_food_popup, picker_drawn, \
     picker_fleets_ended, picker_is_top, picker_low_mood_ended, picker_name_similarity, picker_row_tops, \
-    read_dorm_floor, read_picker_row, ship_list_tab, update_moods
+    read_dorm_floor, read_picker_row, resident_level, ship_list_tab, update_moods
 from module.mood.dorm_rest import PICKER_SCROLL_NAME
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
 from module.mood.ship import ShipMood, ShipMoods, portrait_signature
@@ -738,7 +738,7 @@ def test_dorm_out_of_food_is_ignored():
     assert rest.device.click.call_args[0][0].name == 'DORM_FOOD_IGNORE'
 
 
-def test_fleet_missed_on_a_card_not_read_well_is_kept():
+def test_unrecognized_fleet_badge_preserves_membership_even_when_level_is_readable():
     # Hakuhou of fleet 1, whose level reads 0 on her card, was read in no fleet on the second floor
     moods = ShipMoods(Config())
     moods.ships['Hakuhou'] = ShipMood('Hakuhou', mood=147, time=NOW - timedelta(minutes=15), place='rest', speed=50,
@@ -747,11 +747,187 @@ def test_fleet_missed_on_a_card_not_read_well_is_kept():
     moods.ships['Hasty'] = ShipMood('Hasty', mood=122, time=NOW - timedelta(minutes=15), fleet=1, level=74)
     dorm = [DormShip(place='rest', name='Hakuhou', level=82, mood=150, speed=50)]
     cards = [card(0, 'Hakuhou', fleet=0, level=0),
-             # Levels read: these ships left their fleets
+             # A readable level does not prove that an unmatched badge is absent.
              card(1, 'Tiger', fleet=0, level=100), card(2, 'Hasty', fleet=0, level=74)]
 
     update_moods(moods, dorm, cards, NOW)
 
     assert moods.ships['Hakuhou'].fleet == 1
-    assert moods.ships['Tiger'].fleet == 0
-    assert moods.ships['Hasty'].fleet == 0
+    assert moods.ships['Tiger'].fleet == 2
+    assert moods.ships['Hasty'].fleet == 1
+
+
+@pytest.mark.parametrize('old_fleet, observed_fleet, expected', [(1, 2, 2), (0, 0, 0)])
+def test_positive_badge_updates_membership_and_unknown_zero_does_not_create_one(old_fleet, observed_fleet, expected):
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=old_fleet, time=NOW)
+
+    update_moods(moods, [], [card(1, 'Hakuhou', level=101, fleet=observed_fleet)], NOW)
+
+    assert moods.ships['Hakuhou'].fleet == expected
+
+
+def test_positive_submarine_identity_clears_surface_fleet_membership():
+    moods = ShipMoods(Config())
+    moods.ships['Whydah'] = ShipMood('Whydah', level=101, fleet=1, time=NOW)
+    dorm = [DormShip(place='rest', name='Whydah', level=101, mood=150, speed=50)]
+
+    update_moods(moods, dorm, [card(1, 'Whydah', level=101, fleet=1, submarine=True)], NOW)
+
+    assert moods.ships['Whydah'].fleet == 0
+
+
+def test_exact_picker_level_repairs_hakuhou_floor_digit_drop_without_losing_rest():
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=1, mood=145, time=NOW)
+    dorm = [DormShip(place='rest', name='Hakuhou', level=11, mood=4, speed=50)]
+    cards = [card(0, '', remove=True), card(1, 'Hakuhou', level=101, mood=145, fleet=0)]
+
+    update_moods(moods, dorm, cards, NOW)
+
+    known = moods.ships['Hakuhou']
+    assert (known.level, known.fleet, known.mood, known.place, known.speed) == (101, 1, 145, 'rest', 50)
+    assert dorm[0].known == cards[1].ship == 'Hakuhou'
+
+
+@pytest.mark.parametrize('problem', [
+    'duplicate_card', 'duplicate_known_name', 'truncated', 'similar_name', 'conflicting_level',
+    'substituted_digit', 'unknown_stored_level', 'unknown_picker_level', 'missing_card', 'already_taken',
+    'assigned_other_ship',
+])
+def test_floor_level_repair_requires_independent_unique_exact_agreement(problem):
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, time=NOW)
+    resident = DormShip(place='rest', name='Hakuhou', level=11, mood=4, speed=50)
+    cards = [card(1, 'Hakuhou', level=101)]
+    taken = ()
+    if problem == 'duplicate_card':
+        cards.append(card(2, 'Hakuhou', level=101))
+    elif problem == 'duplicate_known_name':
+        moods.ships['other'] = ShipMood('Haku hou', level=101, time=NOW)
+    elif problem == 'truncated':
+        cards[0].truncated = True
+    elif problem == 'similar_name':
+        cards[0].name = 'Hakuhou META'
+    elif problem == 'conflicting_level':
+        cards[0].level = 105
+    elif problem == 'substituted_digit':
+        resident.level = 12
+    elif problem == 'unknown_stored_level':
+        moods.ships['Hakuhou'].level = 0
+    elif problem == 'unknown_picker_level':
+        cards[0].level = 0
+    elif problem == 'missing_card':
+        cards = []
+    elif problem == 'already_taken':
+        taken = ('Hakuhou',)
+    elif problem == 'assigned_other_ship':
+        cards[0].ship = 'Another'
+
+    assert resident_level(moods, resident, cards, taken=taken) == resident.level
+
+
+@pytest.mark.parametrize('place, fleet', [('rest', 1), ('dock', 1), ('dock', 0)])
+def test_fresh_one_level_low_ocr_never_lowers_stored_level(place, fleet):
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=1, time=NOW)
+    dorm = [DormShip(place='rest', name='Hakuhou', level=100, mood=145, speed=50)] if place == 'rest' else []
+
+    update_moods(moods, dorm, [card(1, 'Hakuhou', level=100, fleet=fleet)], NOW)
+
+    assert moods.ships['Hakuhou'].level == 101
+
+
+@pytest.mark.parametrize('still_resident', [True, False])
+def test_post_confirmation_repairs_floor_level_only_for_freshly_observed_resident(monkeypatch, still_resident):
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=1, mood=145, time=NOW)
+    moods.ships['Gangut'] = ShipMood('Gangut', level=100, fleet=1, mood=100, time=NOW)
+    moods.save = Mock()
+    monkeypatch.setattr('module.mood.dorm_rest.ShipMoods', lambda config: moods)
+    monkeypatch.setattr('module.mood.dorm_rest.upcoming_jobs', lambda *args: [])
+    monkeypatch.setattr('module.mood.dorm_rest.rest_plan', lambda *args, **kwargs: ['Hakuhou', 'Gangut'])
+    rest = DormRest.__new__(DormRest)
+    rest.config = SimpleNamespace(data={})
+    rest.device = SimpleNamespace()
+    for name in ('ui_ensure', 'dorm_ship_list_enter', 'picker_enter', 'dock_filter_set',
+                 'dock_sort_method_dsc_set', 'picker_confirm', 'dorm_ship_list_quit'):
+        setattr(rest, name, Mock())
+    haku = lambda: DormShip(place='rest', name='Hakuhou', level=11, mood=4, speed=50)
+    gangut = lambda: DormShip(place='rest', name='Gangut', level=100, mood=100, speed=50)
+    after = [haku(), gangut()] if still_resident else [gangut()]
+    rest.dorm_floor_read = Mock(side_effect=[([], 6), ([haku()], 6), (after, 6)])
+    rest.picker_scan = Mock(return_value=[card(0, '', remove=True),
+                                        card(1, 'Hakuhou', level=101, fleet=1, mood=145),
+                                        card(2, 'Gangut', level=100, fleet=1, mood=100)])
+    rest.picker_apply = Mock(return_value=True)
+
+    rest.rest_ships()
+
+    assert moods.ships['Hakuhou'].level == 101
+    assert moods.ships['Hakuhou'].place == ('rest' if still_resident else 'dock')
+    assert moods.ships['Hakuhou'].speed == (50 if still_resident else 20)
+    rest.picker_confirm.assert_called_once()
+
+
+def test_badge_diagnostic_saves_current_frame_and_keeps_at_most_ten_per_account(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    dorm = DormRest.__new__(DormRest)
+    dorm.config = SimpleNamespace(config_name='alas')
+    dorm.device = SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8))
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=1)
+    folder = tmp_path / 'log' / 'dorm_rest'
+    folder.mkdir(parents=True)
+    for index in range(10):
+        (folder / f'2000-01-01_00-00-{index:02}_alas_unread_fleet.png').write_bytes(b'old')
+    (folder / '2000-01-01_00-00-00_f2p_unread_fleet.png').write_bytes(b'other account')
+
+    assert dorm.picker_badge_diagnostic([card(1, 'Hakuhou', level=101)], moods)
+
+    files = list(folder.glob('*_alas_unread_fleet.png'))
+    assert len(files) == 10
+    actual = [path for path in files if not path.name.startswith('2000')]
+    assert len(actual) == 1
+    assert cv2.imread(str(actual[0])).shape == (720, 1280, 3)
+    assert (folder / '2000-01-01_00-00-00_f2p_unread_fleet.png').exists()
+
+
+def test_badge_diagnostic_failure_is_nonfatal_and_counts_as_the_scan_attempt(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    dorm = DormRest.__new__(DormRest)
+    dorm.config = SimpleNamespace(config_name='alas')
+    dorm.device = SimpleNamespace(image=None)
+    moods = ShipMoods(Config())
+    moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=1)
+    monkeypatch.setattr('module.mood.dorm_rest.save_image', Mock(side_effect=OSError('disk unavailable')))
+
+    assert dorm.picker_badge_diagnostic([card(1, 'Hakuhou', level=101)], moods)
+
+
+def test_scan_saves_only_one_unread_badge_frame_even_across_adaptive_retries(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    dorm, state = physical_picker(monkeypatch, overshoot=4)
+    dorm.config = SimpleNamespace(config_name='alas')
+    moods = ShipMoods(Config())
+    moods.ships['Tirpitz'] = ShipMood('Tirpitz', level=100, fleet=1)
+    moods.ships['Isokaze'] = ShipMood('Isokaze', level=100, fleet=1)
+    from module.mood import dorm_rest
+    original_read = dorm_rest.read_picker_row
+
+    def unread_badges(image, top, row):
+        found = original_read(image, top, row)
+        for found_card in found:
+            if found_card.name in moods.ships:
+                found_card.fleet = 0
+        return found
+
+    monkeypatch.setattr(dorm_rest, 'read_picker_row', unread_badges)
+    save = Mock()
+    monkeypatch.setattr(dorm_rest, 'save_image', save)
+
+    found = dorm.picker_scan([], moods=moods)
+
+    assert {'Tirpitz', 'Isokaze'} <= {c.name for c in found}
+    assert state['resets'] == 1
+    save.assert_called_once()

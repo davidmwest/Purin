@@ -5,6 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from module.campaign.campaign_status import OilReadError
+from module.campaign.run import CampaignRun
 from module.config.config import TaskEnd
 from module.event import campaign_sp as sp
 from module.exception import ScriptError
@@ -138,6 +140,70 @@ def test_task_switch_before_first_run_stops_without_claiming_success(monkeypatch
     assert current_record(tmp_path)['status'] == 'reserved'
     owner.config.task_stop.assert_called_once()
     owner.config.task_delay.assert_not_called()
+
+
+@pytest.mark.parametrize('entered', [False, True])
+def test_unreadable_oil_refunds_only_verified_pre_entry_daily_attempt(monkeypatch, tmp_path, entered):
+    owner = controller(monkeypatch, tmp_path)
+    executions = []
+
+    def load(current, *args, **kwargs):
+        current.campaign = SimpleNamespace(run=Mock(), run_lost=False)
+
+    def execute(current, *args, **kwargs):
+        assert current_record(tmp_path)['status'] == 'reserved'
+        current.load_campaign('sp', sp.DAILY_SP_EVENT)
+        executions.append(current)
+        if len(executions) == 1:
+            if entered:
+                current.campaign.run()
+            raise OilReadError('oil is hidden')
+        current.campaign.run()
+        current.run_count = 1
+
+    monkeypatch.setattr(sp.EventBase, 'load_campaign', load)
+    monkeypatch.setattr(CampaignRun, '_run', execute)
+    owner.run()
+
+    assert owner.oil_unverified is True
+    assert owner._daily_sp_attempt_started is entered
+    assert owner.campaign.run_lost is False
+    owner.config.task_delay.assert_called_once_with(minute=1)
+    owner.config.task_stop.assert_not_called()
+    assert owner.config.Scheduler_Enable is True
+    if entered:
+        assert current_record(tmp_path)['status'] == 'reserved'
+    else:
+        assert sp.load_daily_sp(tmp_path)['periods'] == {}
+
+    restarted = controller(monkeypatch, tmp_path)
+    restarted.run()
+    assert len(executions) == (1 if entered else 2)
+    restarted.config.task_delay.assert_called_once_with(server_update=True)
+    assert current_record(tmp_path)['status'] == ('reserved' if entered else 'complete')
+
+
+def test_failed_oil_preflight_refund_write_keeps_durable_daily_reservation(monkeypatch, tmp_path):
+    owner = controller(monkeypatch, tmp_path)
+
+    def execute(current, *args, **kwargs):
+        raise OilReadError('oil is hidden')
+
+    save = sp.save_daily_sp
+    calls = []
+
+    def save_once(state, folder):
+        calls.append(True)
+        if len(calls) > 1:
+            raise OSError('refund write failed')
+        save(state, folder)
+
+    monkeypatch.setattr(CampaignRun, '_run', execute)
+    monkeypatch.setattr(sp, 'save_daily_sp', save_once)
+    with pytest.raises(OSError, match='refund write failed'):
+        owner.run()
+    assert current_record(tmp_path)['status'] == 'reserved'
+    owner.config.task_delay.assert_called_once_with(minute=1)
 
 
 @pytest.mark.parametrize('account,event', [('f2p', sp.DAILY_SP_EVENT), ('alas', 'event_other'),

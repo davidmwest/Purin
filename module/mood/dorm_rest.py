@@ -12,6 +12,7 @@ import re
 from math import ceil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
 import cv2
@@ -20,7 +21,7 @@ import numpy as np
 from module.base.button import Button
 from module.base.template import Template
 from module.base.timer import Timer
-from module.base.utils import color_similar, crop, get_color
+from module.base.utils import color_similar, crop, get_color, save_image
 from module.combat.level import LevelOcr
 from module.exception import GameTooManyClickError
 from module.logger import logger
@@ -217,7 +218,7 @@ FLEET_SIMILARITY = 0.7
 def read_fleet(image, x, top, selected):
     """
     Returns:
-        int: Fleet on the badge of a card, 0 for none.
+        int: Fleet positively recognized on the badge, 0 if no badge template matched.
     """
     area = image[top + 117:top + 162, x:x + 35]
     if selected:
@@ -527,8 +528,9 @@ def dorm_mood(read, predicted):
 
 def card_misses_fleet(card, known):
     """
-    The badge of a card OCR can not read, like the shimmering frame of an ultra rare whose level reads 0, is missed
-    at times: Hakuhou of fleet 1 was read in no fleet, and left out of the mood of her fleet.
+    No digit template matching is not evidence that a ship left her fleet. Selected or shimmering
+    cards can hide the badge even while the level is readable. Preserve membership until a positive
+    badge or another fleet observer establishes a change.
 
     Args:
         card (PickerCard): Read with no fleet
@@ -537,7 +539,35 @@ def card_misses_fleet(card, known):
     Returns:
         bool: If she stays in the fleet she was in
     """
-    return not card.level and bool(known.fleet)
+    return bool(known.fleet)
+
+
+def resident_level(moods, resident, cards, taken=()):
+    """Repair a dropped floor-level digit only through an independent, unique picker identity.
+
+    The floor has read Hakuhou 101 as 11. Her exact full name must occur once on each of the known
+    roster and picker, and the picker level must agree with the stored level. Similar names,
+    duplicate cards, truncated names and arbitrary conflicting levels cannot establish this proof.
+    """
+    key = name_key(resident.name)
+    known = [ship for ship in moods.ships.values() if name_key(ship.name) == key]
+    matches = [card for card in cards if not card.remove and name_key(card.name) == key]
+    if len(known) != 1 or len(matches) != 1:
+        return resident.level
+    known, card = known[0], matches[0]
+    if known.name in taken or card.truncated or card.ship not in ('', known.name) \
+            or not known.level or not card.level or abs(card.level - known.level) > 1 \
+            or not resident.level or resident.level >= known.level - 1:
+        return resident.level
+    # Accept only a strict digit deletion, not a guessed or substituted level.
+    full, read = str(card.level), str(resident.level)
+    digits = iter(full)
+    if len(read) >= len(full) or not all(any(digit == current for current in digits) for digit in read):
+        return resident.level
+    level = max(known.level, card.level)
+    logger.info(f'Dorm {resident.place}: {known.name} floor level {resident.level} repaired to {level} '
+                'by exact picker name and stored level')
+    return level
 
 
 def update_moods(moods, dorm, cards, now):
@@ -559,6 +589,7 @@ def update_moods(moods, dorm, cards, now):
     # The picker lists them first, the second floor then the first, in the order of the dorm.
     residents = [ship for ship in dorm if ship.place == 'rest'] + [ship for ship in dorm if ship.place == 'train']
     for position, ship in enumerate(residents):
+        level = resident_level(moods, ship, listed, taken=taken)
         # Her card on the picker tells her fleet, and her name if the dock did not cut it
         scores = [(name_similarity(card.name, ship.name), card) for card in listed if not card.ship]
         score, card = max(scores, key=lambda pair: pair[0], default=(0, None))
@@ -567,7 +598,7 @@ def update_moods(moods, dorm, cards, now):
             if card is not None and ship.level and card.level and abs(card.level - ship.level) > 1:
                 card = None
         names = [ship.name] if card is None else [ship.name, card.name]
-        known = identify(moods, names, ship.level, card_sig=card.sig if card is not None else None,
+        known = identify(moods, names, level, card_sig=card.sig if card is not None else None,
                          dorm_sig=ship.sig, taken=taken)
         if known is None:
             first = [card.name] if card is not None and not card.truncated else []
@@ -579,14 +610,14 @@ def update_moods(moods, dorm, cards, now):
         ship.known = known.name
         predicted = known.at(now) if known.name in moods.ships else None
         known.mood, known.time, known.place, known.speed = ship.mood, now, ship.place, ship.speed
-        if ship.level:
-            known.level = ship.level
+        if level:
+            known.level = max(known.level, level)
         known.sig = ship.sig or known.sig
         if card is not None:
             card.ship = known.name
             known.card_sig = card.sig or known.card_sig
             fleet = 0 if card.submarine else card.fleet
-            if fleet or not card_misses_fleet(card, known):
+            if card.submarine or fleet or not card_misses_fleet(card, known):
                 known.fleet = fleet
             # Both screens show her mood, OCR rather drops a digit than adds one
             known.mood = max(known.mood, card.mood)
@@ -606,7 +637,7 @@ def update_moods(moods, dorm, cards, now):
         taken.add(known.name)
         card.ship = known.name
         known.mood, known.time, known.place, known.speed = card.mood, now, 'dock', DOCK_SPEED
-        known.level, known.fleet = card.level or known.level, card.fleet
+        known.level, known.fleet = max(known.level, card.level), card.fleet
         known.sig = known.sig or card.sig
         known.card_sig = card.sig or known.card_sig
 
@@ -622,7 +653,7 @@ def update_moods(moods, dorm, cards, now):
         known.mood, known.time, known.place, known.speed = card.mood, now, 'dock', DOCK_SPEED
         if not card_misses_fleet(card, known):
             known.fleet = 0
-        known.level = card.level or known.level
+        known.level = max(known.level, card.level)
         known.sig = known.sig or card.sig
         known.card_sig = card.sig or known.card_sig
     # Those not followed yet, known by level and portrait
@@ -630,7 +661,7 @@ def update_moods(moods, dorm, cards, now):
 
     # The floor lists establish who left the dorm. A missing picker card does not establish that
     # she left her fleet: a clipped or unread row must not remove her from the fleet's mood check.
-    # Only a freshly identified card above clears membership; stale ships expire after a while.
+    # A zero badge match on an identified card is ambiguous too; stale ships expire after a while.
     seen = {card.ship for card in cards if card.ship} | taken
     in_lineups = moods.in_lineups()
     for name in list(moods.ships):
@@ -904,7 +935,28 @@ class DormRest(Dock):
             self.handle_dock_cards_loading()
         raise DormReadError('Dorm picker can not get back to the top')
 
-    def picker_scan(self, residents, low_mood=False):
+    def picker_badge_diagnostic(self, cards, moods):
+        """Save one current frame when a known member has an unrecognized fleet badge."""
+        names = {name_key(ship.name) for ship in moods.ships.values() if ship.fleet}
+        unread = [card.name for card in cards if not card.remove and not card.submarine
+                  and not card.fleet and not card.truncated and name_key(card.name) in names]
+        if not unread:
+            return False
+        try:
+            folder = Path('./log/dorm_rest')
+            folder.mkdir(parents=True, exist_ok=True)
+            account = re.sub(r'[^a-zA-Z0-9_-]', '_', str(getattr(self.config, 'config_name', 'unknown')))
+            path = folder / f'{datetime.now():%Y-%m-%d_%H-%M-%S_%f}_{account}_unread_fleet.png'
+            save_image(self.device.image, str(path))
+            logger.warning(f'Dorm picker: unread fleet badge for {unread}; preserving membership, screen: {path}')
+            for old in sorted(folder.glob(f'*_{account}_unread_fleet.png'))[:-10]:
+                old.unlink()
+        except Exception as error:
+            logger.warning(f'Dorm picker badge diagnostic not saved: {error}')
+        # A failed diagnostic must not cause repeated filesystem attempts during the scan either.
+        return True
+
+    def picker_scan(self, residents, low_mood=False, moods=None):
         """
         Read the cards of the picker: the dorm residents, then the ships in fleets, by mood lowest first.
 
@@ -912,6 +964,7 @@ class DormRest(Dock):
             residents (list[str]): Names of the ships in the dorm, both floors.
             low_mood (bool): Read on the other ships that are low on mood, after the ships in fleets.
                 Ships in the lineup of a stage are among them.
+            moods (ShipMoods): Prior membership, used only for one diagnostic frame per scan.
 
         Returns:
             list[PickerCard]:
@@ -928,6 +981,7 @@ class DormRest(Dock):
         self._picker_rows = {}
         timeout = Timer(PICKER_SCAN_SECONDS).start()
         rows = PICKER_SCROLL_ROWS
+        badge_diagnostic = False
         for attempt in range(PICKER_SCAN_RETRIES + 1):
             if timeout.reached():
                 raise DormReadError('Dorm picker scan timed out')
@@ -946,6 +1000,8 @@ class DormRest(Dock):
                         if row in self._picker_rows:
                             continue
                         self._picker_rows[row] = read_picker_row(image, top, row)
+                        if moods is not None and not badge_diagnostic:
+                            badge_diagnostic = self.picker_badge_diagnostic(self._picker_rows[row], moods)
                     cards = {card.index: card for row in self._picker_rows.values() for card in row}
                     if low_mood:
                         ended = picker_low_mood_ended(cards, residents)
@@ -1130,7 +1186,7 @@ class DormRest(Dock):
         residents = [ship.name for ship in train + rest]
         # Ships of a lineup in no fleet are read with the others low on mood
         lineup_only = [name for name in moods.in_lineups() if name in moods.ships and not moods.ships[name].fleet]
-        cards = self.picker_scan(residents, low_mood=bool(moods.unknown or lineup_only))
+        cards = self.picker_scan(residents, low_mood=bool(moods.unknown or lineup_only), moods=moods)
         if not picker_drawn(cards):
             raise DormReadError('Dorm picker read before it was drawn')
         now = datetime.now().replace(microsecond=0)
@@ -1173,10 +1229,12 @@ class DormRest(Dock):
             rest, _ = self.dorm_floor_read('rest')
             resting = set()
             for ship in rest:
-                known = identify(moods, [ship.name], ship.level, dorm_sig=ship.sig, taken=resting)
+                level = resident_level(moods, ship, cards, taken=resting)
+                known = identify(moods, [ship.name], level, dorm_sig=ship.sig, taken=resting)
                 if known is not None:
                     mood = dorm_mood(ship.mood, known.at(now))
                     known.place, known.speed, known.mood, known.time = 'rest', ship.speed, mood, now
+                    known.level = max(known.level, level)
                     resting.add(known.name)
             logger.attr('Rest now', sorted(resting))
             for name in rest_names:

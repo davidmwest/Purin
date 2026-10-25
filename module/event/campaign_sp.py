@@ -66,6 +66,22 @@ def save_daily_sp(state, folder='./config/stars'):
 class CampaignSP(EventBase):
     _daily_sp_folder = './config/stars'
 
+    def load_campaign(self, *args, **kwargs):
+        loaded = super().load_campaign(*args, **kwargs)
+        campaign = self.campaign
+        if getattr(self, '_daily_sp_tracked_campaign', None) is not campaign:
+            original_run = campaign.run
+
+            def run_campaign(*args, **kwargs):
+                # Once map execution begins, an interruption cannot prove that
+                # the daily attempt is still available.
+                self._daily_sp_attempt_started = True
+                return original_run(*args, **kwargs)
+
+            campaign.run = run_campaign
+            self._daily_sp_tracked_campaign = campaign
+        return loaded
+
     def run(self, *args, **kwargs):
         if 'sp' not in stage_names(self.config.Campaign_Event):
             logger.info(f'{self.config.Campaign_Event} has no stage sp')
@@ -88,11 +104,20 @@ class CampaignSP(EventBase):
             save_daily_sp(daily_state, self._daily_sp_folder)
             self.run_count = 0
 
+        self._daily_sp_attempt_started = False
         try:
             super().run(name=self.config.Campaign_Name, folder=self.config.Campaign_Event, total=1)
         except TaskEnd:
             # Catch task switch
             pass
+        if getattr(self, 'oil_unverified', False):
+            if daily_state is not None and not self._daily_sp_attempt_started:
+                # CampaignRun already scheduled a one-minute retry. Its oil
+                # preflight did not invoke map execution, so refund only this
+                # known pre-entry interruption; crashes remain spent.
+                del daily_state['periods'][period]
+                save_daily_sp(daily_state, self._daily_sp_folder)
+            return
         if (daily_state is not None and self.run_count > 0
                 and getattr(getattr(self, 'campaign', None), 'run_lost', None) is False):
             record.update(status='complete', completed_at=datetime.now().isoformat(),
