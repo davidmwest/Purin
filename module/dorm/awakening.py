@@ -41,6 +41,32 @@ def canonical_names(key):
     return frozenset(known for known in ship_name_keys() if len(key) >= 4 and key in known)
 
 
+def boundary_identity(name):
+    """Resolve clipped labels only when they identify one known full ship name.
+
+    This is stricter than same_name(): no OCR similarity can select a dock card.
+    Unknown names remain exact matches; ambiguous fragments identify no ship.
+    """
+    key = name_key(name)
+    if not valid_name(key):
+        return None
+    known = canonical_names(key)
+    if len(known) > 1:
+        return None
+    return next(iter(known)) if known else key
+
+
+@lru_cache(maxsize=256)
+def possible_boundary_identities(key):
+    """Keep all identities a clipped dock label could hide, including variants.
+
+    An empty set means the label is unknown, rather than proof of another ship.
+    """
+    if len(key) < 4 and key not in ship_name_keys():
+        return canonical_names(key)
+    return frozenset(known for known in ship_name_keys() if key in known)
+
+
 def same_name(first, second):
     """Accept scrolling text only when it supports the same ship identity."""
     first, second = name_key(first), name_key(second)
@@ -181,6 +207,9 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
         return result
 
     def _food_boundary_card(self, resident):
+        identity = boundary_identity(resident.name)
+        if identity is None:
+            raise DormReadError(f'Dorm food: ambiguous resident identity {resident.name}')
         # Leaving the dock clears any earlier name search before Android types.
         self.ui_ensure(page_dorm)
         self.ui_ensure(page_dock)
@@ -197,16 +226,28 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
             current = tuple((name, ship.level, tuple(ship.button.area)) for ship, name, _ in cards)
             if current == previous:
                 fits = [(ship, index) for ship, name, index in cards
-                        if name == name_key(resident.name) and ship.level == resident.level]
+                        if boundary_identity(name) == identity and ship.level == resident.level]
                 if len(fits) != 1:
                     raise DormReadError(f'Dorm food: {resident.name} Lv.{resident.level} '
                                         f'has {len(fits)} exact matching copies')
                 ship, index = fits[0]
+                for other, name, other_index in cards:
+                    # A low dorm read may have lost its leading 1. Another copy
+                    # at any level could be the real resident, so Info on the
+                    # apparent low-level match alone cannot authorize food.
+                    if other_index == index or (resident.level >= 100 and other.level != resident.level):
+                        continue
+                    possible = possible_boundary_identities(name)
+                    if not possible or identity in possible:
+                        raise DormReadError(f'Dorm food: {resident.name} has another possible matching copy')
                 return SimpleNamespace(button=ship.button, column=index % 7, top=ship.button.area[1])
             previous = current
         raise DormReadError(f'Dorm food: search for {resident.name} did not settle')
 
     def _food_boundary_exp(self, resident):
+        identity = boundary_identity(resident.name)
+        if identity is None:
+            raise DormReadError(f'Dorm food: ambiguous resident identity {resident.name}')
         card = self._food_boundary_card(resident)
         reader = InfoReader()
         previous = None
@@ -217,10 +258,12 @@ class DormAwakening(DormRest, LevelingFleet, Inventory):
             if taken is None:
                 raise DormReadError(f'Dorm food: no fresh Info page for {resident.name}')
             image, scroll, _ = taken
-            name, _ = reader.read_name(image, reader.read_affinity(image), scroll)
+            name, whole = reader.read_name(image, reader.read_affinity(image), scroll)
             level = reader.ocr_level.ocr(image)
             exp, next_exp = parse_exp(reader.ocr_exp.ocr(image))
-            if name_key(name) != name_key(resident.name) or level != resident.level:
+            # A clipped dock label is a candidate only. The complete Info name
+            # must prove the full identity, including META/retrofit/muse suffixes.
+            if whole is not True or name_key(name) != identity or level != resident.level:
                 raise DormReadError(f'Dorm food: detail identity changed for {resident.name}')
             if (type(exp) is not int or type(next_exp) is not int
                     or next_exp <= 0 or not 0 <= exp < next_exp):

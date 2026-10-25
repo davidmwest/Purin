@@ -302,6 +302,109 @@ def test_unique_exact_name_and_level_match_opens_the_expected_card(gate):
     assert gate._food_search_cards.call_count == 2
 
 
+def test_observed_nana_dorm_and_dock_clipping_selects_one_canonical_candidate(gate):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    expected = dock_card(115)
+    gate._food_search_cards = Mock(return_value=[(expected, 'nanaastar', 0)])
+    card = gate._food_boundary_card(ship('ana Astar Deviluk', 115))
+    assert card.button is expected.button
+    assert gate._food_search_cards.call_count == 2
+
+
+@pytest.mark.parametrize('resident_name,card_name', [
+    ('Deviluke', 'Nana Astar'),
+    ('Nana Astar Deviluke', 'Deviluke'),
+    ('Nana Astar Deviluke', 'Astar'),
+    ('Arizona', 'Arizona META'),
+    ('Arizona META', 'Arizona'),
+    ('Ning Hai', 'Ning Hai Retrofit'),
+    ('Cleveland', 'Cleveland µ'),
+    ('Cleveland µ', 'Cleveland'),
+    ('Future Ship Alpha', 'uture Ship Alpha'),
+])
+def test_ambiguous_clipping_or_distinct_variant_cannot_select_a_boundary_card(
+        gate, resident_name, card_name):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    gate._food_search_cards = Mock(return_value=[(dock_card(), awakening.name_key(card_name), 0)])
+    with pytest.raises(DormReadError):
+        gate._food_boundary_card(ship(resident_name, 100))
+
+
+def test_unknown_boundary_name_still_requires_exact_label(gate):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    expected = dock_card()
+    gate._food_search_cards = Mock(return_value=[(expected, 'futureshipalpha', 0)])
+    assert gate._food_boundary_card(ship('Future Ship Alpha', 100)).button is expected.button
+
+
+def test_two_same_level_clipped_candidates_cannot_hide_duplicate_copies(gate):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    gate._food_search_cards = Mock(return_value=[
+        (dock_card(115), 'nanaastar', 0), (dock_card(115, 250), 'nanaastar', 1)])
+    with pytest.raises(DormReadError, match='2 exact matching copies'):
+        gate._food_boundary_card(ship('ana Astar Deviluk', 115))
+
+
+@pytest.mark.parametrize('other_name', ['Deviluke', 'Future Ship', 'Nana Astar DeviluX'])
+def test_ambiguous_or_unknown_same_level_card_cannot_hide_a_possible_duplicate(gate, other_name):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    gate._food_search_cards = Mock(return_value=[
+        (dock_card(115), 'nanaastar', 0), (dock_card(115, 250), awakening.name_key(other_name), 1)])
+    with pytest.raises(DormReadError, match='another possible matching copy'):
+        gate._food_boundary_card(ship('ana Astar Deviluk', 115))
+
+
+@pytest.mark.parametrize('resident_name,full_key,base_key', [
+    ('Arizona META', 'arizonameta', 'arizona'),
+    ('Z23 (Retrofit)', 'z23retrofit', 'z23'),
+])
+def test_base_label_cannot_hide_a_same_level_variant_copy(gate, resident_name, full_key, base_key):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    gate._food_search_cards = Mock(return_value=[
+        (dock_card(100), full_key, 0), (dock_card(100, 250), base_key, 1)])
+    with pytest.raises(DormReadError, match='another possible matching copy'):
+        gate._food_boundary_card(ship(resident_name, 100))
+
+
+@pytest.mark.parametrize('other_name,other_level', [
+    ('Haruna', 105), ('Haruna', 1), ('Future Ship', 105),
+])
+def test_low_floor_level_cannot_choose_between_same_or_uncertain_identity_copies(
+        gate, other_name, other_level):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    gate._food_residents = Mock(return_value=[ship('Haruna', 5)])
+    gate._food_search_cards = Mock(return_value=[
+        (dock_card(5), 'haruna', 0), (dock_card(other_level, 250), awakening.name_key(other_name), 1)])
+    gate.inventory_open_card = Mock()
+    assert not gate.can_feed()
+    gate.inventory_open_card.assert_not_called()
+
+
+def test_low_level_card_with_ambiguous_other_level_copy_is_rejected(gate):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    gate._food_search_cards = Mock(return_value=[
+        (dock_card(15), 'nanaastar', 0), (dock_card(115, 250), 'deviluke', 1)])
+    with pytest.raises(DormReadError, match='another possible matching copy'):
+        gate._food_boundary_card(ship('ana Astar Deviluk', 15))
+
+
+def test_low_level_unique_identity_can_ignore_a_proven_different_ship(gate):
+    gate.dock_reset = Mock()
+    gate.dock_search = Mock(return_value=True)
+    expected = dock_card(5)
+    gate._food_search_cards = Mock(return_value=[
+        (expected, 'haruna', 0), (dock_card(105, 250), 'hiei', 1)])
+    assert gate._food_boundary_card(ship('Haruna', 5)).button is expected.button
+
+
 def mock_search_scan(monkeypatch, cards, names):
     scanner = Mock()
     scanner.scan.return_value = cards
@@ -333,9 +436,10 @@ def test_readable_search_with_empty_slots_keeps_all_fleets(gate, monkeypatch):
     assert gate._food_search_cards() == [(expected, 'haruna', 0)]
 
 
-def info_reader(monkeypatch, exp=('20/500', '20/500'), names=('Haruna', 'Haruna'), levels=(100, 100)):
+def info_reader(monkeypatch, exp=('20/500', '20/500'), names=('Haruna', 'Haruna'), levels=(100, 100),
+                whole=(True, True)):
     reader = Mock()
-    reader.read_name.side_effect = [(name, True) for name in names]
+    reader.read_name.side_effect = list(zip(names, whole))
     reader.ocr_level.ocr.side_effect = levels
     reader.ocr_exp.ocr.side_effect = exp
     monkeypatch.setattr(awakening, 'InfoReader', Mock(return_value=reader))
@@ -382,6 +486,38 @@ def test_fresh_positive_agreeing_boundary_exp_allows_food(gate, monkeypatch):
     info_reader(monkeypatch)
     assert gate._food_boundary_exp(ship(level=100))
     assert gate.inventory_open_card.call_count == 2
+
+
+def test_clipped_resident_requires_full_canonical_info_name_twice(gate, monkeypatch):
+    gate._food_boundary_card = Mock(return_value=object())
+    gate.inventory_open_card = Mock(return_value=(object(), object(), 4))
+    info_reader(monkeypatch, names=('Nana Astar Deviluke',) * 2, levels=(115, 115))
+    assert gate._food_boundary_exp(ship('ana Astar Deviluk', 115))
+    assert gate.inventory_open_card.call_count == 2
+
+
+@pytest.mark.parametrize('names,whole', [
+    (('Nana Astar', 'Nana Astar'), (True, True)),
+    (('Nana Astar Deviluke', 'Momo Belia Deviluke'), (True, True)),
+    (('Nana Astar Deviluke', 'Nana Astar Deviluke'), (False, False)),
+    (('Nana Astar Deviluke', 'Nana Astar Deviluke'), (True, None)),
+])
+def test_clipped_or_incomplete_info_name_never_authorizes_canonical_resident(
+        gate, monkeypatch, names, whole):
+    gate._food_boundary_card = Mock(return_value=object())
+    gate.inventory_open_card = Mock(return_value=(object(), object(), 4))
+    info_reader(monkeypatch, names=names, whole=whole, levels=(115, 115))
+    with pytest.raises(DormReadError, match='detail identity changed'):
+        gate._food_boundary_exp(ship('ana Astar Deviluk', 115))
+
+
+@pytest.mark.parametrize('info_name', ['Arizona META', 'Arizona METn'])
+def test_full_info_name_must_keep_variant_suffix(gate, monkeypatch, info_name):
+    gate._food_boundary_card = Mock(return_value=object())
+    gate.inventory_open_card = Mock(return_value=(object(), object(), 4))
+    info_reader(monkeypatch, names=(info_name, info_name))
+    with pytest.raises(DormReadError, match='detail identity changed'):
+        gate._food_boundary_exp(ship('Arizona', 100))
 
 
 @pytest.mark.parametrize('exp', ['20/MAX', 'unreadable', '20/0', '500/500'])
