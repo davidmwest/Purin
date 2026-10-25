@@ -620,7 +620,7 @@ class AlasGUI(Frame):
             config = config_updater.read_file(config_name)
             n = datetime.now()
             for p, v in deep_iter(config, depth=3):
-                if p[-1].endswith('un') and not isinstance(v, bool):
+                if p[-1].endswith('un') and isinstance(v, datetime):
                     if (v - n).days >= 31:
                         deep_set(config, p, '')
             for k, v in modified.copy().items():

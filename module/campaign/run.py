@@ -513,9 +513,8 @@ class CampaignRun(CampaignEvent):
             total (int):
         """
         ordinary_event = folder.startswith('event_') and self.config.task.command in ('Event', 'Event2')
-        if ordinary_event and not self.event_completion(folder, before=True):
-            self.config.task_delay(success=False)
-            return
+        if ordinary_event:
+            self.event_completion(folder, before=True)
         name, folder = self.handle_stage_name(name, folder, mode=mode)
         self.config.override(Campaign_Name=name, Campaign_Event=folder)
         self.load_campaign(name, folder=folder)
@@ -631,4 +630,6 @@ class CampaignRun(CampaignEvent):
             event=event,
             collect_rewards=self.config.EventCompletion_CollectRewards,
             complete_story=bool(before and self.config.EventCompletion_CompleteStory))
-        return result.get('story') not in ('blocked', 'failed')
+        # An incomplete optional story is retried on a later invocation. The
+        # collector raises if it cannot safely leave that story screen.
+        return result

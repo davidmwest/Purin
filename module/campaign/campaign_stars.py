@@ -351,11 +351,9 @@ class CampaignStars(CampaignRun):
         plan = self.make_plan()
         if not plan:
             raise ValueError('No implemented stages in star pass')
-        completion = self.collect(before=True)
-        if completion and completion.get('story') in ('blocked', 'failed'):
-            self.config.task_delay(success=False)
-            self.call_then_task()
-            return
+        # Optional story completion must not prevent valid stage goals. The
+        # collector still raises when it cannot verify a safe return.
+        self.collect(before=True)
         progress = StarProgress(self.config.config_name, self.config.task.command)
         pending = [goal for goal in plan if progress.record(goal).get('status') != 'complete']
         limit = max(1, min(int(self.config.StarPass_StagesPerRun), 64))

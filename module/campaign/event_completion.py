@@ -856,6 +856,13 @@ class EventCompletion(Reward):
                 logger.info('CompleteStory enabled: bounded game restarts may skip story battles')
                 story = EventStory(config=self.config, device=self.device)
                 result['story'] = 'complete' if story.run(event=event, skip_battle=True) else 'failed'
+                if result['story'] == 'failed':
+                    # Story is optional preparation for farming, but its last
+                    # screen must not leak into reward or campaign navigation.
+                    logger.warning('Event story remains incomplete; recover to main before continuing')
+                    if not ensure_event_page(self, page_main, timeout=10, max_clicks=3):
+                        save_event_diagnostic(self.device, 'event_story_return_unknown')
+                        raise GamePageUnknownError('Event story could not return through recognized controls')
                 if event in REWARD_OBSERVATION_EVENTS:
                     result['event_side_prepare_observation'] = self.observe_event_side_prepare(event)
                     self.ensure_completion_return(result)

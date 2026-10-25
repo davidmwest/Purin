@@ -76,6 +76,66 @@ def test_story_uses_the_requested_event_and_explicit_bounded_battle_skip(monkeyp
     story.return_value.run.assert_called_once_with(event='event_20261022_cn', skip_battle=True)
 
 
+@pytest.mark.parametrize('account', ['alas', 'f2p'])
+def test_failed_optional_story_recovers_before_still_collecting_rewards(monkeypatch, account):
+    helper = rewards_controller()
+    helper.config.config_name = account
+    helper.observe_event_side_prepare = Mock(return_value=dict(status='observed'))
+    helper.observe_event_side_choice = Mock(return_value=dict(status='observed'))
+    story = Mock()
+    story.return_value.run.return_value = False
+    monkeypatch.setattr(completion, 'EventStory', story)
+    recovered = Mock(return_value=True)
+    monkeypatch.setattr(completion, 'ensure_event_page', recovered)
+
+    def collect_missions():
+        recovered.assert_called_once_with(helper, page_main, timeout=10, max_clicks=3)
+        return True
+
+    helper.collect_event_missions.side_effect = collect_missions
+    result = helper.run('event_20261022_cn', complete_story=True)
+
+    assert result['story'] == 'failed'
+    assert result['rewards'] == 'complete'
+    story.return_value.run.assert_called_once_with(event='event_20261022_cn', skip_battle=True)
+    helper.collect_event_missions.assert_called_once_with()
+    helper.collect_current_event_rewards.assert_called_once_with('event_20261022_cn')
+    helper.collect_strict_maid_rewards.assert_called_once_with('event_20261022_cn')
+
+
+def test_failed_optional_story_cannot_continue_from_an_unrecognized_screen(monkeypatch):
+    helper = rewards_controller()
+    helper.observe_event_side_prepare = Mock()
+    story = Mock()
+    story.return_value.run.return_value = False
+    monkeypatch.setattr(completion, 'EventStory', story)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock(return_value=False))
+    monkeypatch.setattr(completion, 'save_event_diagnostic', Mock())
+
+    with pytest.raises(GamePageUnknownError, match='Event story could not return'):
+        helper.run('event_20261022_cn', complete_story=True)
+
+    completion.ensure_event_page.assert_called_once_with(helper, page_main, timeout=10, max_clicks=3)
+    completion.save_event_diagnostic.assert_called_once_with(helper.device, 'event_story_return_unknown')
+    helper.observe_event_side_prepare.assert_not_called()
+    helper.collect_event_missions.assert_not_called()
+    helper.collect_current_event_rewards.assert_not_called()
+
+
+def test_story_navigation_exceptions_are_not_treated_as_optional_failure(monkeypatch):
+    helper = rewards_controller()
+    story = Mock()
+    story.return_value.run.side_effect = GamePageUnknownError('Unknown story confirmation')
+    monkeypatch.setattr(completion, 'EventStory', story)
+    monkeypatch.setattr(completion, 'ensure_event_page', Mock())
+
+    with pytest.raises(GamePageUnknownError, match='Unknown story confirmation'):
+        helper.run('event_20261022_cn', complete_story=True)
+
+    completion.ensure_event_page.assert_not_called()
+    helper.collect_event_missions.assert_not_called()
+
+
 def test_unsupported_story_never_calls_its_tapping_detector(monkeypatch):
     helper = controller()
     story = Mock()
@@ -251,7 +311,7 @@ def test_main_observation_precedes_story_and_other_reward_navigation(monkeypatch
     helper.observe_event_supplies = Mock(side_effect=lambda event: order.append('supplies'))
     helper.collect_event_missions = Mock(side_effect=lambda: order.append('missions'))
     story = Mock()
-    story.return_value.run.side_effect = lambda **kwargs: order.append('story')
+    story.return_value.run.side_effect = lambda **kwargs: order.append('story') or True
     monkeypatch.setattr(completion, 'EventStory', story)
     helper.run('event_20261022_cn', complete_story=True)
     assert order == ['main', 'hub', 'featured', 'pt', 'beckoning', 'foggy_supply',

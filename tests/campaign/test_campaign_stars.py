@@ -785,13 +785,27 @@ def test_event_pass_does_not_dispatch_extra_after_loss(monkeypatch, tmp_path):
     job.config.task_call.assert_called_once_with('Event', force_call=True)
 
 
-def test_story_failure_dispatches_farming_without_stage_navigation(monkeypatch, tmp_path):
-    job, _, _, factory = make_job(monkeypatch, tmp_path, [StageGoal('event_test', 'T1')])
+def test_optional_story_failure_does_not_block_stage_goals(monkeypatch, tmp_path):
+    goal = StageGoal('event_test', 'T1')
+    job, progress, runner, factory = make_job(monkeypatch, tmp_path, [goal])
     job.collect.return_value = dict(story='failed')
     job.run()
-    factory.assert_not_called()
-    job.config.task_delay.assert_called_once_with(success=False)
+    factory.assert_called_once_with(config=job.config, device=job.device)
+    runner.run_goal.assert_called_once_with(goal, inspect_only=False)
+    assert progress.record(goal)['status'] == 'complete'
+    job.config.task_delay.assert_not_called()
     job.config.task_call.assert_called_once_with('Event', force_call=True)
+
+
+def test_unsafe_story_return_cannot_reserve_a_star_pass_attempt(monkeypatch, tmp_path):
+    goal = StageGoal('event_test', 'T1')
+    job, progress, _, factory = make_job(monkeypatch, tmp_path, [goal])
+    job.collect.side_effect = GamePageUnknownError('Unsafe story return')
+    with pytest.raises(GamePageUnknownError, match='Unsafe story return'):
+        job.run()
+    factory.assert_not_called()
+    assert progress.record(goal) == {}
+    job.config.task_call.assert_not_called()
 
 
 def test_event_try_ex_false_excludes_supported_extra_stage(monkeypatch):
@@ -801,27 +815,42 @@ def test_event_try_ex_false_excludes_supported_extra_stage(monkeypatch):
     assert [goal.stage for goal in job.make_plan()] == ['T1']
 
 
-def test_ordinary_event_story_failure_stops_before_loading_campaign(monkeypatch):
+def test_ordinary_event_optional_story_failure_still_loads_campaign(monkeypatch):
+    run = CampaignRun.__new__(CampaignRun)
+    run.config = SimpleNamespace(task=SimpleNamespace(command='Event'), task_delay=Mock(), override=Mock())
+    run.event_completion = Mock(return_value=dict(story='failed', rewards='complete'))
+    run.handle_stage_name = Mock(return_value=('t1', 'event_test'))
+    run.load_campaign = Mock(side_effect=ScriptEnd('Campaign reached'))
+    with pytest.raises(ScriptEnd, match='Campaign reached'):
+        run.run('T1', folder='event_test')
+    run.event_completion.assert_called_once_with('event_test', before=True)
+    run.load_campaign.assert_called_once_with('t1', folder='event_test')
+    run.config.task_delay.assert_not_called()
+
+
+def test_ordinary_event_unsafe_story_return_stops_before_loading_campaign():
     run = CampaignRun.__new__(CampaignRun)
     run.config = SimpleNamespace(task=SimpleNamespace(command='Event'), task_delay=Mock())
-    run.event_completion = Mock(return_value=False)
+    run.event_completion = Mock(side_effect=GamePageUnknownError('Unsafe story return'))
     run.load_campaign = Mock()
-    run.run('T1', folder='event_test')
+    with pytest.raises(GamePageUnknownError, match='Unsafe story return'):
+        run.run('T1', folder='event_test')
     run.event_completion.assert_called_once_with('event_test', before=True)
     run.load_campaign.assert_not_called()
-    run.config.task_delay.assert_called_once_with(success=False)
+    run.config.task_delay.assert_not_called()
 
 
 def test_ordinary_event_lifecycle_only_runs_story_before_campaign(monkeypatch):
     from module.campaign import event_completion
     factory = Mock()
-    factory.return_value.run.return_value = dict(story='disabled')
+    result = dict(story='failed', rewards='complete')
+    factory.return_value.run.return_value = result
     monkeypatch.setattr(event_completion, 'EventCompletion', factory)
     run = CampaignRun.__new__(CampaignRun)
     run.device = Mock()
     run.config = SimpleNamespace(EventCompletion_CollectRewards=True, EventCompletion_CompleteStory=True)
-    assert run.event_completion('event_test', before=True)
-    assert run.event_completion('event_test')
+    assert run.event_completion('event_test', before=True) is result
+    assert run.event_completion('event_test') is result
     assert [call.kwargs for call in factory.return_value.run.call_args_list] == [
         dict(event='event_test', collect_rewards=True, complete_story=True),
         dict(event='event_test', collect_rewards=True, complete_story=False)]
