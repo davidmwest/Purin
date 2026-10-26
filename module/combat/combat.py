@@ -420,6 +420,11 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
     # If the last battle was won, ranked S, A or B
     combat_won = False
 
+    def is_combat_rank_shown(self, button, interval=0):
+        # Rank colors also occur on ship drops and fading screens. Require the
+        # letter as well, especially before preserving a result for the run.
+        return self.appear(button) and self.appear(button, offset=(20, 20), interval=interval)
+
     def handle_battle_status(self, drop=None):
         """
         Args:
@@ -436,7 +441,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             else:
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_S)
-            self.combat_won = True
+            if self.is_combat_rank_shown(BATTLE_STATUS_S):
+                self.combat_won = True
             return True
         if self.appear(BATTLE_STATUS_A, interval=self.battle_status_click_interval):
             logger.warning('Battle status A')
@@ -445,7 +451,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             else:
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_A)
-            self.combat_won = True
+            if self.is_combat_rank_shown(BATTLE_STATUS_A):
+                self.combat_won = True
             return True
         if self.appear(BATTLE_STATUS_B, interval=self.battle_status_click_interval):
             logger.warning('Battle Status B')
@@ -454,12 +461,13 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             else:
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_B)
-            self.combat_won = True
+            if self.is_combat_rank_shown(BATTLE_STATUS_B):
+                self.combat_won = True
             return True
         # Won already: fading out of S, the screen may take the color of C or D for a frame
         if self.combat_won:
             return False
-        if self.appear(BATTLE_STATUS_C, interval=self.battle_status_click_interval):
+        if self.is_combat_rank_shown(BATTLE_STATUS_C, interval=self.battle_status_click_interval):
             logger.warning('Battle Status C')
             self.combat_lost = True
             # raise GameStuckError('Battle status C')
@@ -469,7 +477,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_C)
             return True
-        if self.appear(BATTLE_STATUS_D, interval=self.battle_status_click_interval):
+        if self.is_combat_rank_shown(BATTLE_STATUS_D, interval=self.battle_status_click_interval):
             logger.warning('Battle Status D')
             self.combat_lost = True
             # raise GameStuckError('Battle Status D')
@@ -524,22 +532,20 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         """
         if self.is_combat_executing():
             return False
-        if self.appear_then_click(EXP_INFO_S):
-            self.device.sleep((0.25, 0.5))
-            return True
-        if self.appear_then_click(EXP_INFO_A):
-            self.device.sleep((0.25, 0.5))
-            return True
-        if self.appear_then_click(EXP_INFO_B):
-            self.device.sleep((0.25, 0.5))
-            return True
+        for button in [EXP_INFO_S, EXP_INFO_A, EXP_INFO_B]:
+            if self.appear(button):
+                self.device.click(button)
+                if self.is_combat_rank_shown(button):
+                    self.combat_won = True
+                self.device.sleep((0.25, 0.5))
+                return True
         # A battle lost, like a fleet sunk by the boss of a stage too hard for it.
         # The color of C and D is the gray of some screens coming in, like the one of a new ship,
         # the letter has to be there too. A battle won is not lost.
         if self.combat_won:
             return False
         for button in [EXP_INFO_D, EXP_INFO_C]:
-            if self.appear(button) and self.appear(button, offset=(20, 20)):
+            if self.is_combat_rank_shown(button):
                 self.device.click(button)
                 self.combat_lost = True
                 self.device.sleep((0.25, 0.5))

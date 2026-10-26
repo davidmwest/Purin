@@ -8,6 +8,8 @@ import pytest
 
 import module.config.server as server
 from module.combat.auto_search_combat import AutoSearchCombat
+from module.combat.assets import (BATTLE_STATUS_A, BATTLE_STATUS_B, BATTLE_STATUS_S,
+                                  EXP_INFO_A, EXP_INFO_B, EXP_INFO_S)
 from module.exception import CampaignEnd
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
@@ -158,3 +160,90 @@ def test_a_battle_lost_by_the_mob_fleet_stays_known():
     combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=2)
 
     assert combat.run_lost_fleet == 1
+
+
+@pytest.mark.parametrize('filename,area', [
+    ('battle_status_d_f2p.png', (590, 160, 780, 340)),
+    ('exp_info_d.png', (300, 30, 420, 140)),
+])
+def test_a_real_defeat_after_a_previous_win_is_still_detected(filename, area):
+    combat = auto_search_battle()
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    x1, y1, x2, y2 = area
+    image[y1:y2, x1:x2] = cv2.cvtColor(cv2.imread(os.path.join(DATA, filename)), cv2.COLOR_BGR2RGB)
+    combat.device.image = image
+    # Use actual recognition, not the helper's synthetic loss.
+    del combat.appear
+    del combat.is_battle_lost_shown
+    combat.combat_won = True
+    combat.loop = lambda: iter(range(2))
+
+    combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=1)
+
+    assert combat.combat_won is False
+    assert combat.run_lost is True
+    assert combat.run_lost_fleet == 1
+
+
+@pytest.mark.parametrize('rank', [BATTLE_STATUS_S, BATTLE_STATUS_A, BATTLE_STATUS_B,
+                                 EXP_INFO_S, EXP_INFO_A, EXP_INFO_B])
+@pytest.mark.parametrize('letter', [False, True])
+def test_auto_search_only_latches_a_verified_winning_rank(rank, letter):
+    combat = auto_search_battle()
+    combat.run_lost = False
+    combat.appear = Mock(side_effect=lambda button, **kwargs:
+                         button == rank and (letter or not kwargs.get('offset')))
+
+    combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=1)
+
+    assert combat.combat_won is letter
+    assert combat.run_lost is False
+
+
+def test_returning_to_the_auto_search_map_does_not_prove_a_win():
+    combat = auto_search_battle()
+    combat.run_lost = False
+    combat.is_auto_search_running = Mock(return_value=True)
+
+    combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=1)
+
+    assert combat.combat_won is False
+    assert combat.run_lost is False
+
+
+def test_gray_ship_drop_or_fade_does_not_mark_the_run_lost_during_cleanup():
+    combat = auto_search_battle()
+    combat.device.image = np.full((720, 1280, 3), (199, 208, 199), dtype=np.uint8)
+    del combat.appear
+    del combat.is_battle_lost_shown
+    combat.run_lost = False
+    combat._auto_search_status_confirm = False
+    combat.is_auto_search_running = Mock(side_effect=[False, True])
+    for name in ['handle_auto_search_map_option', 'handle_get_items', 'handle_battle_status', 'handle_exp_info']:
+        setattr(combat, name, Mock(return_value=False))
+
+    combat.auto_search_combat_status()
+
+    assert combat.run_lost is False
+    combat.handle_battle_status.assert_not_called()
+
+
+def test_verified_win_is_not_changed_to_a_loss_by_a_later_fading_rank():
+    combat = auto_search_battle()
+    combat.run_lost = False
+    combat.appear = Mock(side_effect=lambda button, **kwargs: button == BATTLE_STATUS_S)
+    combat.auto_search_combat_execute(emotion_reduce=False, fleet_index=1)
+    assert combat.combat_won is True
+
+    # Even a rank-shaped fade cannot contradict the already verified result of
+    # this battle. The next battle resets this flag, as the real-D test checks.
+    combat.appear = Mock(side_effect=lambda button, **kwargs: button.name in ('BATTLE_STATUS_C', 'EXP_INFO_D'))
+    del combat.is_battle_lost_shown
+    combat._auto_search_status_confirm = False
+    combat.is_auto_search_running = Mock(side_effect=[False, True])
+    for name in ['handle_auto_search_map_option', 'handle_get_items', 'handle_battle_status', 'handle_exp_info']:
+        setattr(combat, name, Mock(return_value=False))
+
+    combat.auto_search_combat_status()
+
+    assert combat.run_lost is False

@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 import module.config.server as server
-from module.combat.assets import DEFEAT_TIPS
+from module.combat.assets import (BATTLE_STATUS_A, BATTLE_STATUS_B, BATTLE_STATUS_S, DEFEAT_TIPS,
+                                  EXP_INFO_A, EXP_INFO_B, EXP_INFO_S)
 from module.combat.combat import Combat
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
@@ -83,8 +84,25 @@ def test_gray_screen_coming_in_is_not_a_battle_lost():
     combat = make_combat(image)
 
     assert combat.handle_exp_info() is False
+    assert combat.handle_battle_status() is False
 
     combat.device.click.assert_not_called()
+    assert combat.combat_lost is False
+
+
+@pytest.mark.parametrize('rank', [BATTLE_STATUS_S, BATTLE_STATUS_A, BATTLE_STATUS_B,
+                                 EXP_INFO_S, EXP_INFO_A, EXP_INFO_B])
+@pytest.mark.parametrize('letter', [False, True])
+def test_positive_results_keep_advancing_but_only_verified_ranks_mark_a_win(rank, letter):
+    combat = make_combat(np.zeros((720, 1280, 3), dtype=np.uint8))
+    combat.appear = Mock(side_effect=lambda button, **kwargs:
+                         button == rank and (letter or not kwargs.get('offset')))
+    handler = combat.handle_exp_info if rank.name.startswith('EXP_INFO') else combat.handle_battle_status
+
+    assert handler() is True
+
+    combat.device.click.assert_called_once_with(rank)
+    assert combat.combat_won is letter
     assert combat.combat_lost is False
 
 

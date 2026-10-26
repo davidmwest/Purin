@@ -232,9 +232,12 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         Returns:
             bool:
         """
-        return self.appear(DEFEAT_TIPS, offset=(20, 20)) \
-            or self.appear(BATTLE_STATUS_C) or self.appear(BATTLE_STATUS_D) \
-            or self.appear(EXP_INFO_C) or self.appear(EXP_INFO_D)
+        if self.appear(DEFEAT_TIPS, offset=(20, 20)):
+            return True
+        if self.combat_won:
+            return False
+        return any(self.is_combat_rank_shown(button)
+                   for button in [BATTLE_STATUS_C, BATTLE_STATUS_D, EXP_INFO_C, EXP_INFO_D])
 
     def auto_search_combat_execute(self, emotion_reduce, fleet_index):
         """
@@ -316,9 +319,16 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 continue
             if self.handle_get_ship():
                 continue
-            if self.appear(BATTLE_STATUS_S) or self.appear(BATTLE_STATUS_A) or self.appear(BATTLE_STATUS_B) \
-                    or self.appear(EXP_INFO_S) or self.appear(EXP_INFO_A) or self.appear(EXP_INFO_B) \
-                    or self.is_auto_search_running():
+            winning_ranks = [BATTLE_STATUS_S, BATTLE_STATUS_A, BATTLE_STATUS_B,
+                             EXP_INFO_S, EXP_INFO_A, EXP_INFO_B]
+            if any(self.appear(button) for button in winning_ranks):
+                # Keep advancing result screens at scaled resolutions, but only
+                # a verified rank may protect this battle from a later fade.
+                if any(self.is_combat_rank_shown(button) for button in winning_ranks):
+                    self.combat_won = True
+                self.device.screenshot_interval_set()
+                break
+            if self.is_auto_search_running():
                 self.device.screenshot_interval_set()
                 break
             if self.is_battle_lost_shown():
