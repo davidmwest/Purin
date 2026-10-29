@@ -116,7 +116,7 @@ def assessed(record, average, ships):
 
 
 def test_runs_on_other_stages_are_other_trials():
-    # The Codex review of 2026-10-21: 19 runs of 2-1 and one of 12-4 held 12-4
+    # The code review of 2026-10-21: 19 runs of 2-1 and one of 12-4 held 12-4
     record = new_record()
     record_average(record, 110, NOW)
     for run in range(TRIAL_RUNS - 1):

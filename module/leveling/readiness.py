@@ -1,5 +1,5 @@
 """
-If Main may farm with its fleets, the rules Leveling keeps them to. The Codex review of 2026-10-21: Leveling
+If Main may farm with its fleets, the rules Leveling keeps them to. The code review of 2026-10-21: Leveling
 repaired what it could, then Main went on all the same, with a mob fleet below its minimum average, or a ship at 120
 kept for want of an other.
 

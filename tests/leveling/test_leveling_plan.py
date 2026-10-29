@@ -113,7 +113,7 @@ def test_is_geared():
     # All 6 slots at +10 or better, the augment too, the user's rule, and her gear checked against the policy
     assert is_geared({'gear_levels': GEARED, 'augment_level': 10, **checked})
     assert is_geared({'gear_levels': [13, 10, 11, 10, 10], 'augment_level': 10, **checked})
-    # Levels alone: a sonar at +10 reads the same, the Codex review of 2026-10-21
+    # Levels alone: a sonar at +10 reads the same, the code review of 2026-10-21
     assert gear_levels_done({'gear_levels': GEARED, 'augment_level': 10})
     assert not is_geared({'gear_levels': GEARED, 'augment_level': 10})
     assert not is_geared({'gear_levels': GEARED, 'augment_level': 10, 'gear_policy': 0})

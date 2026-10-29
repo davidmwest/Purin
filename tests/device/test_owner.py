@@ -1,7 +1,7 @@
 """
 One controller per emulator, see module/device/owner.py.
 
-Code review (Codex, 2026-10-21): the .running status files were the only guard, two schedulers on one emulator both
+Code review (2026-10-21): the .running status files were the only guard, two schedulers on one emulator both
 stayed alive, the second overwrote the first's file and the first removed it on exit.
 """
 import os

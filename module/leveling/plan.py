@@ -78,7 +78,7 @@ HULL_ROW = {
 GEARED_SLOTS = 5
 GEARED_LEVEL = 10
 # Her gear was checked against module.leveling.policy, the rules of 12-4, and nothing they leave out is on her.
-# Levels alone would take a sonar at +10 for gear, the Codex review of 2026-10-21. The inventory keeps the version
+# Levels alone would take a sonar at +10 for gear, the code review of 2026-10-21. The inventory keeps the version
 # of the rules a ship passed, a scan of the dock reads levels only and a ship is checked again after it.
 GEAR_POLICY = 1
 # Rows of the mob fleet that take ships without gear: they get gear from storage as they come in, and come in
@@ -455,7 +455,7 @@ class Slot:
 
 # Where a ship of the inventory was seen in the fleets last, [fleet, row, index]: Leveling writes it as it reads the
 # fleets or puts her in one. A ship with copies in the dock is told apart by it and by her level, there is no id of a
-# ship to read, the Codex review of 2026-10-21.
+# ship to read, the code review of 2026-10-21.
 SLOT_KEY = 'slot'
 
 

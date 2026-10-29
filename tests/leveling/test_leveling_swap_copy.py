@@ -1,7 +1,7 @@
 """
 A swap takes the card of the ship the plan chose, not an other copy of her.
 
-From a code review (Codex, 2026-10-21): the dock read had Cooper geared at level 110, that copy was on a commission,
+From a code review (2026-10-21): the dock read had Cooper geared at level 110, that copy was on a commission,
 and the only free card of her name was a level 1 duplicate. It came in as the level 110 one, without gear or EXP,
 and the fleet's average fell to 79 under its minimum of 95. A card at 125 came in the same way, past the farm cap.
 """

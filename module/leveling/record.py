@@ -8,7 +8,7 @@ Which average holds is kept in ./config/leveling/<config name>.json:
     trials: for each minimum and stage, "95@12-4", runs of Main and battles of the mob fleet lost, since when, and
         when it held for TRIAL_RUNS runs in a row without a battle lost, the averages measured then. The last runs
         with the fleets as Leveling last saw them. A run on an other stage goes into its own trial: 19 runs of 2-1
-        and one of 12-4 are not 20 runs of 12-4, the Codex review of 2026-10-21. A trial of before, keyed by the
+        and one of 12-4 are not 20 runs of 12-4, the code review of 2026-10-21. A trial of before, keyed by the
         minimum alone, is kept as it is.
     losses: battles of the mob fleet lost, with the average measured and the fleets then
     failed: averages tried before, AVERAGES_FAILED

@@ -38,7 +38,7 @@ def test_fleets_that_keep_the_rules():
 
 
 def test_rules_broken_hold_main():
-    # The Codex review of 2026-10-21: an average of 78.3 against 95, a ship at 120, packs that did not raise anyone
+    # The code review of 2026-10-21: an average of 78.3 against 95, a ship at 120, packs that did not raise anyone
     mob = fleet(1, 70, 70, 70, 70, 70, 120)
     boss = fleet(2, 110, 109, 103, 119, 125, 77)
     record = assessed(mob, boss, problems=['EXP Data Packs did not raise Ship 10 to level 100'])
@@ -188,7 +188,7 @@ def stored(monkeypatch):
 
 
 def test_leveling_that_can_not_repair_the_fleets_holds_main(monkeypatch, stored):
-    # The Codex review of 2026-10-21, a fleet at 78.3 against 95 with a ship at 120, no ship free, no packs left
+    # The code review of 2026-10-21, a fleet at 78.3 against 95 with a ship at 120, no ship free, no packs left
     names = ['Hakuhou', 'Gangut', 'Kansas', 'Maury (Retrofit)', 'Ping Hai', 'Nicholas (Retrofit)']
     slots = fleet(1, 70, 70, 70, 70, 70, 120, names=names)
     ships = [dict(name=slot.name, level=slot.level, index=index, **gear_record([10] * 6, checked=True))

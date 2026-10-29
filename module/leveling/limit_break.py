@@ -318,7 +318,7 @@ class LimitBreak(FleetEnhance):
             return 0
         copies += bulins
         # The ship of the slot is opened from the fleet: the highest card of her name can be an other copy of her,
-        # in an other fleet or in the dock (code review, Codex)
+        # in an other fleet or in the dock (code review)
         self.ui_ensure(page_fleet)
         self.formation_goto_fleet(slot.fleet)
         self.fleet_ship_enter(slot)
