@@ -15,7 +15,7 @@ from module.gacha.banner_assets import (EVENT_BANNER_DURATION, EVENT_BANNER_TEXT
                                       EVENT_BUILD_ORDERS, EVENT_RATE_INFO_HEADER,
                                       EVENT_BUILD_RATES_TITLE, EVENT_RATE_INFO_CLOSE,
                                       EVENT_RATE_INFO_CONFIRM)
-from module.ui.page import page_build, page_main
+from module.ui.page import page_build, page_dorm, page_main, page_sp
 
 
 def controller():
@@ -502,3 +502,92 @@ def test_return_refreshes_cached_main_and_leaves_unknown_current_screen_untouche
     helper.device.screenshot.assert_called_once()
     helper.device.click.assert_not_called()
     banner.ensure_event_page.assert_not_called()
+
+
+def ordinary_page_controller(filename, request):
+    from module.config import server
+    from module.ui.ui import UI
+
+    previous = server.server
+    server.set_server('en')
+    request.addfinalizer(lambda: server.set_server(previous))
+    helper = captured_controller()
+    helper.config.SERVER = 'en'
+    helper.device.image = np.array(Image.open(f'tests/gacha/data/{filename}').convert('RGB'))
+    helper.appear = lambda asset, **kw: asset.match(
+        helper.device.image, offset=kw.get('offset', (30, 30)))
+    helper.ui_page_appear = lambda page: UI.ui_page_appear(helper, page)
+    return helper
+
+
+@pytest.mark.parametrize('filename,page', [
+    ('f2p_dorm_20261030.png', page_dorm), ('f2p_event_20261030.png', page_sp),
+])
+def test_cached_banner_returns_from_actual_prior_task_page_without_replaying_orders(
+        filename, page, request, monkeypatch, tmp_path):
+    from module.eventstory import eventstory
+
+    helper = ordinary_page_controller(filename, request)
+    main_image = np.array(Image.open('tests/gacha/data/f2p_main_20261029.png').convert('RGB'))
+    helper.interval_clear = Mock()
+    helper.ui_button_interval_reset = Mock()
+    helper.handle_idle_page = Mock(return_value=False)
+    helper.loop = Mock(return_value=iter(range(4)))
+    timer = Mock()
+    timer.reached.return_value = True
+    monkeypatch.setattr(eventstory, 'Timer', Mock(return_value=timer))
+
+    def click(button):
+        assert button is page.links[page_main]
+        helper.device.image = main_image
+
+    helper.device.click.side_effect = click
+    helper.enter_event_pool = Mock()
+    key = f'{banner.CURRENT_EVENT}:{banner.BANNER_VERSION}'
+    save_banner_state('alas', {key: dict(status='blocked', info_clicks=1,
+                                        orders_submitted=0, returned_main=False)}, tmp_path)
+
+    result = helper.run(folder=tmp_path)
+
+    assert result['reused'] and result['returned_main']
+    assert result['info_clicks'] == 1 and result['orders_submitted'] == 0
+    helper.device.screenshot.assert_called_once()
+    helper.device.click.assert_called_once_with(page.links[page_main])
+    helper.enter_event_pool.assert_not_called()
+
+
+@pytest.mark.parametrize('filename,page', [
+    ('f2p_dorm_20261030.png', page_dorm), ('f2p_event_20261030.png', page_sp),
+])
+@pytest.mark.parametrize('missing', ['page', 'home', 'dimmed'])
+def test_prior_task_home_requires_both_fresh_undimmed_controls(
+        filename, page, missing, request, monkeypatch):
+    helper = ordinary_page_controller(filename, request)
+    if missing == 'dimmed':
+        helper.device.image = (helper.device.image * .5).astype(np.uint8)
+    else:
+        asset = page.check_button if missing == 'page' else page.links[page_main]
+        x1, y1, x2, y2 = asset.area
+        helper.device.image[y1 - 5:y2 + 5, x1 - 5:x2 + 5] = 0
+    monkeypatch.setattr(banner, 'ensure_event_page', Mock())
+
+    assert helper._return_main() is False
+
+    banner.ensure_event_page.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('filename', [
+    'event_build_count.png', 'light_build_count.png', 'special_build_count.png',
+    'heavy_build_count.png', 'ur_cap_warning.png', 'orders_result_f2p.png',
+    'orders_result_alas.png', 'ship_found_title.png',
+])
+def test_actual_build_dialogs_and_receipts_never_authorize_ordinary_home(
+        filename, request, monkeypatch):
+    helper = ordinary_page_controller(filename, request)
+    monkeypatch.setattr(banner, 'ensure_event_page', Mock())
+
+    assert helper._return_main() is False
+
+    banner.ensure_event_page.assert_not_called()
+    helper.device.click.assert_not_called()

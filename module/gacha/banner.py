@@ -21,7 +21,7 @@ from module.gacha.banner_assets import (EVENT_BANNER_DURATION, EVENT_BANNER_DURA
                                       EVENT_RATE_INFO_CLOSE, EVENT_RATE_INFO_CONFIRM)
 from module.gacha.ui import GachaUI
 from module.logger import logger
-from module.ui.page import page_build, page_main
+from module.ui.page import Page, page_build, page_main
 from module.ui.scroll import Scroll
 
 CURRENT_EVENT = 'event_20261022_cn'
@@ -282,10 +282,20 @@ class EventBannerObserver(GachaUI):
                 break
         if self.ui_page_appear(page_main):
             return True
-        # Unknown panels are untouched. Only the fully recognized current
-        # pool permits its normal bounded Home route.
+        # Build screens retain their exact pool/order guards.
         if self.on_event_pool():
             return ensure_event_page(self, page_main)
+        # Serial jobs legitimately leave Dorm, Research or a stage list here.
+        # Require both the page and its direct Home control, including their
+        # undimmed colors; a shared Home glyph alone cannot authorize input
+        # through an unknown panel or a construction/receipt dialog.
+        for page in Page.iter_pages():
+            if (page.check_button is not None and page != page_build
+                    and page_main in page.links
+                    and self.ui_page_appear(page)
+                    and self.match_template_color(page.check_button, offset=(3, 3), similarity=.9)
+                    and self.match_template_color(page.links[page_main], offset=(3, 3), similarity=.9)):
+                return ensure_event_page(self, page_main)
         return False
 
     def run(self, folder='./config/gacha'):
