@@ -21,7 +21,8 @@ from module.ui.page import page_build, page_main
 def controller():
     helper = EventBannerObserver.__new__(EventBannerObserver)
     helper.config = SimpleNamespace(config_name='alas')
-    helper.device = SimpleNamespace(app_is_running=Mock(return_value=True), click=Mock())
+    helper.device = SimpleNamespace(app_is_running=Mock(return_value=True), click=Mock(),
+                                    screenshot=Mock())
     helper.ui_page_appear = Mock(return_value=True)
     helper._gacha_side_navbar = SimpleNamespace(get_active=Mock(return_value=0), set=Mock(return_value=True))
     helper._construct_bottom_navbar = SimpleNamespace(
@@ -457,3 +458,47 @@ def test_cached_banner_record_refreshes_positive_proof_and_drops_it_when_source_
     assert second['ownership']['positive_exact_names'] == []
     helper.enter_event_pool.assert_not_called()
     helper.device.click.assert_not_called()
+
+
+def test_reused_banner_refreshes_stale_frame_without_replaying_observation(tmp_path, request):
+    from module.ui.ui import UI
+    from module.config import server
+
+    previous = server.server
+    server.set_server('en')
+    request.addfinalizer(lambda: server.set_server(previous))
+    helper = controller()
+    helper.config.SERVER = 'en'
+    current = np.array(Image.open('tests/gacha/data/f2p_main_20261029.png').convert('RGB'))
+    helper.device.image = np.zeros_like(current)
+    helper.device.screenshot.side_effect = lambda: setattr(helper.device, 'image', current)
+    helper.appear = lambda asset, **kw: asset.match(
+        helper.device.image, offset=kw.get('offset', (30, 30)))
+    helper.ui_page_appear = lambda page: UI.ui_page_appear(helper, page)
+    helper.enter_event_pool = Mock()
+    key = f'{banner.CURRENT_EVENT}:{banner.BANNER_VERSION}'
+    save_banner_state('alas', {key: dict(status='blocked', info_clicks=1,
+                                        orders_submitted=0, returned_main=False)}, tmp_path)
+
+    result = helper.run(folder=tmp_path)
+
+    assert result['reused'] and result['returned_main']
+    assert result['info_clicks'] == 1 and result['orders_submitted'] == 0
+    helper.device.screenshot.assert_called_once()
+    helper.enter_event_pool.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_return_refreshes_cached_main_and_leaves_unknown_current_screen_untouched(monkeypatch):
+    helper = controller()
+    helper.device.image = 'stale-main'
+    helper.device.screenshot.side_effect = lambda: setattr(helper.device, 'image', 'unknown-modal')
+    helper.ui_page_appear = lambda page: helper.device.image == 'stale-main'
+    helper.on_event_pool = Mock(return_value=False)
+    monkeypatch.setattr(banner, 'ensure_event_page', Mock())
+
+    assert helper._return_main() is False
+
+    helper.device.screenshot.assert_called_once()
+    helper.device.click.assert_not_called()
+    banner.ensure_event_page.assert_not_called()

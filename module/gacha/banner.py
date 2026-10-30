@@ -268,6 +268,10 @@ class EventBannerObserver(GachaUI):
         return path
 
     def _return_main(self):
+        # A preceding task or completed login may leave a stale cached frame.
+        # Recognize the current screen before deciding recovery is required;
+        # a cached archive/research frame must not restart a healthy main page.
+        self.device.screenshot()
         # Close only the observed informational modal. Never use generic
         # Confirm/Cancel, which could refer to an order or Exchange dialog.
         for _ in range(2):
