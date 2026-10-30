@@ -66,6 +66,8 @@ def stage_title_area(image):
     can otherwise become extra OCR letters. Both bands must prove the same
     edge before narrowing the OCR crop. Some maps have dark artwork beyond a
     thin bright border; require that full border between dark columns instead.
+    The inner border antialiasing varies with the map artwork, so require a
+    contrast step from it rather than a fixed dark fill color.
     """
     ends = []
     for top, bottom in ((70, 76), (100, 104)):
@@ -76,7 +78,7 @@ def stage_title_area(image):
         edge = int(bright[0])
         bright_background = band[:, edge + 1:edge + 4].min() >= 145
         bright_border = (band[:, edge].min() >= 145
-                         and band[:, edge - 2:edge].max() < 120
+                         and int(band[:, edge].min()) - int(band[:, edge - 2:edge].max()) >= 25
                          and band[:, edge + 1:edge + 4].max() < 145)
         if not (bright_background or bright_border):
             return None
