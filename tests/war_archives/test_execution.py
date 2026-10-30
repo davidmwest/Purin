@@ -1057,6 +1057,28 @@ def test_actual_game_toast_is_only_a_wait_candidate_without_complete_key_message
 
 
 @pytest.mark.parametrize('filename', ['archive_data_key_dialog.png', 'archive_data_key_dialog_scaled.png'])
+def test_fading_key_controls_only_authorize_waiting_for_complete_bright_message(filename):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    image = np.asarray(Image.open(Path(__file__).parent / 'data' / filename).convert('RGB'))
+    fading = (image * .45).astype(np.uint8)
+    assert owner._data_key_dialog_candidate(fading) is True
+    assert owner._data_key_dialog_witness(fading) is False
+    for button in (ex.ARCHIVE_KEY_HEADER, ex.ARCHIVE_KEY_CANCEL, ex.ARCHIVE_KEY_CONFIRM):
+        missing = fading.copy()
+        x1, y1, x2, y2 = button.area
+        missing[y1:y2, x1:x2] = 0
+        assert owner._data_key_dialog_candidate(missing) is False
+
+
+@pytest.mark.parametrize('color', [(0, 0, 0), (255, 255, 255), (66, 99, 122)])
+def test_constant_screen_is_not_a_key_dialog_wait_candidate(color):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    image = np.empty((720, 1280, 3), dtype=np.uint8)
+    image[:] = color
+    assert owner._data_key_dialog_candidate(image) is False
+
+
+@pytest.mark.parametrize('filename', ['archive_data_key_dialog.png', 'archive_data_key_dialog_scaled.png'])
 @pytest.mark.parametrize('changed', ['five', 'message', 'header', 'cancel', 'confirm', 'dim', 'wrong_cost'])
 def test_actual_key_dialog_rejects_missing_price_controls_and_dim_overlay(changed, filename):
     from PIL import ImageDraw
@@ -1225,6 +1247,45 @@ def test_owned_go_waits_for_real_toast_to_clear_but_never_confirms_covered_messa
     else:
         assert result['status'] == 'won'
         assert frames == ['toast'] * 3 + ['clean'] * 2
+        assert state.events == ['reserve', 'go', 'confirm']
+        assert state.legacy_after_handler == 1
+
+
+@pytest.mark.parametrize('persistent', [False, True])
+def test_owned_go_waits_through_fade_without_confirming_a_dim_dialog(monkeypatch, persistent):
+    owner, campaign, state, proof, prepare, reserve = key_dialog_entry(monkeypatch)
+    clean = np.asarray(Image.open(Path(__file__).parent / 'data/archive_data_key_dialog_scaled.png').convert('RGB'))
+    fading = (clean * .45).astype(np.uint8)
+    frames = []
+    original_click = owner.device.click.side_effect
+
+    def click(button, *args, **kwargs):
+        if button is ex.ARCHIVE_KEY_CONFIRM:
+            assert frames[-2:] == ['clean', 'clean']
+        original_click(button, *args, **kwargs)
+        if button is ex.FLEET_PREPARATION:
+            owner.device.image = fading
+
+    def screenshot():
+        if state.dialog:
+            dim = persistent or len(frames) < 3
+            frames.append('fading' if dim else 'clean')
+            owner.device.image = fading if dim else clean
+        else:
+            owner.device.image = np.zeros_like(clean)
+
+    owner.device.click.side_effect = click
+    owner.device.screenshot.side_effect = screenshot
+    campaign.appear.side_effect = lambda button, **kwargs: state.dialog and button is ex.POPUP_CONFIRM
+    result = invoke(owner, proof, prepare, reserve, goal=StageGoal(EVENT, 'A1', goal='archive_prize'))
+    assert result['reserved'] is True
+    if persistent:
+        assert result['reason'] == 'data_key_entry_not_verified'
+        assert state.events == ['reserve', 'go'] and not owner.key_confirm_clicked
+        assert len(frames) == 30 and state.legacy_after_handler == 0
+    else:
+        assert result['status'] == 'won'
+        assert frames == ['fading'] * 3 + ['clean'] * 2
         assert state.events == ['reserve', 'go', 'confirm']
         assert state.legacy_after_handler == 1
 

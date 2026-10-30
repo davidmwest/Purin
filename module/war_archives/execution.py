@@ -205,11 +205,21 @@ class WarArchivesExecution(CampaignRun):
                 and 5 <= value['raw_keys'] <= 300)
 
     def _data_key_dialog_candidate(self, image):
-        """Captured frame controls permit waiting, never confirmation by themselves."""
-        return (isinstance(image, np.ndarray) and image.shape == (720, 1280, 3)
-                and any(all(button.match_template_color(image, offset=(0, 0), similarity=.9)
-                            for button in (header, ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM))
-                        for header, _, _ in ARCHIVE_KEY_LAYOUTS))
+        """Exact control shapes permit waiting through a fade, never confirmation."""
+        if not isinstance(image, np.ndarray) or image.shape != (720, 1280, 3):
+            return False
+        luma = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+        def visible_control(button):
+            x1, y1, x2, y2 = button.area
+            # Normalized correlation can report a match on constant pixels.
+            # Require visible spatial contrast in every control during a fade.
+            return (np.ptp(luma[y1:y2, x1:x2]) >= 20
+                    and button.match_luma(image, offset=(0, 0), similarity=.9))
+
+        return any(all(visible_control(button)
+                       for button in (header, ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM))
+                   for header, _, _ in ARCHIVE_KEY_LAYOUTS)
 
     def _data_key_dialog_witness(self, image):
         """Exact captured Info dialog and complete five-key message, never a price guess."""
@@ -348,8 +358,8 @@ class WarArchivesExecution(CampaignRun):
                         campaign.device.click(ARCHIVE_KEY_CONFIRM)
                 continue
             if not self.key_confirm_clicked:
-                # A transient game toast can cover the price/message just after
-                # Go. The exact frame controls authorize only bounded waiting.
+                # A fade or game toast can hide the price/message just after
+                # Go. The exact control shapes authorize only bounded waiting.
                 # Once complete message proof starts, a changed message fails.
                 if frames == 0 and self._data_key_dialog_candidate(image):
                     continue
