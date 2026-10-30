@@ -1509,31 +1509,36 @@ def test_skybound_chapter_alias_cannot_bypass_stage_title_proof(owner, monkeypat
     owner.device.click.assert_not_called()
 
 
-@pytest.mark.parametrize('mode,stage', [('normal', 'a1'), ('hard', 'c1')])
-def test_actual_skybound_pages_read_exact_title_and_unlocked_stage(owner, mode, stage):
+@pytest.mark.parametrize('fixture,mode,stage,page,keys', [
+    ('normal', 'normal', 'a1', 1, 300),
+    ('hard', 'hard', 'c1', 1, 300),
+    ('hard_part2', 'hard', 'd1', 2, 290),
+])
+def test_actual_skybound_pages_read_exact_title_and_unlocked_stage(owner, fixture, mode, stage, page, keys):
     from module.base.utils import load_image
 
-    owner.device.image = load_image(f'tests/war_archives/data/alas_skybound_{mode}.png')
+    owner.device.image = load_image(f'tests/war_archives/data/alas_skybound_{fixture}.png')
     use_actual_en_page_detectors(owner)
     assert owner._archive_stage_page()
     result = owner._read_stage_screen('war_archives_20211028_cn')
     assert result is not None
     assert result['event'] == 'war_archives_20211028_cn'
-    assert result['mode'] == mode and result['page'] == 1
+    assert result['mode'] == mode and result['page'] == page
     assert set(result['stages']) == {stage}
     assert not result['stages'][stage]['complete']
-    assert result['raw_keys'] == result['key_capacity'] == 300
+    assert result['raw_keys'] == keys and result['key_capacity'] == 300
     owner.device.click.assert_not_called()
 
 
+@pytest.mark.parametrize('fixture', ['hard', 'hard_part2'])
 @pytest.mark.parametrize('negative', ['wrong_archive', 'dimmed', 'occluded_title',
                                       'missing_edge', 'different_band_edges',
-                                      'partial_bright_edge', 'weak_border_contrast',
+                                      'partial_bright_edge', 'weak_border_contrast', 'weak_outer_contrast',
                                       'overlay', 'no_stages'])
-def test_actual_skybound_hard_border_retains_complete_stage_proof(owner, negative):
+def test_actual_skybound_hard_border_retains_complete_stage_proof(owner, fixture, negative):
     from module.base.utils import load_image
 
-    owner.device.image = load_image('tests/war_archives/data/alas_skybound_hard.png')
+    owner.device.image = load_image(f'tests/war_archives/data/alas_skybound_{fixture}.png')
     use_actual_en_page_detectors(owner)
     archive = 'war_archives_20211028_cn'
     if negative == 'wrong_archive':
@@ -1551,7 +1556,10 @@ def test_actual_skybound_hard_border_retains_complete_stage_proof(owner, negativ
     elif negative == 'partial_bright_edge':
         owner.device.image[72, 495] = 80
     elif negative == 'weak_border_contrast':
-        owner.device.image[70:76, 493:495] = 144
+        owner.device.image[70:76, 493:495] = int(owner.device.image[70:76, 495].min()) - 24
+    elif negative == 'weak_outer_contrast':
+        owner.device.image[70:76, 496:499] = 140
+        owner.device.image[70, 496] = 160
     elif negative == 'overlay':
         owner._archive_stage_page = Mock(return_value=False)
     elif negative == 'no_stages':
