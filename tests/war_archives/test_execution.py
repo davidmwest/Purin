@@ -828,6 +828,25 @@ def test_hard_requirement_grammar_requires_every_known_comparison_satisfied(line
     assert ex.parse_hard_requirements(lines) == expected
 
 
+@pytest.mark.parametrize('lines,expected', [
+    (['AverageLeve>100(125)TotalFP>1600(4785)', 'TotalEVA>950(1680)'],
+     (('AverageLevel', 100, 125), ('TotalFP', 1600, 4785), ('TotalEVA', 950, 1680))),
+    (['Average Leve>100(125)', 'TotalEVA>950(1680)'],
+     (('AverageLevel', 100, 125), ('TotalEVA', 950, 1680))),
+    (['AverageLeve>100(100)'], None),
+    (['AverageLeve>100(99)'], None),
+    (['AverageLeve>100(125)', 'TotalEVA>950(950)'], None),
+    (['AverageLeve>100(125)', 'AverageLevel>100(125)'], None),
+    (['AverageLeve>100(125)UnknownStat>1(2)'], None),
+    (['AverageLev>100(125)'], None),
+    (['AverageLevels>100(125)'], None),
+    (['AverageLeve>100'], None),
+    (['AverageLeve>100()'], None),
+])
+def test_observed_average_level_ocr_alias_keeps_all_comparisons_and_unique_stats(lines, expected):
+    assert ex.parse_hard_requirements(lines) == expected
+
+
 def real_hard_fleet():
     from module.config.server import set_server
     set_server('en')
@@ -843,6 +862,34 @@ def test_real_hard_fleet_fixture_has_satisfied_generic_requirements_unmocked_ocr
     campaign = real_hard_fleet()
     assert owner._hard_fleet_witness(campaign) == (
         ('AverageLevel', 70, 124), ('TotalTRP', 700, 2477), ('TotalEVA', 400, 1293))
+    campaign.device.click.assert_not_called()
+
+
+def real_advised_d3_fleet():
+    campaign = real_hard_fleet()
+    campaign.device.image = np.array(Image.open(
+        Path(__file__).parent / 'data' / 'archive_hard_d3_advised_fleets.png').convert('RGB'))
+    return campaign
+
+
+def test_actual_advised_d3_fleets_have_every_requirement_verified_unmocked_ocr():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_advised_d3_fleet()
+    assert owner._empty_hard_fleet_rows(campaign) == (False, False)
+    assert owner._hard_fleet_witness(campaign) == (
+        ('AverageLevel', 100, 125), ('TotalFP', 1600, 4785), ('TotalEVA', 950, 1680))
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('color', [(255, 40, 40), (255, 255, 255), (40, 255, 40)])
+def test_actual_advised_d3_fleets_reject_any_nongold_requirement(monkeypatch, color):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_advised_d3_fleet()
+    campaign.device.image[589:601, 500:550] = color
+    reader = Mock()
+    monkeypatch.setattr(ex, 'Ocr', reader)
+    assert owner._hard_fleet_witness(campaign) is None
+    reader.assert_not_called()
     campaign.device.click.assert_not_called()
 
 

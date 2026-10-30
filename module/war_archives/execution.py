@@ -36,7 +36,8 @@ from module.war_archives.execution_assets import (
     ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM, ARCHIVE_KEY_LAYOUTS)
 
 
-_REQUIREMENT = re.compile(r'(AverageLevel|Total(?:HP|FP|TRP|AVI|AA|RLD|EVA|HIT|ASW))>(0|[1-9][0-9]{0,5})\((0|[1-9][0-9]{0,5})\)')
+# Captured D3 OCR consistently omits only the final l in Average Level.
+_REQUIREMENT = re.compile(r'(AverageLevel?|Total(?:HP|FP|TRP|AVI|AA|RLD|EVA|HIT|ASW))>(0|[1-9][0-9]{0,5})\((0|[1-9][0-9]{0,5})\)')
 
 
 def parse_hard_requirements(lines):
@@ -49,6 +50,8 @@ def parse_hard_requirements(lines):
             if match.start() != cursor:
                 return None
             name, threshold, current = match.groups()
+            if name == 'AverageLeve':
+                name = 'AverageLevel'
             if int(current) <= int(threshold):
                 return None
             result.append((name, int(threshold), int(current)))
