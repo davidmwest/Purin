@@ -192,6 +192,30 @@ class WarArchivesExecution(CampaignRun):
     def _check_switch(self):
         self.config.check_task_switch('War Archives safe boundary')
 
+    def _finish_paid_map_before_routine_job(self, campaign):
+        """Keep one owned entry; routine jobs may wait at most twenty minutes.
+
+        Withdrawing for every due Dorm/Leveling task discards map progress and
+        charges another entry on return. Explicit controls, commissions, recovery
+        and rollover still preempt. The coordinator yields before another map.
+        """
+        stop = self.config.stop_event
+        if self.config.pause_requested or (stop is not None and stop.is_set()):
+            return False
+        pending = self.config.pending_task
+        command = getattr(pending[0], 'command', None) if isinstance(pending, list) and pending else None
+        if (not isinstance(command, str) or not command
+                or command in ('Restart', 'OpsiCrossMonth', 'Commission')):
+            return False
+        if (self.inspection or self.fleet_inspection or not self.reserved
+                or not self.fleet_ready or not self.fleet_go_clicked
+                or self.paid_map_deadline is None or monotonic() >= self.paid_map_deadline
+                or not self._proof(self.proof, execution=True) or not self._key_proof(self.proof)
+                or not campaign.is_in_map()):
+            return False
+        logger.info(f'Finish current paid archive map before routine task {command}')
+        return True
+
     def _check_oil(self):
         oil = self.get_oil(skip_first_screenshot=False)
         if type(oil) is not int or oil < self.oil_floor:
@@ -588,6 +612,7 @@ class WarArchivesExecution(CampaignRun):
                 raise ArchiveBlocked('second_fleet_go_forbidden')
             self._check_switch()
             self.fleet_go_clicked = True
+            self.paid_map_deadline = monotonic() + 20 * 60
 
         def stop():
             self.preparation_seen = True
@@ -682,7 +707,8 @@ class WarArchivesExecution(CampaignRun):
                     logger.info(f'Archive victory and return to stage list verified (expected_end={expected_end})')
 
         def battle():
-            if self.config.task_switched():
+            if (self.config.task_switched()
+                    and not self._finish_paid_map_before_routine_job(campaign)):
                 self._withdraw_between_battles()
                 raise TaskEnd('War Archives preempted between battles')
             if campaign.is_in_map():
@@ -740,6 +766,7 @@ class WarArchivesExecution(CampaignRun):
         self.goal, self.reserve, self.prepare = goal, reserve, prepare
         self.reserved = self.boss_won = self.stage_complete = self.preparation_seen = False
         self.fleet_ready = self.fleet_go_clicked = self.key_confirm_clicked = False
+        self.paid_map_deadline = None
         self.story_unlock_cancelled = False
         self.oil_deferred = False
         self.diagnostic = ''

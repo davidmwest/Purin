@@ -31,7 +31,8 @@ def controller(monkeypatch, *, progress=(False, True), one_clear=False, lost=Fal
                boss_won=True, run_error=None, expected_end='in_stage', campaign_end=False):
     owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
     owner.config = Config(config_name='alas', overridden={'kept': True},
-                          check_task_switch=Mock(), task_switched=Mock(return_value=False), task_call=Mock())
+                          check_task_switch=Mock(), task_switched=Mock(return_value=False), task_call=Mock(),
+                          stop_event=None, pause_requested=False, pending_task=[])
     owner.device = SimpleNamespace(screenshot=Mock(), click=Mock())
     owner.get_oil = Mock(return_value=5000)
     owner.defer_for_oil = Mock()
@@ -339,6 +340,80 @@ def test_between_battle_preemption_withdraws_only_known_map(monkeypatch):
     assert error.value.archive_reserved is True and state.starts == 1
 
 
+@pytest.mark.parametrize('task', ['Leveling', 'Dorm', 'Research', 'Event'])
+def test_routine_job_waits_for_one_owned_paid_map(monkeypatch, task):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    owner.config.task_switched.return_value = True
+    owner.config.pending_task = [SimpleNamespace(command=task)]
+    original_enter = campaign.enter_map
+
+    def enter(*args, **kwargs):
+        result = original_enter(*args, **kwargs)
+        # The test's synthetic enter bypasses the actual Fleet Go proxy.
+        owner.fleet_go_clicked = True
+        owner.paid_map_deadline = ex.monotonic() + 1200
+        return result
+
+    campaign.enter_map = enter
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['status'] == 'complete' and result['boss_won'] is True
+    campaign.withdraw.assert_not_called()
+    reserve.assert_called_once()
+    assert state.starts == 1
+
+
+@pytest.mark.parametrize('interrupt', ['pause', 'stop', 'Restart', 'OpsiCrossMonth', 'Commission', 'expired',
+                                       'no_deadline', 'unowned', 'not_in_map', 'inspection',
+                                       'no_go', 'no_fleet', 'bad_key', 'bad_execution'])
+def test_paid_map_grace_cannot_bypass_controls_budget_or_ownership(monkeypatch, interrupt):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    original_battle = campaign.execute_a_battle
+    owner.config.task_switched.return_value = True
+    owner.config.pending_task = [SimpleNamespace(command='Dorm')]
+    original_enter = campaign.enter_map
+
+    def enter(*args, **kwargs):
+        result = original_enter(*args, **kwargs)
+        owner.fleet_go_clicked = True
+        owner.paid_map_deadline = ex.monotonic() + 1200
+        if interrupt == 'pause':
+            owner.config.pause_requested = True
+        elif interrupt == 'stop':
+            owner.config.stop_event = SimpleNamespace(is_set=lambda: True)
+        elif interrupt in ('Restart', 'OpsiCrossMonth', 'Commission'):
+            owner.config.pending_task[0].command = interrupt
+        elif interrupt == 'expired':
+            owner.paid_map_deadline = ex.monotonic() - 1
+        elif interrupt == 'no_deadline':
+            owner.paid_map_deadline = None
+        elif interrupt == 'unowned':
+            owner.reserved = False
+        elif interrupt == 'not_in_map':
+            state.in_map = False
+        elif interrupt == 'inspection':
+            owner.inspection = True
+        elif interrupt == 'no_go':
+            owner.fleet_go_clicked = False
+        elif interrupt == 'no_fleet':
+            owner.fleet_ready = False
+        elif interrupt == 'bad_key':
+            owner.proof['raw_keys'] = 0
+        elif interrupt == 'bad_execution':
+            owner.proof['verified_for_execution'] = False
+        return result
+
+    campaign.enter_map = enter
+    with pytest.raises(TaskEnd):
+        invoke(owner, proof, prepare, reserve)
+    original_battle.assert_not_called()
+    if interrupt == 'not_in_map':
+        campaign.withdraw.assert_not_called()
+    else:
+        campaign.withdraw.assert_called_once_with(timeout=20)
+    reserve.assert_called_once()
+    assert state.starts == 1
+
+
 def test_between_battle_oil_drop_withdraws_and_does_not_reenter(monkeypatch):
     owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
     owner.get_oil.side_effect = [500, 499]
@@ -347,6 +422,27 @@ def test_between_battle_oil_drop_withdraws_and_does_not_reenter(monkeypatch):
     assert result['reserved'] is True
     assert state.starts == 1
     campaign.withdraw.assert_called_once_with(timeout=20)
+
+
+def test_paid_map_grace_still_withdraws_when_oil_falls_below_reserve(monkeypatch):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+    owner.config.task_switched.return_value = True
+    owner.config.pending_task = [SimpleNamespace(command='Dorm')]
+    owner.get_oil.side_effect = [500, 499]
+    original_enter = campaign.enter_map
+
+    def enter(*args, **kwargs):
+        result = original_enter(*args, **kwargs)
+        owner.fleet_go_clicked = True
+        owner.paid_map_deadline = ex.monotonic() + 1200
+        return result
+
+    campaign.enter_map = enter
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['status'] == 'deferred' and result['reason'] == 'oil_reserve'
+    assert state.starts == 1 and result['reserved'] is True
+    campaign.withdraw.assert_called_once_with(timeout=20)
+    reserve.assert_called_once()
 
 
 @pytest.mark.parametrize('lost,boss,expected', [(True, True, 'lost'), (False, False, 'blocked')])
