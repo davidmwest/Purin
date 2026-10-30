@@ -838,6 +838,7 @@ def hard_preparation_controller(monkeypatch, witnesses):
                                config=SimpleNamespace())
     campaign.loop = lambda **kwargs: iter([None] * len(witnesses))
     owner._hard_fleet_witness = Mock(side_effect=witnesses)
+    owner._empty_hard_fleet_rows = Mock(return_value=None)
     monkeypatch.setattr(ex, 'Timer', ReadyTimer)
     from module.mood import lineup
     record = Mock()
@@ -878,6 +879,112 @@ def test_hard_stage_bypasses_common_fleet_number_selection(monkeypatch):
     owner._prepare_hard_fleet.assert_called_once_with(campaign)
     original.assert_not_called()
     campaign.device.click.assert_not_called()
+
+
+def real_empty_hard_fleet():
+    campaign = real_hard_fleet()
+    campaign.device.image = np.array(Image.open(
+        Path(__file__).parent / 'data' / 'archive_empty_hard_fleets.png').convert('RGB'))
+    return campaign
+
+
+def test_actual_skybound_empty_hard_rows_are_recognized_without_satisfied_stats():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_empty_hard_fleet()
+    assert owner._empty_hard_fleet_rows(campaign) == (True, True)
+    assert owner._hard_fleet_witness(campaign) is None
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('row', [0, 1])
+@pytest.mark.parametrize('slot', range(6))
+def test_partially_populated_hard_row_is_never_recommended(row, slot):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_empty_hard_fleet()
+    filled = real_hard_fleet().device.image
+    x = (372, 477, 582, 687, 792, 897)[slot]
+    y = (177, 292)[row]
+    campaign.device.image[y:y + 57, x:x + 78] = filled[292:349, 372:450]
+    empty = owner._empty_hard_fleet_rows(campaign)
+    assert empty[row] is False and empty[1 - row] is True
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('area', [
+    (108, 108, 319, 144), (115, 170, 168, 384), (435, 425, 1154, 513),
+    (989, 559, 1144, 605), (1000, 190, 1070, 250), (1080, 190, 1155, 250),
+    (1000, 305, 1080, 362), (1080, 305, 1155, 365)])
+def test_empty_hard_rows_need_complete_surface_submarine_and_controls(area):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_empty_hard_fleet()
+    x1,y1,x2,y2 = area
+    campaign.device.image[y1:y2, x1:x2] = 0
+    assert owner._empty_hard_fleet_rows(campaign) is None
+    campaign.device.click.assert_not_called()
+
+
+def empty_recommendation_controller(monkeypatch, empty=(True, True), fill=True):
+    owner, campaign, record = hard_preparation_controller(monkeypatch, [])
+    owner.inspection = owner.fleet_inspection = owner.fleet_go_clicked = False
+    owner.reserved, owner.key_mode, owner.key_cost = True, 'per_entry', 5
+    owner.proof = dict(account='alas', event=EVENT, stage='C1', mode='hard',
+                       verified_for_navigation=True, verified_for_execution=True,
+                       raw_keys=300, key_capacity=300)
+    rows = list(empty)
+    proof = (('AverageLevel', 70, 124),)
+    owner._hard_fleet_witness = Mock(side_effect=lambda _: None if any(rows) else proof)
+    owner._empty_hard_fleet_rows = Mock(side_effect=lambda _: tuple(rows))
+    campaign.loop = lambda **kwargs: iter([None] * 18)
+
+    def click(button):
+        assert button in (ex.FLEET_1_ADVICE, ex.FLEET_2_ADVICE)
+        if fill:
+            rows[(ex.FLEET_1_ADVICE, ex.FLEET_2_ADVICE).index(button)] = False
+
+    campaign.device.click.side_effect = click
+    return owner, campaign, record
+
+
+@pytest.mark.parametrize('empty,expected', [
+    ((True, True), [ex.FLEET_1_ADVICE, ex.FLEET_2_ADVICE]),
+    ((False, True), [ex.FLEET_2_ADVICE]), ((True, False), [ex.FLEET_1_ADVICE])])
+def test_recommend_empty_hard_rows_once_then_require_every_stat_and_fresh_final_frame(
+        monkeypatch, empty, expected):
+    owner, campaign, record = empty_recommendation_controller(monkeypatch, empty)
+    assert owner._prepare_hard_fleet(campaign) is False
+    assert [call.args[0] for call in campaign.device.click.call_args_list] == expected
+    record.assert_called_once_with(campaign)
+    assert campaign.config.SUBMARINE == 0
+
+
+def test_failed_recommendation_is_not_repeated_and_never_permits_go(monkeypatch):
+    owner, campaign, record = empty_recommendation_controller(monkeypatch, fill=False)
+    with pytest.raises(ex.ArchiveBlocked, match='hard_lineup_or_requirements_unverified'):
+        owner._prepare_hard_fleet(campaign)
+    assert [call.args[0] for call in campaign.device.click.call_args_list] == [
+        ex.FLEET_1_ADVICE, ex.FLEET_2_ADVICE]
+    record.assert_not_called()
+
+
+@pytest.mark.parametrize('field,value', [
+    ('inspection', True), ('fleet_inspection', True), ('reserved', False),
+    ('fleet_go_clicked', True), ('key_cost', 10)])
+def test_unowned_hard_preparation_cannot_request_recommendation(monkeypatch, field, value):
+    owner, campaign, record = empty_recommendation_controller(monkeypatch)
+    setattr(owner, field, value)
+    with pytest.raises(ex.ArchiveBlocked, match='unowned_hard_recommendation'):
+        owner._prepare_hard_fleet(campaign)
+    campaign.device.click.assert_not_called()
+    record.assert_not_called()
+
+
+def test_changed_empty_row_on_fresh_recheck_never_requests_advice(monkeypatch):
+    owner, campaign, record = empty_recommendation_controller(monkeypatch)
+    owner._empty_hard_fleet_rows.side_effect = [(True, True)] * 3 + [(False, True)]
+    with pytest.raises(ex.ArchiveBlocked, match='hard_lineup_or_requirements_unverified'):
+        owner._prepare_hard_fleet(campaign)
+    campaign.device.click.assert_not_called()
+    record.assert_not_called()
 
 
 

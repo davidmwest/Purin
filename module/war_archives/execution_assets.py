@@ -15,6 +15,17 @@ ARCHIVE_DISABLED_SUB = Button(area=(431, 435, 986, 516), color=(56, 61, 77),
 ARCHIVE_HARD_GO = Button(area=(989, 559, 1144, 605), color=(230, 173, 91),
     button=(989, 559, 1144, 605), file=_FILE, name='ARCHIVE_HARD_GO')
 
+# All six empty slots, above the stage-specific ship-type labels.
+_EMPTY_FILE = './assets/en/war_archives/ARCHIVE_EMPTY_HARD_FLEETS_20261029.png'
+ARCHIVE_EMPTY_HARD_ROWS = (
+    Button(area=(372, 177, 975, 235), color=(60, 59, 63),
+           button=(372, 177, 975, 235), file=_EMPTY_FILE, name='ARCHIVE_EMPTY_HARD_ROW_1'),
+    Button(area=(372, 292, 975, 349), color=(52, 51, 56),
+           button=(372, 292, 975, 349), file=_EMPTY_FILE, name='ARCHIVE_EMPTY_HARD_ROW_2'),
+)
+ARCHIVE_EMPTY_HARD_SUB = Button(area=(435, 425, 1154, 513), color=(63, 66, 77),
+    button=(435, 425, 1154, 513), file=_EMPTY_FILE, name='ARCHIVE_EMPTY_HARD_SUB')
+
 # Exact current EN daily tracking reminder; checkbox is deliberately excluded.
 _KEY_FILE = './assets/en/war_archives/ARCHIVE_DATA_KEY_20261023.png'
 

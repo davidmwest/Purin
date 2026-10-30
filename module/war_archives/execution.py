@@ -31,6 +31,7 @@ from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 from module.war_archives.catalog import get_archive
 from module.war_archives.execution_assets import (
     ARCHIVE_DISABLED_SUB, ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_GO, ARCHIVE_HARD_SURFACE,
+    ARCHIVE_EMPTY_HARD_ROWS, ARCHIVE_EMPTY_HARD_SUB,
     ARCHIVE_KEY_HEADER, ARCHIVE_KEY_MESSAGE, ARCHIVE_KEY_FIVE,
     ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM, ARCHIVE_KEY_LAYOUTS)
 
@@ -365,18 +366,30 @@ class WarArchivesExecution(CampaignRun):
                 entered_frames = 0
         raise ArchiveBlocked('data_key_entry_not_verified')
 
+    def _hard_fleet_layout(self, campaign):
+        if not all(campaign.match_template_color(button, offset=(3, 3), similarity=.85)
+                   for button in (ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_SURFACE,
+                                  ARCHIVE_HARD_GO)):
+            return False
+        if not (campaign.match_template_color(ARCHIVE_DISABLED_SUB, offset=(3, 3), similarity=.85)
+                or campaign.match_template_color(ARCHIVE_EMPTY_HARD_SUB, offset=(0, 0), similarity=.98)):
+            return False
+        return all(campaign.match_template_color(button, offset=(-20, -80, 20, 5), similarity=.85)
+                   for button in (FLEET_1_ADVICE, FLEET_1_CLEAR, FLEET_2_ADVICE, FLEET_2_CLEAR))
+
+    def _empty_hard_fleet_rows(self, campaign):
+        if not self._hard_fleet_layout(campaign):
+            return None
+        return tuple(campaign.match_template_color(button, offset=(0, 0), similarity=.98)
+                     for button in ARCHIVE_EMPTY_HARD_ROWS)
+
     def _hard_fleet_witness(self, campaign):
         """Only the captured two-surface-row layout, with every stat satisfied.
 
         Hard fleets belong to the stage. Common fleet numbers must never be
         applied to their rows. Unknown layouts/requirements need another capture.
         """
-        if not all(campaign.match_template_color(button, offset=(3, 3), similarity=.85)
-                   for button in (ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_SURFACE,
-                                  ARCHIVE_DISABLED_SUB, ARCHIVE_HARD_GO)):
-            return None
-        if not all(campaign.match_template_color(button, offset=(-20, -80, 20, 5), similarity=.85)
-                   for button in (FLEET_1_ADVICE, FLEET_1_CLEAR, FLEET_2_ADVICE, FLEET_2_CLEAR)):
+        if not self._hard_fleet_layout(campaign):
             return None
         image = campaign.device.image
         # Lower portrait strips avoid the empty slot's central plus sign. Each
@@ -406,6 +419,8 @@ class WarArchivesExecution(CampaignRun):
     def _prepare_hard_fleet(self, campaign):
         previous, frames = None, 0
         stable = Timer(1, count=2).start()
+        empty_previous, empty_frames, advised = None, 0, set()
+        empty_stable = Timer(1, count=2).start()
         for _ in campaign.loop(skip_first=False, timeout=12):
             self._check_switch()
             witness = self._hard_fleet_witness(campaign)
@@ -416,7 +431,7 @@ class WarArchivesExecution(CampaignRun):
                 frames += 1
                 if frames >= 3 and stable.reached():
                     campaign.map_is_hard_mode = True
-                    campaign.config.SUBMARINE = 0  # Exact disabled row above.
+                    campaign.config.SUBMARINE = 0  # Exact disabled or wholly empty row above.
                     from module.mood.lineup import record_lineup
                     record_lineup(campaign)
                     campaign.device.screenshot()
@@ -424,6 +439,29 @@ class WarArchivesExecution(CampaignRun):
                         logger.info('Archive Hard stage-owned fleets and every stat requirement verified')
                         return False
                     break
+            # Recommend only a positively empty stage-owned row, once per row.
+            # Populated fleets and unreadable requirements are never replaced.
+            empty = self._empty_hard_fleet_rows(campaign) if witness is None else None
+            if empty is None or empty != empty_previous:
+                empty_previous, empty_frames = empty, 0
+                empty_stable.reset()
+            if empty is not None and any(empty):
+                empty_frames += 1
+                row = next((i for i, value in enumerate(empty) if value and i not in advised), None)
+                if row is not None and empty_frames >= 3 and empty_stable.reached():
+                    if (self.inspection or self.fleet_inspection or not self.reserved
+                            or self.fleet_go_clicked or not self._proof(self.proof, execution=True)
+                            or not self._key_proof(self.proof)):
+                        raise ArchiveBlocked('unowned_hard_recommendation')
+                    campaign.device.screenshot()
+                    if self._empty_hard_fleet_rows(campaign) != empty:
+                        break
+                    self._check_switch()
+                    advised.add(row)  # Consume before forwarding an uncertain input.
+                    logger.info(f'Archive Hard fleet {row + 1} is empty; asking the game for advice once')
+                    campaign.device.click((FLEET_1_ADVICE, FLEET_2_ADVICE)[row])
+                    empty_previous, empty_frames = None, 0
+                    empty_stable.reset()
         self.diagnostic = str(save_event_diagnostic(
             campaign.device, f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_hard_unverified') or '')
         raise ArchiveBlocked('hard_lineup_or_requirements_unverified')
