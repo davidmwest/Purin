@@ -1471,3 +1471,39 @@ def test_prize_observer_delegates_request_without_adding_claim_inputs(owner, mon
     owner.observe_prize(archive, prize, folder=tmp_path, request_id='prize')
     adapter.observe.assert_called_once_with(VISITORS, prize, folder=tmp_path, request_id='prize')
     owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('title,recognized', [
+    ('Skybound Oratorio-Pt.1', True),
+    ('Skybound Oratorio-Pt.2', True),
+    ('Skybound Oratorio', True),
+    ('Skybound Oratorio-Pt.3', False),
+    ('Skybound Oratorio-Pt.1 extra', False),
+    ('The Enigma and the Shark-Pt.1', False),
+    ('Oratorio-Pt.1', False),
+])
+def test_skybound_full_chapter_titles_keep_exact_archive_identity(owner, monkeypatch, title, recognized):
+    from module.base.utils import load_image
+
+    # Keep the real undimmed stage-page/title-band detectors. Stub only OCR to
+    # reproduce the full Skybound title recorded by the live 22:18 failure.
+    owner.device.image = load_image('tests/war_archives/data/alas_enigma_stages.png')
+    use_actual_en_page_detectors(owner)
+    monkeypatch.setattr(p.STAGE_TITLE, 'ocr', Mock(return_value=title))
+    assert owner._archive_identity('war_archives_20211028_cn') is recognized
+    owner.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('negative', ['overlay', 'dimmed'])
+def test_skybound_chapter_alias_cannot_bypass_stage_title_proof(owner, monkeypatch, negative):
+    from module.base.utils import load_image
+
+    owner.device.image = load_image('tests/war_archives/data/alas_enigma_stages.png')
+    use_actual_en_page_detectors(owner)
+    monkeypatch.setattr(p.STAGE_TITLE, 'ocr', Mock(return_value='Skybound Oratorio-Pt.1'))
+    if negative == 'overlay':
+        owner._archive_stage_page = Mock(return_value=False)
+    else:
+        owner.device.image = (owner.device.image * .5).astype(np.uint8)
+    assert not owner._archive_identity('war_archives_20211028_cn')
+    owner.device.click.assert_not_called()
