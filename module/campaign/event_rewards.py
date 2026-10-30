@@ -7,7 +7,8 @@ from module.campaign.event_completion import (
 from module.campaign.event_completion_assets import TEMPESTA_FOGGY_SUPPLY_TAB
 from module.campaign.event_rewards_assets import (
     FOGGY_CLAIM_BADGE, FOGGY_COLLECT_ALL, FOGGY_COLLECT_ALL_DISABLED,
-    FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE)
+    FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE, REWARD_SHIP_LOCK_HEADER,
+    REWARD_SHIP_LOCK_MESSAGE, REWARD_SHIP_LOCK_CANCEL, REWARD_SHIP_LOCK_CONFIRM)
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_SHIP
 from module.eventstory.eventstory import ensure_event_running, save_event_diagnostic
 from module.handler.assets import GET_ITEMS_SHIP_1, GET_SKIN
@@ -39,8 +40,15 @@ class EventRewards(Reward):
             return 'empty'
         return 'unknown'
 
-    def _reward_dialog(self):
+    def _ship_lock_appear(self):
+        return all(self.match_template_color(button, offset=(3, 3), similarity=.9)
+                   for button in (REWARD_SHIP_LOCK_HEADER, REWARD_SHIP_LOCK_MESSAGE,
+                                  REWARD_SHIP_LOCK_CANCEL, REWARD_SHIP_LOCK_CONFIRM))
+
+    def _reward_dialog(self, *, allow_ship_lock=False):
         """Only known reward-dismissal screens; no generic popup confirmation."""
+        if allow_ship_lock and self._ship_lock_appear():
+            return REWARD_SHIP_LOCK_CONFIRM
         for button in (GET_ITEMS_1, GET_ITEMS_2, GET_ITEMS_3, GET_ITEMS_SHIP_1, GET_SHIP, GET_SKIN):
             offset = (20, 20) if button in (GET_SHIP, GET_SKIN) else 5
             if self.appear(button, offset=offset):
@@ -53,6 +61,7 @@ class EventRewards(Reward):
         click_wait = Timer(2, count=3)
         empty_frames = 0
         dialogs = 0
+        ship_lock_pending = False
         for _ in self.loop(skip_first=False, timeout=90):
             state = self._foggy_state()
             # The local timeout bounds a known ladder inspection. Its disabled
@@ -81,11 +90,19 @@ class EventRewards(Reward):
                 self.device.click(FOGGY_COLLECT_ALL)
                 click_wait.reset()
                 continue
-            dialog = self._reward_dialog() if record['pending_claim'] else None
+            dialog = self._reward_dialog(allow_ship_lock=ship_lock_pending) if record['pending_claim'] else None
             if dialog is not None:
                 if dialogs >= REWARD_DIALOGS_MAX:
                     record.update(status='failed', reason='reward_dialog_limit')
                     return
+                if dialog == REWARD_SHIP_LOCK_CONFIRM:
+                    record['ship_lock_attempts'] = record.get('ship_lock_attempts', 0) + 1
+                    persist()
+                    ship_lock_pending = False
+                elif dialog == GET_SHIP:
+                    # One exact lock confirmation per freshly dismissed ship.
+                    # A free-claim receipt alone cannot authorize this action.
+                    ship_lock_pending = True
                 self.device.click(dialog)
                 dialogs += 1
                 record['reward_dialogs'] = dialogs

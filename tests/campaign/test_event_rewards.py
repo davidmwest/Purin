@@ -10,7 +10,8 @@ from module.campaign.event_completion import load_reward_observations, save_rewa
 from module.campaign.event_rewards import EventRewards
 from module.campaign.event_rewards_assets import (
     FOGGY_CLAIM_BADGE, FOGGY_COLLECT_ALL, FOGGY_COLLECT_ALL_DISABLED,
-    FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE)
+    FOGGY_SUPPLY_HOME, FOGGY_SUPPLY_PAGE, REWARD_SHIP_LOCK_HEADER,
+    REWARD_SHIP_LOCK_MESSAGE, REWARD_SHIP_LOCK_CANCEL, REWARD_SHIP_LOCK_CONFIRM)
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
 from module.exception import GameNotRunningError
 
@@ -194,6 +195,85 @@ def test_only_known_reward_dialogs_have_dismissal_actions(dialog, click):
     helper = controller()
     helper.appear.side_effect = lambda button, **kwargs: button == dialog
     assert helper._reward_dialog() is click
+
+
+def test_captured_lock_question_requires_owned_ship_reward():
+    helper = captured_controller('reward_ship_lock.png')
+    assert helper._ship_lock_appear()
+    assert helper._reward_dialog() is None
+    assert helper._reward_dialog(allow_ship_lock=True) is REWARD_SHIP_LOCK_CONFIRM
+
+
+@pytest.mark.parametrize('missing', [REWARD_SHIP_LOCK_HEADER, REWARD_SHIP_LOCK_MESSAGE,
+                                   REWARD_SHIP_LOCK_CANCEL, REWARD_SHIP_LOCK_CONFIRM])
+def test_incomplete_lock_question_cannot_confirm(missing):
+    helper = captured_controller('reward_ship_lock.png')
+    x1, y1, x2, y2 = missing.area
+    helper.device.image[y1 - 6:y2 + 6, x1 - 6:x2 + 6] = 0
+    assert helper._reward_dialog(allow_ship_lock=True) is None
+
+
+def test_lock_keyword_cannot_be_missing_from_an_otherwise_exact_question():
+    helper = captured_controller('reward_ship_lock.png')
+    helper.device.image[330:361, 646:704] = 0
+    assert helper._reward_dialog(allow_ship_lock=True) is None
+
+
+def test_archive_key_purchase_popup_is_not_a_ship_lock_question():
+    helper = controller()
+    image = np.asarray(Image.open('tests/war_archives/data/archive_data_key_dialog.png').convert('RGB'))
+    helper.match_template_color = lambda button, **kwargs: button.match_template_color(image, **kwargs)
+    assert helper._reward_dialog(allow_ship_lock=True) is None
+
+
+def test_claimed_ship_gets_one_audited_lock_confirmation_then_verifies_empty(immediate):
+    helper = controller(6)
+    helper._foggy_state.side_effect = ['claimable'] + ['unknown'] * 2 + ['empty'] * 3
+    helper.appear.side_effect = lambda button, **kwargs: button == GET_SHIP
+    helper._ship_lock_appear = Mock(return_value=True)
+    state = record()
+    audits = []
+
+    def persist():
+        audits.append((dict(state), list(helper.device.click.call_args_list)))
+
+    helper._collect(state, persist)
+    assert helper.device.click.call_args_list == [call(FOGGY_COLLECT_ALL), call(GET_SHIP),
+                                                call(REWARD_SHIP_LOCK_CONFIRM)]
+    assert audits[1][0]['ship_lock_attempts'] == 1
+    assert call(REWARD_SHIP_LOCK_CONFIRM) not in audits[1][1]
+    assert state['status'] == 'complete'
+
+
+@pytest.mark.parametrize('pending_claim', [False, True])
+def test_lock_prompt_without_fresh_ship_dismissal_never_confirms(immediate, pending_claim):
+    helper = captured_controller('reward_ship_lock.png')
+    state = record()
+    state['pending_claim'] = pending_claim
+    helper._collect(state, Mock())
+    helper.device.click.assert_not_called()
+    assert state['status'] == 'failed'
+
+
+def test_same_lock_prompt_is_not_confirmed_twice_without_another_ship(immediate):
+    helper = controller(7)
+    helper._foggy_state.side_effect = ['claimable'] + ['unknown'] * 6
+    ship_dismissed = False
+
+    def appear(button, **kwargs):
+        nonlocal ship_dismissed
+        if button == GET_SHIP and not ship_dismissed:
+            ship_dismissed = True
+            return True
+        return False
+
+    helper.appear.side_effect = appear
+    helper._ship_lock_appear = Mock(return_value=True)
+    state = record()
+    helper._collect(state, Mock())
+    assert helper.device.click.call_args_list == [call(FOGGY_COLLECT_ALL), call(GET_SHIP),
+                                                call(REWARD_SHIP_LOCK_CONFIRM)]
+    assert state['ship_lock_attempts'] == 1
 
 
 def mock_navigation(monkeypatch, *, returned=True):
