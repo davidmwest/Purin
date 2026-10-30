@@ -21,6 +21,7 @@ from module.gacha.banner_assets import (EVENT_BANNER_DURATION, EVENT_BANNER_DURA
                                       EVENT_RATE_INFO_CLOSE, EVENT_RATE_INFO_CONFIRM)
 from module.gacha.ui import GachaUI
 from module.logger import logger
+from module.ui.assets import IDLE, IDLE_2, IDLE_3
 from module.ui.page import Page, page_build, page_main
 from module.ui.scroll import Scroll
 
@@ -284,6 +285,12 @@ class EventBannerObserver(GachaUI):
             return True
         # Build screens retain their exact pool/order guards.
         if self.on_event_pool():
+            return ensure_event_page(self, page_main)
+        # The game's clock/screensaver has no page-graph node. Its existing
+        # exact idle witnesses authorize the bounded navigator's wake handler;
+        # never treat an arbitrary unrecognized page as a wake-up target.
+        if any(asset.match_luma(self.device.image, offset=(5, 5))
+               for asset in (IDLE, IDLE_2, IDLE_3)):
             return ensure_event_page(self, page_main)
         # Serial jobs legitimately leave Dorm, Research or a stage list here.
         # Require both the page and its direct Home control, including their

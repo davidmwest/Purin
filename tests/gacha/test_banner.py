@@ -143,6 +143,7 @@ def test_unrecognized_pool_cannot_click_info(tmp_path):
 
 def test_unknown_rate_info_panel_has_no_guessed_exit(monkeypatch):
     helper = controller()
+    helper.device.image = np.zeros((720, 1280, 3), dtype=np.uint8)
     helper.ui_page_appear.return_value = False
     helper.on_event_pool = Mock(return_value=False)
     monkeypatch.setattr(banner, 'ensure_event_page', Mock())
@@ -491,9 +492,11 @@ def test_reused_banner_refreshes_stale_frame_without_replaying_observation(tmp_p
 
 def test_return_refreshes_cached_main_and_leaves_unknown_current_screen_untouched(monkeypatch):
     helper = controller()
-    helper.device.image = 'stale-main'
-    helper.device.screenshot.side_effect = lambda: setattr(helper.device, 'image', 'unknown-modal')
-    helper.ui_page_appear = lambda page: helper.device.image == 'stale-main'
+    stale = np.full((720, 1280, 3), 127, dtype=np.uint8)
+    unknown = np.zeros_like(stale)
+    helper.device.image = stale
+    helper.device.screenshot.side_effect = lambda: setattr(helper.device, 'image', unknown)
+    helper.ui_page_appear = lambda page: helper.device.image is stale
     helper.on_event_pool = Mock(return_value=False)
     monkeypatch.setattr(banner, 'ensure_event_page', Mock())
 
@@ -585,6 +588,46 @@ def test_prior_task_home_requires_both_fresh_undimmed_controls(
 def test_actual_build_dialogs_and_receipts_never_authorize_ordinary_home(
         filename, request, monkeypatch):
     helper = ordinary_page_controller(filename, request)
+    monkeypatch.setattr(banner, 'ensure_event_page', Mock())
+
+    assert helper._return_main() is False
+
+    banner.ensure_event_page.assert_not_called()
+    helper.device.click.assert_not_called()
+
+
+def test_cached_banner_wakes_actual_idle_page_without_replaying_orders(request, monkeypatch, tmp_path):
+    from module.eventstory import eventstory
+    from module.ui.assets import REWARD_GOTO_MAIN
+    from module.ui.ui import UI
+
+    helper = ordinary_page_controller('f2p_idle_20261030.png', request)
+    main_image = np.array(Image.open('tests/gacha/data/f2p_main_20261029.png').convert('RGB'))
+    helper.interval_clear = Mock()
+    helper.ui_button_interval_reset = Mock()
+    helper.handle_idle_page = lambda: UI.handle_idle_page(helper)
+    timer = Mock()
+    timer.reached.return_value = True
+    helper.get_interval_timer = Mock(return_value=timer)
+    monkeypatch.setattr(eventstory, 'Timer', Mock(return_value=timer))
+    helper.loop = Mock(return_value=iter(range(4)))
+    helper.device.click.side_effect = lambda button: setattr(helper.device, 'image', main_image)
+    helper.enter_event_pool = Mock()
+    key = f'{banner.CURRENT_EVENT}:{banner.BANNER_VERSION}'
+    save_banner_state('alas', {key: dict(status='blocked', info_clicks=1,
+                                        orders_submitted=0, returned_main=False)}, tmp_path)
+
+    result = helper.run(folder=tmp_path)
+
+    assert result['reused'] and result['returned_main']
+    assert result['info_clicks'] == 1 and result['orders_submitted'] == 0
+    helper.device.click.assert_called_once_with(REWARD_GOTO_MAIN)
+    helper.enter_event_pool.assert_not_called()
+
+
+def test_idle_clock_without_exact_battery_witness_has_no_input(request, monkeypatch):
+    helper = ordinary_page_controller('f2p_idle_20261030.png', request)
+    helper.device.image[660:700, 850:885] = 0
     monkeypatch.setattr(banner, 'ensure_event_page', Mock())
 
     assert helper._return_main() is False
