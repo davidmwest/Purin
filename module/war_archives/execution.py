@@ -646,11 +646,12 @@ class WarArchivesExecution(CampaignRun):
         def status(drop=None, expected_end=None):
             won_before, lost_before = campaign.combat_won, campaign.combat_lost
             # Combat cleanup asks handle_in_stage before its broad popup handlers.
-            # This scoped wrapper owns only a notice following our reserved boss.
+            # The expected end is only a prediction: a multiple-spawn potential
+            # boss search can predict no_searching even when the map really ends.
+            # The notice handler still requires our owned victory and exact text.
             if callable(original_in_stage):
                 def in_stage(*args, **kwargs):
-                    if (expected_end == 'in_stage'
-                            and self._story_unlock_candidate(getattr(campaign.device, 'image', None))):
+                    if self._story_unlock_candidate(getattr(campaign.device, 'image', None)):
                         self._acknowledge_story_unlock(campaign, won_before, lost_before)
                     return original_in_stage(*args, **kwargs)
                 campaign.handle_in_stage = in_stage
@@ -659,10 +660,13 @@ class WarArchivesExecution(CampaignRun):
             finally:
                 if callable(original_in_stage):
                     campaign.handle_in_stage = original_in_stage
-                if (expected_end == 'in_stage' and (won_before or campaign.combat_won)
+                if (self.reserved and not (self.inspection or self.fleet_inspection)
+                        and self._proof(self.proof, execution=True) and self._key_proof(self.proof)
+                        and (won_before or campaign.combat_won)
                         and not (lost_before or campaign.combat_lost or campaign.run_lost)
-                        and campaign.is_in_stage()):
+                        and campaign.is_in_stage() and not campaign.is_in_map()):
                     self.boss_won = True
+                    logger.info(f'Archive victory and return to stage list verified (expected_end={expected_end})')
 
         def battle():
             if self.config.task_switched():

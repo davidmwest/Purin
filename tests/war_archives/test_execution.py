@@ -9,7 +9,7 @@ import pytest
 from module.campaign.campaign_stars import StageGoal
 from module.campaign.campaign_status import OilReadError
 from module.config.config import TaskEnd
-from module.exception import OilExhausted, ScriptEnd
+from module.exception import CampaignEnd, OilExhausted, ScriptEnd
 from module.war_archives import execution as ex
 from module.war_archives.completion import ArchiveCoordinator
 from module.war_archives.state import ArchiveState
@@ -28,7 +28,7 @@ class Config(SimpleNamespace):
 
 
 def controller(monkeypatch, *, progress=(False, True), one_clear=False, lost=False,
-               boss_won=True, run_error=None):
+               boss_won=True, run_error=None, expected_end='in_stage', campaign_end=False):
     owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
     owner.config = Config(config_name='alas', overridden={'kept': True},
                           check_task_switch=Mock(), task_switched=Mock(return_value=False), task_call=Mock())
@@ -59,13 +59,18 @@ def controller(monkeypatch, *, progress=(False, True), one_clear=False, lost=Fal
         state.in_map, state.in_stage = False, True
         campaign.combat_won = boss_won
         campaign.run_lost = campaign.combat_lost = lost
+        if campaign_end:
+            raise CampaignEnd('In stage.')
 
     def run():
         campaign.enter_map(campaign.ENTRANCE, mode=owner.goal.mode)
         if run_error:
             raise run_error
         campaign.execute_a_battle()
-        campaign.combat_status(expected_end='in_stage')
+        try:
+            campaign.combat_status(expected_end=expected_end)
+        except CampaignEnd:
+            return True
 
     campaign.enter_map, campaign.combat_status, campaign.run = enter, status, Mock(side_effect=run)
     owner.load_campaign = Mock(side_effect=lambda *args: setattr(owner, 'campaign', campaign))
@@ -357,6 +362,43 @@ def test_boss_victory_not_100_percent_is_won_but_progress_incomplete(monkeypatch
     result = invoke(owner, proof, prepare, reserve)
     assert result['status'] == 'won' and result['stage_complete'] is False
     assert state.starts == 1
+
+
+@pytest.mark.parametrize('expected_end', ['in_stage', 'no_searching', 'with_searching', None])
+@pytest.mark.parametrize('campaign_end', [False, True])
+def test_observed_boss_victory_survives_wrong_cleanup_prediction(monkeypatch, expected_end, campaign_end):
+    # Multi-spawn clear_potential_boss passes expected='', predicting no_searching
+    # even when that fight really ends the map. Real stage return raises CampaignEnd.
+    owner, campaign, state, proof, prepare, reserve = controller(
+        monkeypatch, expected_end=expected_end, campaign_end=campaign_end)
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['status'] == 'complete' and result['boss_won'] is True
+    assert result['stage_complete'] is True
+    assert state.starts == 1 and prepare.call_count == 2
+    reserve.assert_called_once()
+
+
+@pytest.mark.parametrize('won,lost,run_lost,in_map,in_stage', [
+    (True, False, False, True, False),   # Ordinary winning mob stays in the map.
+    (True, False, False, False, False), # Main page / feature unlock is not a clear.
+    (True, False, False, True, True),   # Conflicting page markers are not proof.
+    (False, False, False, False, True), # Stage return alone is not a victory.
+    (True, True, False, False, True),   # Current loss dominates any winning flag.
+    (True, False, True, False, True),   # A loss earlier in the run also dominates.
+])
+def test_predicted_non_boss_cleanup_requires_victory_and_unambiguous_stage_return(
+        monkeypatch, won, lost, run_lost, in_map, in_stage):
+    owner, campaign, state, proof, prepare, reserve = controller(
+        monkeypatch, expected_end='no_searching')
+
+    def cleanup(drop=None, expected_end=None):
+        state.in_map, state.in_stage = in_map, in_stage
+        campaign.combat_won, campaign.combat_lost, campaign.run_lost = won, lost, run_lost
+    campaign.combat_status = cleanup
+    result = invoke(owner, proof, prepare, reserve)
+    assert result['boss_won'] is False and result['stage_complete'] is False
+    assert result['status'] == ('lost' if run_lost else 'blocked')
+    assert prepare.call_count == 1 and state.starts == 1
 
 
 def test_prize_farming_permits_one_run_of_already_100_percent_stage(monkeypatch):
@@ -1392,8 +1434,9 @@ def test_failed_story_cancel_transport_consumes_once_flag(monkeypatch):
     owner.device.click.assert_called_once_with(ex.ARCHIVE_KEY_CANCEL)
 
 
-def test_post_boss_cleanup_hook_restores_stage_handler_and_preserves_victory(monkeypatch):
-    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch)
+@pytest.mark.parametrize('expected_end', ['in_stage', 'no_searching', 'with_searching', None])
+def test_post_boss_cleanup_hook_restores_stage_handler_and_preserves_victory(monkeypatch, expected_end):
+    owner, campaign, state, proof, prepare, reserve = controller(monkeypatch, expected_end=expected_end)
     original_in_stage = campaign.handle_in_stage = Mock(return_value=True)
     image = story_unlock_image()
     owner.device.image = image
