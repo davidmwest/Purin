@@ -9,7 +9,7 @@ import module.config.server as server
 import module.formation.formation as formation_module
 from module.formation.formation import (ADD_TEMPLATE, PICKER_LIST_BOTTOM, Formation, find_adds, row_of,
                                        ship_score)
-from module.exception import ScriptError
+from module.exception import GameStuckError, ScriptError
 from module.inventory.inventory import CARD_HEIGHT
 from module.leveling.plan import Slot
 from module.retire.dock_walk import DockWalker
@@ -150,11 +150,53 @@ def test_add_reports_success_only_after_selection_and_confirmation(outcomes, add
 def test_picker_cancel_failure_raises_for_scheduler_recovery(monkeypatch):
     form, clicks, failures = picker_formation(monkeypatch, [(0, 1, False)] * 10)
 
-    with pytest.raises(ScriptError, match='could not leave the ship picker safely'):
+    with pytest.raises(GameStuckError, match='could not leave the ship picker safely'):
         form.formation_cancel_picker()
 
     assert clicks == [formation_module.BACK_ARROW] * formation_module.PICKER_MAX_CLICKS
     assert failures == ['cancel_timeout']
+
+
+def test_info_to_formation_never_clicks_the_expanded_info_button(monkeypatch):
+    # The Oct 27 failure: Info fills x902..1104, leaving only x1130..1244 for Formation.
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    image[635:710, 895:1255] = dock_image('info_view_buttons.png')
+    assert formation_module.FLEET_DETAIL_CHECK.match(image, offset=(20, 20))
+    assert not formation_module.FLEET_CHECK.match(image, offset=(20, 20))
+    form = object.__new__(Formation)
+    clicked, failures = [], []
+    state = {'info': True}
+
+    def click(button):
+        x1, y1, x2, y2 = button.button
+        assert 1130 <= x1 < x2 <= 1244
+        assert 640 <= y1 < y2 <= 700
+        clicked.append(button)
+        state['info'] = False
+
+    form.device = SimpleNamespace(image=image, click=click)
+    form.loop = lambda **kwargs: iter(range(4))
+    form.appear = lambda button, **kwargs: (
+        state['info'] if button is formation_module.FLEET_DETAIL_CHECK else not state['info'])
+    form.formation_save_failure = failures.append
+    monkeypatch.setattr(formation_module, 'Timer', lambda *args: SimpleNamespace(reached=lambda: True,
+                                                                              reset=lambda: None))
+
+    form.formation_set_view(info=False)
+
+    assert len(clicked) == 1
+    assert failures == []
+
+
+def test_view_transition_timeout_is_recoverable_instead_of_exiting_runner(monkeypatch):
+    form, clicks, failures = picker_formation(monkeypatch, [(0, 0, False)] * 10)
+    form.appear = lambda button, **kwargs: button is formation_module.FLEET_DETAIL_CHECK
+
+    with pytest.raises(GameStuckError, match='could not read the fleet view safely'):
+        form.formation_set_view(info=False)
+
+    assert len(clicks) == formation_module.PICKER_MAX_CLICKS
+    assert failures == ['fleet_view_timeout']
 
 
 def test_walk_finds_free_ship_after_busy_first_page_and_stops_before_next_drag(monkeypatch):

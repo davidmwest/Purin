@@ -16,7 +16,7 @@ from module.base.timer import Timer
 from module.base.utils import crop, load_image, save_image
 from module.dock.census import GRID_SHIFT, card_level, card_rarity, card_status
 from module.equipment.assets import FLEET_DETAIL, FLEET_DETAIL_CHECK, FLEET_NEXT, FLEET_PREV, OCR_FLEET_INDEX
-from module.exception import ScriptError
+from module.exception import GameStuckError, ScriptError
 from module.inventory.inventory import CARD_HEIGHT, CARD_LEFTS, CARD_WIDTH
 from module.leveling.plan import ShipMatcher, load_ship_data
 from module.logger import logger
@@ -277,7 +277,7 @@ class Formation(Dock):
                 clicks += 1
                 click.reset()
         self.formation_save_failure('cancel_timeout')
-        raise ScriptError('Formation could not leave the ship picker safely')
+        raise GameStuckError('Formation could not leave the ship picker safely')
 
     def formation_add(self, point):
         """
@@ -336,7 +336,7 @@ class Formation(Dock):
                 clicks += 1
                 click.reset()
         self.formation_save_failure('fleet_view_timeout')
-        raise ScriptError('Formation could not read the fleet view safely')
+        raise GameStuckError('Formation could not read the fleet view safely')
 
     def formation_read_slots(self, fleet):
         # Reuse the stable multi-read name/level OCR without its unbounded view-entry loop.

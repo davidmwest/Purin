@@ -26,6 +26,14 @@ _CAPSULE_HOME = Button(area=(1213, 26, 1245, 55), color=(0, 0, 0),
                        button=(1206, 18, 1250, 64),
                        file='./assets/en/ui/CAPSULE_RERUN_HOME.png', name='CAPSULE_RERUN_HOME_CHECK')
 
+# EN asset selector, 2026-10-28. Its red X exits the game and also matches MAINTENANCE_ANNOUNCE.
+_ASSET_DOWNLOAD_FILE = './assets/en/handler/LOGIN_ASSET_DOWNLOAD.png'
+_ASSET_DOWNLOAD_TITLE = Button(area=(323, 159, 658, 190), color=(0, 0, 0), button=(323, 159, 658, 190),
+                               file=_ASSET_DOWNLOAD_FILE, name='LOGIN_ASSET_DOWNLOAD_TITLE')
+_ASSET_DOWNLOAD_CONFIRM = Button(area=(719, 462, 859, 494), color=(0, 0, 0),
+                                 button=(715, 456, 862, 495),
+                                 file=_ASSET_DOWNLOAD_FILE, name='LOGIN_ASSET_DOWNLOAD_CONFIRM')
+
 
 # A game update downloads before the login, 570 MB on 2026-10-22: the screen holds a progress bar for minutes, and
 # a restart after 3 minutes of nothing known on it starts the download over. Stuck and click checks wait this long.
@@ -95,6 +103,9 @@ class LoginHandler(UI):
                 self.device.click(BACK_ARROW)
                 continue
             # Updates and maintenance
+            if self.handle_asset_download():
+                self.game_update_wait(download_timer)
+                continue
             if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=5):
                 continue
             if self.appear_then_click(LOGIN_GAME_UPDATE, offset=(30, 30), interval=5):
@@ -131,6 +142,15 @@ class LoginHandler(UI):
             if self.appear_then_click(GOTO_MAIN, offset=(30, 30), interval=5):
                 continue
 
+        return True
+
+    def handle_asset_download(self):
+        """Keep the selected assets and confirm. Never dismiss this selector with its Exit X."""
+        if server.server != 'en' or not self.appear(_ASSET_DOWNLOAD_TITLE, offset=(5, 5)):
+            return False
+        # Recognizing the title also protects an animating/disabled Confirm from generic close handlers.
+        if self.appear(_ASSET_DOWNLOAD_CONFIRM, offset=(5, 5), interval=5):
+            self.device.click(_ASSET_DOWNLOAD_CONFIRM)
         return True
 
     @staticmethod

@@ -45,7 +45,8 @@ SLOT_TAPS = {
     ('main', 0): (591, 284), ('main', 1): (815, 255), ('main', 2): (370, 325),
     ('vanguard', 0): (509, 481), ('vanguard', 1): (758, 430), ('vanguard', 2): (978, 383),
 }
-FLEET_FORMATION = area_button((1045, 645, 1240, 690), 'FLEET_FORMATION')
+# Info expands to x1104 when selected. Only the right side stays Formation in both views.
+FLEET_FORMATION = area_button((1140, 650, 1234, 690), 'FLEET_FORMATION')
 
 DOCK_SEARCH = area_button((652, 10, 688, 46), 'DOCK_SEARCH')
 DOCK_SEARCH_FIELD = area_button((712, 14, 968, 42), 'DOCK_SEARCH_FIELD')
