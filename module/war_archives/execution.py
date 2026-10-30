@@ -32,7 +32,7 @@ from module.war_archives.catalog import get_archive
 from module.war_archives.execution_assets import (
     ARCHIVE_DISABLED_SUB, ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_GO, ARCHIVE_HARD_SURFACE,
     ARCHIVE_KEY_HEADER, ARCHIVE_KEY_MESSAGE, ARCHIVE_KEY_FIVE,
-    ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM)
+    ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM, ARCHIVE_KEY_LAYOUTS)
 
 
 _REQUIREMENT = re.compile(r'(AverageLevel|Total(?:HP|FP|TRP|AVI|AA|RLD|EVA|HIT|ASW))>(0|[1-9][0-9]{0,5})\((0|[1-9][0-9]{0,5})\)')
@@ -206,16 +206,17 @@ class WarArchivesExecution(CampaignRun):
     def _data_key_dialog_candidate(self, image):
         """Captured frame controls permit waiting, never confirmation by themselves."""
         return (isinstance(image, np.ndarray) and image.shape == (720, 1280, 3)
-                and all(button.match_template_color(image, offset=(0, 0), similarity=.9)
-                        for button in (ARCHIVE_KEY_HEADER, ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM)))
+                and any(all(button.match_template_color(image, offset=(0, 0), similarity=.9)
+                            for button in (header, ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM))
+                        for header, _, _ in ARCHIVE_KEY_LAYOUTS))
 
     def _data_key_dialog_witness(self, image):
         """Exact captured Info dialog and complete five-key message, never a price guess."""
         if not isinstance(image, np.ndarray) or image.shape != (720, 1280, 3):
             return False
-        if not all(button.match_template_color(image, offset=(0, 0), similarity=.9)
-                   for button in (ARCHIVE_KEY_HEADER, ARCHIVE_KEY_MESSAGE, ARCHIVE_KEY_FIVE,
-                                  ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM)):
+        if not any(all(button.match_template_color(image, offset=(0, 0), similarity=.9)
+                       for button in (*layout, ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM))
+                   for layout in ARCHIVE_KEY_LAYOUTS):
             return False
         white = Ocr([(362, 319, 737, 347), (410, 345, 871, 373)], lang='cnocr',
                     letter=(255, 255, 255), threshold=128, name='ARCHIVE_KEY_MESSAGE')
@@ -494,6 +495,10 @@ class WarArchivesExecution(CampaignRun):
                         self.diagnostic = str(save_event_diagnostic(
                             campaign.device,
                             f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_data_key_dialog') or '')
+                        # Do not hand a pending spending modal to the next job's
+                        # generic UI confirmer. Preserve the reservation and
+                        # recover the game before any ordinary job resumes.
+                        self.config.task_call('Restart')
                         raise
                 # A generic confirm may buy keys, oil, or an unknown entitlement.
                 # Let the exact oil guard cancel its known purchase dialog first.
@@ -503,6 +508,7 @@ class WarArchivesExecution(CampaignRun):
                     self.diagnostic = str(save_event_diagnostic(
                         campaign.device,
                         f'{self.config.config_name}_{self.goal.event}_{self.goal.stage}_archive_entry_dialog') or '')
+                    self.config.task_call('Restart')
                     raise ArchiveBlocked('unrecognized_entry_dialog')
                 return False
             return original_oil_popup()

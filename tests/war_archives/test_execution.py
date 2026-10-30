@@ -31,7 +31,7 @@ def controller(monkeypatch, *, progress=(False, True), one_clear=False, lost=Fal
                boss_won=True, run_error=None):
     owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
     owner.config = Config(config_name='alas', overridden={'kept': True},
-                          check_task_switch=Mock(), task_switched=Mock(return_value=False))
+                          check_task_switch=Mock(), task_switched=Mock(return_value=False), task_call=Mock())
     owner.device = SimpleNamespace(screenshot=Mock(), click=Mock())
     owner.get_oil = Mock(return_value=5000)
     owner.defer_for_oil = Mock()
@@ -431,6 +431,7 @@ def test_entry_dialog_captures_current_frame_and_keeps_reservation(monkeypatch, 
     assert owner.device.screenshot.call_count == (2 if after_go and modal is ex.USE_DATA_KEY else 1)
     assert reserve.call_count == int(after_go) and state.starts == 0
     assert owner.device.click.call_args_list == ([((ex.FLEET_PREPARATION,), {})] if after_go else [])
+    owner.config.task_call.assert_called_once_with('Restart')
 
 
 def test_entry_dialog_capture_failure_does_not_authorize_input(monkeypatch):
@@ -889,6 +890,13 @@ def test_actual_five_data_key_reminder_requires_exact_complete_text():
     assert owner._data_key_dialog_witness(key_dialog_image()) is True
 
 
+def test_actual_scaled_f2p_five_key_dialog_is_recognized_with_complete_text():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    image = np.asarray(Image.open(Path(__file__).parent / 'data/archive_data_key_dialog_scaled.png').convert('RGB'))
+    assert owner._data_key_dialog_candidate(image) is True
+    assert owner._data_key_dialog_witness(image) is True
+
+
 def key_toast_image():
     return np.asarray(Image.open(Path(__file__).parent / 'data/archive_data_key_toast.png').convert('RGB'))
 
@@ -899,11 +907,12 @@ def test_actual_game_toast_is_only_a_wait_candidate_without_complete_key_message
     assert owner._data_key_dialog_witness(key_toast_image()) is False
 
 
+@pytest.mark.parametrize('filename', ['archive_data_key_dialog.png', 'archive_data_key_dialog_scaled.png'])
 @pytest.mark.parametrize('changed', ['five', 'message', 'header', 'cancel', 'confirm', 'dim', 'wrong_cost'])
-def test_actual_key_dialog_rejects_missing_price_controls_and_dim_overlay(changed):
+def test_actual_key_dialog_rejects_missing_price_controls_and_dim_overlay(changed, filename):
     from PIL import ImageDraw
     owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
-    image = key_dialog_image().copy()
+    image = np.asarray(Image.open(Path(__file__).parent / 'data' / filename).convert('RGB')).copy()
     areas = {'five': (737,319,757,347), 'message': (410,345,871,373),
              'header': (353,175,430,215), 'cancel': (401,481,578,542),
              'confirm': (702,481,878,542), 'wrong_cost': (737,319,757,347)}

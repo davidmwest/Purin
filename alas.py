@@ -58,6 +58,7 @@ def login_retry_delay(failures):
 # Optimization_WhenTaskQueueEmpty=close_emulator stops the game and the emulator only for a wait this long or longer,
 # starting them again takes about 2 minutes. A shorter wait is spent at the main page.
 CLOSE_EMULATOR_MIN_WAIT = timedelta(minutes=10)
+IDLE_GAME_CLOSE_SECONDS = 10 * 60
 
 
 class AzurLaneAutoScript:
@@ -706,21 +707,28 @@ class AzurLaneAutoScript:
         del_cached_property(self, 'device')
         return True
 
-    def wait_until(self, future):
+    def wait_until(self, future, idle_close=False):
         """
         Wait until a specific time.
 
         Args:
             future (datetime):
+            idle_close (bool): End early after ten minutes without tasks or user input.
 
         Returns:
             bool: True if wait finished, False if config changed or a pause is requested.
         """
         future = future + timedelta(seconds=1)
+        close_after = time.monotonic() + IDLE_GAME_CLOSE_SECONDS
         self.config.start_watching()
         while 1:
             if datetime.now() > future:
                 return True
+            if idle_close:
+                if self.device.user_playing():
+                    close_after = time.monotonic() + IDLE_GAME_CLOSE_SECONDS
+                elif time.monotonic() >= close_after:
+                    return True
             if self.stop_event is not None:
                 if self.stop_event.is_set():
                     logger.info("Update event detected")
@@ -896,6 +904,16 @@ class AzurLaneAutoScript:
                     logger.info(f'Wait is shorter than {CLOSE_EMULATOR_MIN_WAIT}, goto main page only')
                     method = 'goto_main'
                 if method in ['close_game', 'close_emulator']:
+                    if method == 'close_game':
+                        logger.info('Leave game running for ten idle minutes before closing it')
+                        release_resources()
+                        self.device.release_during_wait()
+                        if not self.wait_until(task.next_run, idle_close=True):
+                            del_cached_property(self, 'config')
+                            continue
+                        if datetime.now() >= task.next_run:
+                            # A task became due during the grace period; the game is still open.
+                            break
                     if not emulator_closed:
                         logger.info('Close game during wait')
                         self.device.app_stop()

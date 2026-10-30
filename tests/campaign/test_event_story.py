@@ -7,7 +7,8 @@ from module.eventstory import eventstory
 from module.eventstory.eventstory import EventStory, ensure_event_page, ensure_event_switch
 from module.base import timer
 from module.combat.assets import BATTLE_PREPARATION
-from module.exception import GameNotRunningError
+from module.exception import CampaignEnd, GameNotRunningError
+from module.map.assets import WITHDRAW
 from module.ui.assets import BACK_ARROW, GOTO_MAIN
 from module.ui.page import Page, page_campaign, page_main, page_sp
 
@@ -103,6 +104,58 @@ def test_unknown_page_never_uses_a_page_graph_coordinate():
     assert ensure_event_page(main, page_main) is False
     main.device.click.assert_not_called()
     assert all(page.parent is None for page in Page.iter_pages())
+
+
+def test_leftover_sortie_is_withdrawn_once_before_using_page_graph(monkeypatch):
+    in_map = [True]
+    recovery = SimpleNamespace(withdraw=Mock())
+
+    def withdraw(**kwargs):
+        in_map[0] = False
+        raise CampaignEnd('Withdraw')
+
+    recovery.withdraw.side_effect = withdraw
+    factory = Mock(return_value=recovery)
+    monkeypatch.setattr(eventstory, 'CampaignUI', factory)
+    main = SimpleNamespace(config=object(), interval_clear=Mock(),
+        loop=Mock(return_value=iter(range(3))),
+        ui_page_appear=lambda page: not in_map[0],
+        match_template_color=lambda button, **kwargs: button is WITHDRAW and in_map[0],
+        device=SimpleNamespace(app_is_running=lambda: True))
+
+    assert ensure_event_page(main, page_main) is True
+    factory.assert_called_once_with(main.config, device=main.device)
+    recovery.withdraw.assert_called_once()
+    assert 0 < recovery.withdraw.call_args.kwargs['timeout'] <= 15
+    assert recovery.withdraw.call_args.kwargs['skip_first_screenshot'] is False
+    assert all(page.parent is None for page in Page.iter_pages())
+
+
+def test_unchanged_sortie_cannot_repeat_withdrawal_in_same_navigation(monkeypatch):
+    recovery = SimpleNamespace(withdraw=Mock())
+    monkeypatch.setattr(eventstory, 'CampaignUI', Mock(return_value=recovery))
+    main = SimpleNamespace(config=object(), interval_clear=Mock(),
+        loop=Mock(return_value=iter(range(5))), ui_page_appear=Mock(return_value=True),
+        match_template_color=lambda button, **kwargs: button is WITHDRAW,
+        device=SimpleNamespace(app_is_running=lambda: True))
+    assert ensure_event_page(main, page_main) is False
+    recovery.withdraw.assert_called_once()
+    main.ui_page_appear.assert_not_called()
+
+
+def test_actual_f2p_leftover_map_matches_retreat_but_dim_overlay_does_not():
+    from pathlib import Path
+    from PIL import Image
+    import numpy as np
+    import module.config.server as server
+    previous = server.server
+    try:
+        server.set_server('en')
+        image = np.asarray(Image.open(Path(__file__).parent / 'data/archive_map_leftover.png').convert('RGB'))
+        assert WITHDRAW.match_template_color(image, offset=(30, 30), similarity=.85)
+        assert not WITHDRAW.match_template_color((image * .45).astype(np.uint8), offset=(30, 30), similarity=.85)
+    finally:
+        server.set_server(previous)
 
 
 def test_closed_game_raises_before_page_navigation_or_stale_image_detection():
@@ -231,6 +284,7 @@ def test_idle_wakeup_uses_existing_navigation_click_and_settle_budget(monkeypatc
         loop=Mock(side_effect=screenshots), interval_clear=Mock(),
         ui_page_appear=Mock(return_value=False), appear=Mock(return_value=False),
         handle_idle_page=Mock(side_effect=wake_up),
+        match_template_color=Mock(return_value=False),
         device=SimpleNamespace(click=Mock(), app_is_running=Mock(return_value=True)),
         ui_button_interval_reset=Mock())
     assert ensure_event_page(main, page_main, timeout=8, max_clicks=2) is False
@@ -345,7 +399,8 @@ def test_tempesta_hub_exit_shares_navigation_click_and_settle_budget(monkeypatch
     main = SimpleNamespace(
         loop=Mock(side_effect=screenshots), interval_clear=Mock(),
         ui_page_appear=Mock(return_value=False), appear=Mock(return_value=False),
-        handle_idle_page=Mock(return_value=False), match_template_color=Mock(return_value=True),
+        handle_idle_page=Mock(return_value=False),
+        match_template_color=Mock(side_effect=lambda button, **kwargs: button is not WITHDRAW),
         device=SimpleNamespace(click=Mock(side_effect=lambda button: clicked_at.append((frame[0], button))),
                                app_is_running=Mock(return_value=True)),
         ui_button_interval_reset=Mock())

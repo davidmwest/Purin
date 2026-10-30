@@ -8,10 +8,10 @@ from module.campaign.campaign_ui import CampaignUI, MODE_SWITCH_20241219
 from module.combat.assets import BATTLE_PREPARATION
 from module.combat.combat import Combat
 from module.eventstory.assets import *
-from module.exception import GameNotRunningError
+from module.exception import CampaignEnd, GameNotRunningError
 from module.handler.login import LoginHandler
 from module.logger import logger
-from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_CANCEL, MAP_PREPARATION_HARD
+from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_CANCEL, MAP_PREPARATION_HARD, WITHDRAW
 from module.ui.assets import BACK_ARROW, GOTO_MAIN
 from module.ui.page import Page, page_event, page_main, page_sp
 
@@ -40,6 +40,8 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
     Page.init_connection(destination)
     main.interval_clear(list(Page.iter_check_buttons()))
     clicks = 0
+    withdrew = False
+    deadline = monotonic() + timeout
     # Several source pages share the same home button. A second source-page
     # match during the transition can click the main screen's Settings gear.
     # Settle across fresh screenshots before allowing any further navigation.
@@ -47,6 +49,22 @@ def ensure_event_page(main, destination, timeout=30, max_clicks=12):
     try:
         for _ in main.loop(timeout=timeout):
             GOTO_MAIN.clear_offset()
+            # Restarting the game preserves an unfinished sortie. Leave a
+            # positively recognized map once before using the page graph;
+            # otherwise story/reward jobs keep revisiting the same map forever.
+            if main.match_template_color(WITHDRAW, offset=(30, 30), similarity=.85):
+                remaining = deadline - monotonic()
+                if withdrew or clicks >= max_clicks or remaining <= 0:
+                    return False
+                withdrew = True
+                recovery = CampaignUI(main.config, device=main.device)
+                try:
+                    recovery.withdraw(skip_first_screenshot=False, timeout=min(15, remaining))
+                except CampaignEnd:
+                    pass
+                clicks += 1
+                settled.reset()
+                continue
             if main.ui_page_appear(destination):
                 main.ui_current = destination
                 return True

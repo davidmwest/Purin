@@ -32,3 +32,18 @@ ARCHIVE_KEY_CANCEL = Button(area=(401, 481, 578, 542), color=(167, 169, 170),
 
 ARCHIVE_KEY_CONFIRM = Button(area=(702, 481, 878, 542), color=(103, 148, 203),
     button=(702, 481, 878, 542), file=_KEY_FILE, name='ARCHIVE_KEY_CONFIRM')
+
+# The 2560x1440 F2P capture downscaled to 720p has different text rasterization.
+# Keep both captured layouts, with the same complete OCR and five-key checks.
+_SCALED_KEY_FILE = './assets/en/war_archives/ARCHIVE_DATA_KEY_SCALED_20261029.png'
+ARCHIVE_KEY_HEADER_SCALED = Button(area=(353, 175, 430, 215), color=(117, 145, 191),
+    button=(353, 175, 430, 215), file=_SCALED_KEY_FILE, name='ARCHIVE_KEY_HEADER_SCALED')
+ARCHIVE_KEY_MESSAGE_SCALED = Button(area=(361, 316, 919, 374), color=(150, 152, 149),
+    button=(361, 316, 919, 374), file=_SCALED_KEY_FILE, name='ARCHIVE_KEY_MESSAGE_SCALED')
+ARCHIVE_KEY_FIVE_SCALED = Button(area=(737, 319, 757, 347), color=(152, 145, 107),
+    button=(737, 319, 757, 347), file=_SCALED_KEY_FILE, name='ARCHIVE_KEY_FIVE_SCALED')
+
+ARCHIVE_KEY_LAYOUTS = (
+    (ARCHIVE_KEY_HEADER, ARCHIVE_KEY_MESSAGE, ARCHIVE_KEY_FIVE),
+    (ARCHIVE_KEY_HEADER_SCALED, ARCHIVE_KEY_MESSAGE_SCALED, ARCHIVE_KEY_FIVE_SCALED),
+)

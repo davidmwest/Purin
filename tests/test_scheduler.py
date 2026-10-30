@@ -262,6 +262,82 @@ def test_close_game_never_stops_the_emulator(waiting):
     scheduler.device.emulator_stop.assert_not_called()
 
 
+def test_close_game_waits_for_grace_before_stopping(waiting):
+    scheduler = waiting(timedelta(hours=1), method='close_game')
+    events = []
+    scheduler.wait_until.side_effect = lambda *args, **kwargs: events.append(
+        'grace' if kwargs.get('idle_close') else 'wait') or True
+    scheduler.device.app_stop.side_effect = lambda: events.append('close')
+
+    assert AzurLaneAutoScript.get_next_task(scheduler) == 'Restart'
+    assert events == ['grace', 'close', 'wait']
+
+
+def test_changed_config_during_grace_does_not_close_game(waiting):
+    scheduler = waiting(timedelta(hours=1), method='close_game')
+    scheduler.wait_until.return_value = False
+
+    assert AzurLaneAutoScript.get_next_task(scheduler) == 'Restart'
+    scheduler.device.app_stop.assert_not_called()
+    scheduler.config.task_call.assert_not_called()
+
+
+def test_task_due_during_grace_runs_without_a_restart(waiting, monkeypatch):
+    scheduler = waiting(timedelta(minutes=5), method='close_game')
+    now = datetime.now()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls):
+            return now
+
+    def wait(future, idle_close=False):
+        nonlocal now
+        assert idle_close
+        now = future + timedelta(seconds=2)
+        return True
+
+    monkeypatch.setattr(alas, 'datetime', Clock)
+    scheduler.wait_until.side_effect = wait
+    assert AzurLaneAutoScript.get_next_task(scheduler) == 'Event'
+    scheduler.device.app_stop.assert_not_called()
+    scheduler.config.task_call.assert_not_called()
+
+
+@pytest.mark.parametrize('next_seconds,touch_at,pause_at,expected_seconds,finished', [
+    (3600, None, None, 600, True),
+    (3600, 590, None, 1190, True),
+    (300, None, None, 305, True),
+    (3600, None, 15, 15, False),
+])
+def test_idle_grace_tracks_elapsed_time_user_input_due_tasks_and_pauses(
+        monkeypatch, next_seconds, touch_at, pause_at, expected_seconds, finished):
+    elapsed = [0]
+    start = datetime.now()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls):
+            return start + timedelta(seconds=elapsed[0])
+
+    class IdleConfig:
+        start_watching = Mock()
+        should_reload = Mock(return_value=False)
+
+        @property
+        def pause_requested(self):
+            return pause_at is not None and elapsed[0] >= pause_at
+
+    monkeypatch.setattr(alas, 'datetime', Clock)
+    monkeypatch.setattr(alas.time, 'monotonic', lambda: elapsed[0])
+    monkeypatch.setattr(alas.time, 'sleep', lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    scheduler = SimpleNamespace(config=IdleConfig(), stop_event=None,
+        device=SimpleNamespace(user_playing=lambda: elapsed[0] == touch_at))
+    assert AzurLaneAutoScript.wait_until(
+        scheduler, start + timedelta(seconds=next_seconds), idle_close=True) is finished
+    assert elapsed[0] == expected_seconds
+
+
 def test_every_task_is_in_the_scheduler_priority():
     import re
     import yaml
