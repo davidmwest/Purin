@@ -31,7 +31,7 @@ from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE
 from module.war_archives.catalog import get_archive
 from module.war_archives.execution_assets import (
     ARCHIVE_DISABLED_SUB, ARCHIVE_FLEET_TITLE, ARCHIVE_HARD_GO, ARCHIVE_HARD_SURFACE,
-    ARCHIVE_EMPTY_HARD_ROWS, ARCHIVE_EMPTY_HARD_SUB,
+    ARCHIVE_EMPTY_HARD_ROW_VARIANTS, ARCHIVE_EMPTY_HARD_SUB,
     ARCHIVE_KEY_HEADER, ARCHIVE_KEY_MESSAGE, ARCHIVE_KEY_FIVE,
     ARCHIVE_KEY_CANCEL, ARCHIVE_KEY_CONFIRM, ARCHIVE_KEY_LAYOUTS)
 
@@ -390,8 +390,8 @@ class WarArchivesExecution(CampaignRun):
     def _empty_hard_fleet_rows(self, campaign):
         if not self._hard_fleet_layout(campaign):
             return None
-        return tuple(campaign.match_template_color(button, offset=(0, 0), similarity=.98)
-                     for button in ARCHIVE_EMPTY_HARD_ROWS)
+        return tuple(any(campaign.match_template_color(button, offset=(0, 0), similarity=.98)
+                         for button in variants) for variants in ARCHIVE_EMPTY_HARD_ROW_VARIANTS)
 
     def _hard_fleet_witness(self, campaign):
         """Only the captured two-surface-row layout, with every stat satisfied.

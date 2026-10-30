@@ -938,6 +938,51 @@ def test_actual_skybound_empty_hard_rows_are_recognized_without_satisfied_stats(
     campaign.device.click.assert_not_called()
 
 
+def real_empty_hard_d3_fleet():
+    campaign = real_hard_fleet()
+    campaign.device.image = np.array(Image.open(
+        Path(__file__).parent / 'data' / 'archive_hard_d3_empty_fleet_1.png').convert('RGB'))
+    return campaign
+
+
+def test_actual_d3_inactive_empty_row_is_recognized_without_waiving_unmet_evasion():
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_empty_hard_d3_fleet()
+    assert owner._empty_hard_fleet_rows(campaign) == (True, False)
+    assert owner._hard_fleet_witness(campaign) is None
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('slot', range(6))
+def test_d3_inactive_row_with_any_populated_slot_is_never_recommended(slot):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_empty_hard_d3_fleet()
+    x = (372, 477, 582, 687, 792, 897)[slot]
+    filled = campaign.device.image[292:349, 372:450].copy()
+    campaign.device.image[177:234, x:x + 78] = filled
+    assert owner._empty_hard_fleet_rows(campaign) == (False, False)
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('slot', range(6))
+def test_d3_inactive_empty_row_requires_all_six_visible_slot_witnesses(slot):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_empty_hard_d3_fleet()
+    x = (372, 477, 582, 687, 792, 897)[slot]
+    campaign.device.image[177:235, x:x + 78] = 0
+    assert owner._empty_hard_fleet_rows(campaign) == (False, False)
+    campaign.device.click.assert_not_called()
+
+
+@pytest.mark.parametrize('factor', [.4, .65])
+def test_dim_d3_fleet_panel_cannot_authorize_advice(factor):
+    owner = ex.WarArchivesExecution.__new__(ex.WarArchivesExecution)
+    campaign = real_empty_hard_d3_fleet()
+    campaign.device.image = (campaign.device.image.astype(float) * factor).astype(np.uint8)
+    assert owner._empty_hard_fleet_rows(campaign) is None
+    campaign.device.click.assert_not_called()
+
+
 @pytest.mark.parametrize('row', [0, 1])
 @pytest.mark.parametrize('slot', range(6))
 def test_partially_populated_hard_row_is_never_recommended(row, slot):

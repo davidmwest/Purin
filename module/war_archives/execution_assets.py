@@ -23,6 +23,15 @@ ARCHIVE_EMPTY_HARD_ROWS = (
     Button(area=(372, 292, 975, 349), color=(52, 51, 56),
            button=(372, 292, 975, 349), file=_EMPTY_FILE, name='ARCHIVE_EMPTY_HARD_ROW_2'),
 )
+# D3's captured inactive first row has a different border from the selected
+# empty row above. Retain the same six-slot crop, fixed position and .98 proof.
+_INACTIVE_EMPTY_FILE = './assets/en/war_archives/ARCHIVE_EMPTY_HARD_INACTIVE_20261030.png'
+ARCHIVE_EMPTY_HARD_ROW_1_INACTIVE = Button(area=(372, 177, 975, 235), color=(66, 66, 70),
+    button=(372, 177, 975, 235), file=_INACTIVE_EMPTY_FILE, name='ARCHIVE_EMPTY_HARD_ROW_1_INACTIVE')
+ARCHIVE_EMPTY_HARD_ROW_VARIANTS = (
+    (ARCHIVE_EMPTY_HARD_ROWS[0], ARCHIVE_EMPTY_HARD_ROW_1_INACTIVE),
+    (ARCHIVE_EMPTY_HARD_ROWS[1],),
+)
 ARCHIVE_EMPTY_HARD_SUB = Button(area=(435, 425, 1154, 513), color=(63, 66, 77),
     button=(435, 425, 1154, 513), file=_EMPTY_FILE, name='ARCHIVE_EMPTY_HARD_SUB')
 
