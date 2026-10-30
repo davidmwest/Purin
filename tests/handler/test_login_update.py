@@ -9,6 +9,7 @@ import pytest
 import module.config.server as server
 import module.handler.login as login
 from module.handler.login import LoginHandler
+from module.ui.ui import UI
 
 
 @pytest.fixture(autouse=True)
@@ -115,3 +116,17 @@ def test_asset_selector_takes_priority_over_generic_close_handler(monkeypatch):
 
     assert all(call.args[0] is not login.MAINTENANCE_ANNOUNCE
                for call in handler.appear_then_click.call_args_list)
+
+
+def test_starting_a_normal_task_on_the_asset_selector_finishes_login(monkeypatch):
+    handler = asset_selector()
+    handler.config = SimpleNamespace(SERVER='en', is_actual_task=False)
+    handle_login = Mock()
+    monkeypatch.setattr(LoginHandler, 'handle_app_login', handle_login)
+    handler.appear_then_click = Mock()
+
+    assert UI.ui_additional(handler) is True
+
+    handle_login.assert_called_once_with()
+    handler.appear_then_click.assert_not_called()
+    handler.device.click.assert_not_called()

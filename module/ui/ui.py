@@ -479,6 +479,13 @@ class UI(InfoHandler):
         Args:
             get_ship:
         """
+        # A scheduler can start on the asset selector before its first login task.
+        # Let login finish the update instead of closing the selector's Exit X below.
+        from module.handler.login import LoginHandler, _ASSET_DOWNLOAD_TITLE
+        if self.config.SERVER == 'en' and self.appear(_ASSET_DOWNLOAD_TITLE, offset=(5, 5)):
+            LoginHandler(self.config, device=self.device).handle_app_login()
+            return True
+
         # Popups appear at page_os
         # Has a popup_confirm variant
         # so must take precedence
