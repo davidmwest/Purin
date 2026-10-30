@@ -533,7 +533,7 @@ def test_no_augments_on_the_depot_of_gear():
 
 
 def test_a_sonar_storage_can_not_replace_fails_the_policy():
-    # The Codex review of 2026-10-21: her levels stay at +10, she is not geared with the sonar
+    # The code review of 2026-10-21: her levels stay at +10, she is not geared with the sonar
     sonar = gear_item('Advanced Sonar', {'ASW': 35, 'HIT': 12}, 'gold', 10)
     gear, calls = gear_stubbed([10] * 6, ['gold'] * 4 + ['purple'], {3: sonar, 4: TOOLKIT}, lambda *args: None)
 

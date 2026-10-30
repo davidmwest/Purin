@@ -373,7 +373,7 @@ class Awaken(Dock):
             return None
         # The fleets that farm hold ships under 120 since 2026-10-21, the boss fleet too, its ships from level 100.
         # One at a cap of 100, 105, 110 or 115 levels on only once awakened: the boss fleet was left out and its
-        # capped ships stayed there (code review, Codex).
+        # capped ships stayed there (code review).
         mob, boss = campaign_fleets(
             self.config.cross_get('Main.Fleet.Fleet1', default=1),
             self.config.cross_get('Main.Fleet.Fleet2', default=0),

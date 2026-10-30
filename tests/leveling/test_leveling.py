@@ -337,7 +337,7 @@ def cooper():
 
 
 def test_gear_at_10_not_checked_is_not_geared():
-    # The Codex review of 2026-10-21: levels alone took her as geared
+    # The code review of 2026-10-21: levels alone took her as geared
     record = cooper()
     target = leveling_queue([record])[0]
 

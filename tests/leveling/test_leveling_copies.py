@@ -1,5 +1,5 @@
 """
-Copies of a ship in the dock, told apart by the slot each was seen in and by their level: the Codex review of
+Copies of a ship in the dock, told apart by the slot each was seen in and by their level: the code review of
 2026-10-21 found both slots of two copies of Cooper taken for the copy at 110.
 """
 from types import SimpleNamespace

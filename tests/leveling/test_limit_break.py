@@ -81,7 +81,7 @@ def test_the_result_of_a_limit_break():
 
 
 def test_the_ship_of_the_fleet_is_limit_broken_not_a_higher_copy():
-    # Code review (Codex, 2026-10-21): Cooper 70 in fleet 1, an other Cooper at 90 in fleet 2. The highest card of
+    # Code review (2026-10-21): Cooper 70 in fleet 1, an other Cooper at 90 in fleet 2. The highest card of
     # her name was opened and limit broken, the one of the fleet stayed capped.
     from types import SimpleNamespace
     from unittest.mock import Mock

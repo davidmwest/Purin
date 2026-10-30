@@ -8,7 +8,7 @@ over the first. The lock is the operating system's: it goes with its process, ki
 clean up.
 
 The ./config/<config>.running files of module/config/scheduler_state.py only tell the GUI what a scheduler does,
-they are kept by config and are not this lock (code review, Codex, 2026-10-21: two status-only processes both stayed
+they are kept by config and are not this lock (code review, 2026-10-21: two status-only processes both stayed
 alive, the second overwrote the first's file and the first removed it on exit).
 
 Tools that only look at a device a worker holds, with the worker paused, set PURIN_SHARED_DEVICE=1.

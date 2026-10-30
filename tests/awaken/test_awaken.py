@@ -208,7 +208,7 @@ def offscreen_run(results, walk):
 
 
 def test_a_cheaper_ship_past_the_first_screen_is_entered():
-    # Code review (Codex, 2026-10-21): 14 ships passed over for the chip reserve fill the first screen of the
+    # Code review (2026-10-21): 14 ships passed over for the chip reserve fill the first screen of the
     # dock, 7 by 2, and the run ended there, a cheaper 15th ship further down was never tried
     run = offscreen_run(['reserve'] * 14 + ['no_exp'], walk=[True, False])
 
@@ -234,7 +234,7 @@ def test_a_ship_of_the_fleets_further_down_is_looked_for():
 
 
 def test_a_capped_ship_of_the_boss_fleet_is_awakened():
-    # Code review (Codex, 2026-10-21): the boss fleet keeps a ship at level 100, she does not rotate out under 120,
+    # Code review (2026-10-21): the boss fleet keeps a ship at level 100, she does not rotate out under 120,
     # and only an awakening lets her level on. The main account: fleet 1 mobs, fleet 2 boss, submarines in fleet 1.
     from module.leveling.plan import Slot, plan_carries
     slot = Slot(2, 'vanguard', 0, 'Cooper', 100)
