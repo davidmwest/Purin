@@ -556,8 +556,9 @@ class RewardDorm(UI):
 
         if not feed and feed_when_awakened:
             # Read live residents and EXP, never the inventory's synthesized EXP fields.
-            from module.dorm.awakening import DormAwakening
-            feed = DormAwakening(self.config, self.device).can_feed()
+            from module.dorm.training import DormTraining
+            training = DormTraining(self.config, self.device)
+            feed = training.rotate_training() and training.can_feed()
 
         # Feed first to handle DORM_INFO
         # DORM_INFO may cover dorm coins and loves
@@ -665,7 +666,9 @@ class RewardDorm(UI):
         # Scheduler
         ships = self.get_dorm_ship_amount()
         delay = self.cal_dorm_delay(ships)
-        if conditional and not self.config.Dorm_Feed and not fed:
-            delay = min(delay, 30)
+        if conditional and not self.config.Dorm_Feed:
+            # Recheck EXP room and finished residents before the several-hour
+            # ordinary food interval, even after a successful fill.
+            delay = min(delay, 60 if fed else 30)
         logger.info(f'Ships in dorm: {ships}, task to delay: {delay}')
         self.config.task_delay(minute=delay)

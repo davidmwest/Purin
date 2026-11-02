@@ -117,6 +117,8 @@ class DormShip:
     sig: Optional[List[int]] = None
     # Name of the ship followed, once told apart
     known: str = ''
+    # Physical card position, including empty slots before this resident.
+    slot: Optional[int] = None
 
 
 @dataclass
@@ -326,6 +328,14 @@ def read_dorm_floor(image, place):
                 threshold=128, name='OCR_DORM_NAME').ocr(image)
     levels = Digit(dialog_buttons(108, 210, 152, 232, 'DORM_LEVEL'), letter=(255, 255, 255), threshold=128,
                    name='OCR_DORM_LEVEL').ocr(image)
+    if place == 'train':
+        # Training cards print the level twice. The narrow header can drop a
+        # leading digit (116 -> 16); use the independent lower Lv. row rather
+        # than inventing a leading 1 from history or the ship's name.
+        body_levels = Digit(dialog_buttons(112, 493, 154, 517, 'DORM_TRAIN_LEVEL'),
+                            letter=(255, 255, 255), threshold=128,
+                            name='OCR_DORM_TRAIN_LEVEL').ocr(image)
+        levels = [corroborated_train_level(header, body) for header, body in zip(levels, body_levels)]
     moods = Digit(dialog_buttons(100, 578, 150, 597, 'DORM_MOOD'), letter=(255, 255, 255), threshold=128,
                   name='OCR_DORM_MOOD').ocr(image)
     speeds = Digit(dialog_buttons(118, 605, 136, 626, 'DORM_SPEED'), letter=(255, 255, 255), threshold=128,
@@ -334,15 +344,26 @@ def read_dorm_floor(image, place):
     portraits = dialog_buttons(4, 235, 152, 440, 'PORTRAIT')
 
     ships = []
-    for name, level, mood, speed, portrait in zip(names, levels, moods, speeds, portraits):
+    for slot, (name, level, mood, speed, portrait) in enumerate(zip(names, levels, moods, speeds, portraits)):
         name = clean_name(name)
         if len(name_key(name)) < 2:
             continue
         if not 15 <= speed <= 100 or speed % 5:
             speed = DIALOG_SPEED[place]
         ships.append(DormShip(place=place, name=name, level=level, mood=min(mood, 150), speed=speed,
-                              sig=portrait_signature(crop(image, portrait.area))))
+                              sig=portrait_signature(crop(image, portrait.area)), slot=slot))
     return ships, slots if slots else DIALOG_SLOTS
+
+
+def corroborated_train_level(header, body):
+    """Two printed levels must agree, allowing only a missing leading digit."""
+    if type(header) is not int or type(body) is not int or not 1 <= body <= 125:
+        return 0
+    if header == body:
+        return body
+    if (1 <= header < 100 <= body and str(body)[1:] == str(header)):
+        return body
+    return 0
 
 
 def read_picker_row(image, top, row):
@@ -805,14 +826,16 @@ class DormRest(Dock):
             self.device.screenshot()
         raise DormReadError(f'Dorm {place} can not be read')
 
-    def picker_enter(self):
+    def picker_enter(self, place='rest', slot=0):
         """
         Pages:
-            in: dorm ship list, Rest tab
-            out: DOCK_CHECK, the picker of the second floor
+            in: dorm ship list, requested tab
+            out: DOCK_CHECK, that floor's picker (the tapped resident is deselected)
         """
         logger.info('Dorm picker enter')
-        card = dialog_buttons(20, 300, 136, 400, 'DORM_CARD')[0]
+        if place not in DORM_TABS or type(slot) is not int or not 0 <= slot < DIALOG_SLOTS:
+            raise DormReadError('Invalid dorm picker floor or slot')
+        card = dialog_buttons(20, 300, 136, 400, 'DORM_CARD')[slot]
         click_timer = Timer(3)
         taps = 0
         for _ in self.loop():
@@ -820,7 +843,7 @@ class DormRest(Dock):
                 break
             if self.handle_dorm_food_popup():
                 continue
-            if click_timer.reached() and self.dorm_ship_list_tab() == 'rest':
+            if click_timer.reached() and self.dorm_ship_list_tab() == place:
                 if taps >= DORM_TAPS_MAX:
                     raise DormReadError('Dorm picker does not open')
                 self.device.click(card)

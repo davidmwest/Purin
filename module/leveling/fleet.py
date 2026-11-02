@@ -13,11 +13,14 @@ so this leaves the page in the 3D view.
 """
 import re
 from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 
 from module.base.button import Button
 from module.base.timer import Timer
+from module.base.utils import save_image
 from module.equipment.assets import EQUIPMENT_OPEN, FLEET_DETAIL, FLEET_DETAIL_CHECK
 from module.formation.formation import Formation
 from module.leveling.plan import FARM_LEVEL_MAX, LEVEL_MAX, RETROFIT, ShipMatcher, Slot, load_ship_data, name_key
@@ -281,6 +284,20 @@ class LevelingFleet(Formation):
             for index, (row, name, level) in enumerate(zip(INFO_ROWS, names, levels))
         ]
         logger.attr(f'Fleet {fleet}', ', '.join(f'{slot.name or "-"} Lv.{slot.level}' for slot in slots))
+        if any(slot.name and slot.level < 100 for slot in slots):
+            # Preserve the actual Info frame when a low read blocks farming;
+            # history or a dorm level must not silently rewrite a fleet read.
+            try:
+                folder = Path('./log/leveling_fleet')
+                folder.mkdir(parents=True, exist_ok=True)
+                account = re.sub(r'[^a-zA-Z0-9_-]', '_', str(self.config.config_name))
+                path = folder / f'{datetime.now():%Y-%m-%d_%H-%M-%S_%f}_{account}_fleet{fleet}.png'
+                save_image(self.device.image, str(path))
+                logger.info(f'Fleet level diagnostic: {path}')
+                for old in sorted(folder.glob(f'*_{account}_fleet*.png'))[:-6]:
+                    old.unlink()
+            except Exception as error:
+                logger.warning(f'Fleet level diagnostic not saved: {error}')
         return slots
 
     def fleet_ship_enter(self, slot):

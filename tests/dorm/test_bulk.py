@@ -84,9 +84,10 @@ def test_unsettled_reads_cannot_feed_on_the_final_frame(monkeypatch):
 ])
 def test_conditional_gate_cannot_override_explicit_unconditional_mode(
         unconditional, conditional, allowed, expected, monkeypatch):
-    from module.dorm import awakening
-    gate = Mock(return_value=SimpleNamespace(can_feed=Mock(return_value=allowed)))
-    monkeypatch.setattr(awakening, 'DormAwakening', gate)
+    from module.dorm import training
+    gate = Mock(return_value=SimpleNamespace(rotate_training=Mock(return_value=True),
+                                           can_feed=Mock(return_value=allowed)))
+    monkeypatch.setattr(training, 'DormTraining', gate)
     owner = controller(monkeypatch)
     for method in ('ui_ensure', 'handle_info_bar', 'ui_goto', 'dorm_feed_enter', 'dorm_feed',
                    'dorm_feed_quit', 'dorm_collect'):
@@ -108,3 +109,16 @@ def test_conditional_refusal_retries_in_thirty_minutes(monkeypatch):
     owner.get_dorm_ship_amount = Mock(return_value=6)
     owner.run()
     owner.config.task_delay.assert_called_once_with(minute=30)
+
+
+def test_successful_conditional_feed_rechecks_before_the_ordinary_food_interval(monkeypatch):
+    owner = controller(monkeypatch)
+    owner.config.Dorm_Feed = False
+    owner.config.Dorm_FeedWhenAwakened = True
+    owner.config.Dorm_Collect = True
+    owner.config.BuyFurniture_Enable = False
+    owner.config.task_delay = Mock()
+    owner.dorm_run = Mock(return_value=True)
+    owner.get_dorm_ship_amount = Mock(return_value=6)
+    owner.run()
+    owner.config.task_delay.assert_called_once_with(minute=60)

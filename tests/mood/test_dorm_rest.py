@@ -66,6 +66,7 @@ def test_reads_the_first_floor_of_the_dorm():
     found, slots = read_dorm_floor(load('dorm_train.png'), 'train')
 
     assert ships(found) == [('Victorious META', 109, 150, 40), ('Haruna', 99, 150, 40)]
+    assert [ship.slot for ship in found] == [2, 3]
     assert slots == 6
 
 

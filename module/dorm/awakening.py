@@ -103,7 +103,7 @@ def same_residents(first, second):
     but neither text overlap nor a portrait alone may authorize feeding.
     """
     return len(first) == len(second) and all(
-        before.place == after.place and before.level == after.level
+        before.place == after.place and before.level == after.level and before.slot == after.slot
         and valid_portrait(before.sig) and valid_portrait(after.sig)
         and portrait_similarity(before.sig, after.sig) >= FOOD_PORTRAIT_SIMILARITY
         and same_name(before.name, after.name)
