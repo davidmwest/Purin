@@ -410,17 +410,16 @@ def get_server_next_update(daily_trigger):
     if isinstance(daily_trigger, str):
         daily_trigger = daily_trigger.replace(' ', '').split(',')
 
-    diff = server_time_offset()
-    local_now = datetime.now()
+    server_now = datetime.now(timezone(server_timezone()))
     trigger = []
     for t in daily_trigger:
         h, m = [int(x) for x in t.split(':')]
-        future = local_now.replace(hour=h, minute=m, second=0, microsecond=0) + diff
-        s = (future - local_now).total_seconds() % 86400
-        future = local_now + timedelta(seconds=s)
+        future = server_now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if future < server_now:
+            future += timedelta(days=1)
         trigger.append(future)
-    update = sorted(trigger)[0]
-    return update
+    # Convert at the reset date: the local UTC offset can change before then.
+    return min(trigger).astimezone().replace(tzinfo=None)
 
 
 def get_server_last_update(daily_trigger):
@@ -434,17 +433,15 @@ def get_server_last_update(daily_trigger):
     if isinstance(daily_trigger, str):
         daily_trigger = daily_trigger.replace(' ', '').split(',')
 
-    diff = server_time_offset()
-    local_now = datetime.now()
+    server_now = datetime.now(timezone(server_timezone()))
     trigger = []
     for t in daily_trigger:
         h, m = [int(x) for x in t.split(':')]
-        future = local_now.replace(hour=h, minute=m, second=0, microsecond=0) + diff
-        s = (future - local_now).total_seconds() % 86400 - 86400
-        future = local_now + timedelta(seconds=s)
-        trigger.append(future)
-    update = sorted(trigger)[-1]
-    return update
+        previous = server_now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if previous >= server_now:
+            previous -= timedelta(days=1)
+        trigger.append(previous)
+    return max(trigger).astimezone().replace(tzinfo=None)
 
 
 def nearest_future(future, interval=120):
