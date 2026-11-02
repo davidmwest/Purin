@@ -103,6 +103,17 @@ def test_empty_slots_of_the_info_view():
     assert [matcher.match(slot.name).name for slot in slots[:3]] == ['U-557', 'Whydah', 'I-404']
 
 
+def test_current_fleet_info_reads_level_111_without_losing_thin_ones():
+    slots = fleet_page(load('info_fleet2_gray_digits.png')).fleet_read_slots(2)
+
+    assert [slot.level for slot in slots] == [115, 113, 108, 111, 116, 104]
+    matcher = ShipMatcher(load_ship_data())
+    assert [matcher.match(slot.name).name for slot in slots] == [
+        'Victorious META', 'Hiei', 'Haruna', 'Vittorio Cuniberti',
+        'Nana Astar Deviluke', 'Dmitri Donskoi',
+    ]
+
+
 @pytest.mark.parametrize('name, opened, typing', [
     ('dock', False, False),
     ('dock_search_open', True, False),

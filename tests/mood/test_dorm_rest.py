@@ -21,6 +21,7 @@ from module.mood.dorm_rest import PICKER_SCROLL_NAME
 from module.mood.lineup import learn_lineup_ships, level_area, match_lineup, portrait_area, record_lineup
 from module.mood.ship import ShipMood, ShipMoods, portrait_signature
 from module.ocr.ocr import Digit
+from module.retire.assets import DOCK_CHECK
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
 NOW = datetime(2026, 10, 14, 8, 0, 0)
@@ -68,6 +69,34 @@ def test_reads_the_first_floor_of_the_dorm():
     assert ships(found) == [('Victorious META', 109, 150, 40), ('Haruna', 99, 150, 40)]
     assert [ship.slot for ship in found] == [2, 3]
     assert slots == 6
+
+
+def test_current_training_floor_reads_thin_gray_digits_without_dropping_ones():
+    found, slots = read_dorm_floor(load('dorm_train_gray_digits.png'), 'train')
+
+    assert [ship.level for ship in found] == [116, 113, 115, 108, 111, 120]
+    assert [ship.mood for ship in found] == [150] * 6
+    assert [ship.speed for ship in found] == [40] * 6
+    assert [ship.slot for ship in found] == list(range(6))
+    assert slots == 6
+
+
+def test_training_header_does_not_replace_a_missing_corroborating_body_level():
+    image = load('dorm_train_gray_digits.png')
+    for left in (142, 312, 482, 652, 822, 992):
+        image[493:517, left + 112:left + 154] = 0
+
+    found, _ = read_dorm_floor(image, 'train')
+
+    assert len(found) == 6
+    assert [ship.level for ship in found] == [0] * 6
+
+
+def test_current_empty_training_floor_has_two_unlocked_slots_and_no_residents():
+    found, slots = read_dorm_floor(load('dorm_train_empty.png'), 'train')
+
+    assert found == []
+    assert slots == 2
 
 
 def test_reads_the_second_floor_of_the_dorm():
@@ -918,7 +947,8 @@ def test_failed_required_selection_cancels_partial_plan_and_retries_without_savi
     rest.config = SimpleNamespace(data={}, task_delay=Mock())
     rest.device = SimpleNamespace(click=Mock(), sleep=Mock(), screenshot=Mock(), click_record_clear=Mock())
     for name in ('ui_ensure', 'ui_goto_main', 'dorm_ship_list_enter', 'picker_enter', 'dock_filter_set',
-                 'dock_sort_method_dsc_set', 'picker_confirm', 'dorm_ship_list_quit', 'handle_info_bar'):
+                 'dock_sort_method_dsc_set', 'picker_confirm', 'dorm_ship_list_quit', 'dorm_leave_dialogs',
+                 'handle_info_bar'):
         setattr(rest, name, Mock())
     rest.handle_dorm_food_popup = Mock(return_value=False)
     rest.dorm_floor_read = Mock(side_effect=[([], 6),
@@ -939,6 +969,61 @@ def test_failed_required_selection_cancels_partial_plan_and_retries_without_savi
     moods.save.assert_not_called()
     assert rest.dorm_floor_read.call_count == 2
     rest.dock_filter_set.assert_not_called()
+
+
+@pytest.mark.parametrize('name, listed', [
+    ('dorm_train.png', True),
+    ('dorm_rest.png', True),
+    ('dorm_exp_popup.png', False),
+])
+def test_failed_dorm_read_closes_only_a_recognized_ship_list(name, listed):
+    rest = DormRest.__new__(DormRest)
+    rest.device = SimpleNamespace(image=load(name), screenshot=Mock(), stuck_record_add=Mock())
+    rest.picker_confirm = Mock()
+    rest.dorm_ship_list_quit = Mock()
+
+    rest.dorm_leave_dialogs()
+
+    rest.picker_confirm.assert_not_called()
+    assert rest.dorm_ship_list_quit.call_count == int(listed)
+
+
+@pytest.mark.parametrize('missing', [None, 'dock', 'cancel'])
+def test_failed_dorm_read_requires_both_picker_controls_before_canceling(missing):
+    # picker.png masks its controls. Paste exact assets to exercise recognition
+    # and missing-witness rejection without pretending this is a full capture.
+    image = load('picker.png')
+    for name, button in [('dock', DOCK_CHECK), ('cancel', DORM_PICKER_CANCEL)]:
+        if name != missing:
+            button.ensure_template()
+            left, top, right, bottom = button.area
+            image[top:bottom, left:right] = button.image
+    rest = DormRest.__new__(DormRest)
+    rest.device = SimpleNamespace(image=image, screenshot=Mock(), stuck_record_add=Mock())
+    rest.picker_confirm = Mock(side_effect=lambda _: setattr(rest.device, 'image', load('dorm_train.png')))
+    rest.dorm_ship_list_quit = Mock()
+
+    rest.dorm_leave_dialogs()
+
+    if missing is None:
+        rest.picker_confirm.assert_called_once_with(DORM_PICKER_CANCEL)
+        rest.dorm_ship_list_quit.assert_called_once()
+    else:
+        rest.picker_confirm.assert_not_called()
+        rest.dorm_ship_list_quit.assert_not_called()
+
+
+def test_unknown_frame_is_not_used_to_cancel_a_picker_or_close_a_list():
+    rest = DormRest.__new__(DormRest)
+    rest.device = SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8), screenshot=Mock(),
+                                  stuck_record_add=Mock())
+    rest.picker_confirm = Mock()
+    rest.dorm_ship_list_quit = Mock()
+
+    rest.dorm_leave_dialogs()
+
+    rest.picker_confirm.assert_not_called()
+    rest.dorm_ship_list_quit.assert_not_called()
 
 
 def test_badge_diagnostic_saves_current_frame_and_keeps_at_most_ten_per_account(monkeypatch, tmp_path):

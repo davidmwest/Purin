@@ -333,12 +333,14 @@ def read_dorm_floor(image, place):
         # leading digit (116 -> 16); use the independent lower Lv. row rather
         # than inventing a leading 1 from history or the ship's name.
         body_levels = Digit(dialog_buttons(112, 493, 154, 517, 'DORM_TRAIN_LEVEL'),
-                            letter=(255, 255, 255), threshold=128,
+                            letter=(220, 220, 220), threshold=128,
                             name='OCR_DORM_TRAIN_LEVEL').ocr(image)
         levels = [corroborated_train_level(header, body) for header, body in zip(levels, body_levels)]
-    moods = Digit(dialog_buttons(100, 578, 150, 597, 'DORM_MOOD'), letter=(255, 255, 255), threshold=128,
+    # The body uses thin gray text; treating it as white drops strokes and
+    # turns levels such as 111 into 1 and morale 150 into 0.
+    moods = Digit(dialog_buttons(100, 578, 150, 597, 'DORM_MOOD'), letter=(220, 220, 220), threshold=128,
                   name='OCR_DORM_MOOD').ocr(image)
-    speeds = Digit(dialog_buttons(118, 605, 136, 626, 'DORM_SPEED'), letter=(255, 255, 255), threshold=128,
+    speeds = Digit(dialog_buttons(118, 605, 136, 626, 'DORM_SPEED'), letter=(220, 220, 220), threshold=128,
                    name='OCR_DORM_SPEED').ocr(image)
     _, _, slots = OCR_DORM_SHIP_COUNT.ocr(image)
     portraits = dialog_buttons(4, 235, 152, 440, 'PORTRAIT')
@@ -1184,6 +1186,16 @@ class DormRest(Dock):
             if self.handle_popup_confirm('DORM_PICKER'):
                 continue
 
+    def dorm_leave_dialogs(self):
+        """Close a recognized dorm picker/list before ordinary page navigation."""
+        self.device.screenshot()
+        if (self.appear(DOCK_CHECK, offset=(20, 20))
+                and self.appear(DORM_PICKER_CANCEL, offset=(20, 20))):
+            self.picker_confirm(DORM_PICKER_CANCEL)
+            self.device.screenshot()
+        if self.dorm_ship_list_tab() is not None:
+            self.dorm_ship_list_quit()
+
     def run(self):
         """
         Pages:
@@ -1196,6 +1208,7 @@ class DormRest(Dock):
             # The game lags, leave everything as it is
             logger.warning(f'Dorm rest: {e}, trying again in {DORM_RETRY_MINUTES} minutes')
             self.device.click_record_clear()
+            self.dorm_leave_dialogs()
             self.ui_goto_main()
             self.config.task_delay(minute=DORM_RETRY_MINUTES)
             return

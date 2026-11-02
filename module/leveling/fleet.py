@@ -258,7 +258,7 @@ class LevelingFleet(Formation):
         previous = None
         for _ in range(6):
             self.device.screenshot()
-            levels = Digit(INFO_LEVELS, letter=(255, 255, 255), threshold=128, name='INFO_LEVEL').ocr(
+            levels = Digit(INFO_LEVELS, letter=(220, 220, 220), threshold=128, name='INFO_LEVEL').ocr(
                 self.device.image)
             if levels == previous:
                 break
