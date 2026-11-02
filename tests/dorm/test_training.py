@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from module.dorm.training import DormTraining, training_replacement
+from module.dorm.training import DormTraining, clipped_resident_label, training_replacement
 from module.mood.dorm_rest import DormReadError, DormShip, PickerCard, corroborated_train_level
 from module.mood.assets import DORM_PICKER_CANCEL, DORM_PICKER_CONFIRM
 
@@ -77,6 +77,34 @@ def test_observed_selected_overlay_reads_do_not_block_an_unrelated_replacement()
              card(5, 'Vittorio Cu', 0, selected=True), card(6, 'London (Ret', 120),
              card(7, 'Azuchi', 25, fleet=6), card(8, 'Dmitri Dons', 104, fleet=2)]
     assert training_replacement(train, rest, cards, train[-1]) is cards[-1]
+
+
+def test_observed_scrolling_floor_and_selected_card_edges_match_retained_residents():
+    train = [resident('ana Astar Deviluk', 116), resident('Hiei', 113),
+             resident('victorious META', 115), resident('Haruna', 108),
+             resident('littorio Cunibert', 112), resident('London (Retrofit', 120)]
+    rest = [resident('Gangut', 112, 'rest')]
+    cards = [card(1, 'Nana Astar', 116, selected=True), card(2, 'Hiei', 113, selected=True),
+             card(3, 'Victoriousu', 115, selected=True), card(4, 'Haruna', 108, selected=True),
+             card(5, 'Vittorio Cu', 112, selected=True), card(6, 'London (Ret', 120),
+             card(7, 'Gangut', 112, fleet=1), card(8, 'Dmitri Dons', 104, fleet=2)]
+    assert training_replacement(train, rest, cards, train[-1]) is cards[-1]
+
+
+@pytest.mark.parametrize('label,resident_name', [
+    ('Nana Astar', 'ana Astar Deviluk'), ('Vittorio Cu', 'littorio Cunibert'),
+    ('Victoriousu', 'victorious META'),
+])
+def test_only_long_contiguous_existing_labels_tolerate_one_edge_glyph(label, resident_name):
+    assert clipped_resident_label(label, resident_name)
+    assert not clipped_resident_label('xx' + label, resident_name)
+    assert not clipped_resident_label(label[:4], resident_name)
+
+
+def test_scrolling_resident_label_tolerance_never_selects_unknown_new_target():
+    train, rest, cards = roster()
+    cards[3].name = 'littorio Cunibert'
+    assert training_replacement(train, rest, cards, train[1]) is None
 
 
 @pytest.mark.parametrize('change', ['unselected', 'different_level', 'unrelated_name', 'ambiguous'])

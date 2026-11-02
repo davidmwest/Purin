@@ -378,7 +378,9 @@ def read_picker_row(image, top, row):
     Returns:
         list[PickerCard]: The cards of the row.
     """
-    levels = LevelOcr(card_buttons(top, 77, 5, 138, 27, 'PICKER_LEVEL'), name='PICKER_LEVEL',
+    # The card's right border at x+137 is a vertical stroke: OCR appends it as
+    # a 1 (112 -> 1121, 104 -> 1041). Exclude the border, retaining all digits.
+    levels = LevelOcr(card_buttons(top, 77, 5, 136, 27, 'PICKER_LEVEL'), name='PICKER_LEVEL',
                       threshold=64).ocr(image)
     moods = EmotionDigit(card_buttons(top, 23, 29, 48, 52, 'PICKER_MOOD'), name='PICKER_MOOD',
                          threshold=176).ocr(image)

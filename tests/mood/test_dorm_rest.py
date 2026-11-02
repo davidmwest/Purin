@@ -135,6 +135,12 @@ def test_remove_card_is_found_at_the_top_of_the_list():
     assert picker_is_top(first, {}, None)
 
 
+def test_current_selected_picker_levels_exclude_the_vertical_card_border():
+    first = read_picker_row(load('picker_selected_border.png'), 76, 0)
+    assert [card.level for card in first] == [0, 116, 113, 115, 108, 112, 120]
+    assert [card.selected for card in first[1:]] == [True] * 5 + [False]
+
+
 def test_row_at_the_top_of_the_screen_is_the_first_of_the_list():
     first = [card(i, name) for i, name in enumerate(['Oite', 'Fusou META', 'Nevada META', 'Kawakaze ME', 'London',
                                                        'Hatakaze', 'Nana Astar'])]

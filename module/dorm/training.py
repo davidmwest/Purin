@@ -30,18 +30,15 @@ def clipped_resident_label(label, resident):
     """Recognize an existing selection's clipped label, never a new target.
 
     The selected overlay can erase the level and cut a long name at the card
-    edge (the captured Victorious META label was read as Victoriousu). A long
-    prefix with at most one trailing edge character may corroborate a resident
+    edge (the captured Victorious META label was read as Victoriousu). The
+    floor's scrolling label can lose its first character too. A long contiguous
+    overlap covering all but one edge character of the shorter label corroborates a resident
     already selected when this exact floor picker opened. Full before/after
     floor names and levels, and both selection counts, remain mandatory.
     """
     label, resident = name_key(label), name_key(resident)
-    prefix = 0
-    for first, second in zip(label, resident):
-        if first != second:
-            break
-        prefix += 1
-    return prefix >= 8 and prefix >= len(label) - 1
+    short, long = sorted((label, resident), key=len)
+    return len(short) >= 9 and any(part in long for part in (short, short[1:], short[:-1]))
 
 
 def could_be_resident(card, resident):
