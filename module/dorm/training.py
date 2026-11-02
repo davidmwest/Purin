@@ -6,7 +6,8 @@ from pathlib import Path
 from module.base.button import Button
 from module.base.utils import save_image
 from module.dorm.awakening import (DormAwakening, boundary_identity, level_can_gain_exp,
-                                   same_name, same_residents)
+                                   possible_boundary_identities, same_name, same_residents, ship_name_keys)
+from module.leveling.plan import name_key
 from module.logger import logger
 from module.mood.assets import DORM_PICKER_CANCEL, DORM_PICKER_CONFIRM
 from module.mood.dorm_rest import (CARD_DELTA_X, CARD_WIDTH, CARD_X, ROW_TOP_MAX, ROW_TOP_MIN,
@@ -25,24 +26,63 @@ def resident_card(resident, cards):
     return matches[0]
 
 
+def clipped_resident_label(label, resident):
+    """Recognize an existing selection's clipped label, never a new target.
+
+    The selected overlay can erase the level and cut a long name at the card
+    edge (the captured Victorious META label was read as Victoriousu). A long
+    prefix with at most one trailing edge character may corroborate a resident
+    already selected when this exact floor picker opened. Full before/after
+    floor names and levels, and both selection counts, remain mandatory.
+    """
+    label, resident = name_key(label), name_key(resident)
+    prefix = 0
+    for first, second in zip(label, resident):
+        if first != second:
+            break
+        prefix += 1
+    return prefix >= 8 and prefix >= len(label) - 1
+
+
+def could_be_resident(card, resident):
+    """Conservatively exclude every floor identity, including clipped variants."""
+    first, second = name_key(card.name), name_key(resident.name)
+    possible_first = possible_boundary_identities(first)
+    possible_second = possible_boundary_identities(second)
+    return (same_name(card.name, resident.name)
+            or bool(possible_first & possible_second)
+            or clipped_resident_label(card.name, resident.name))
+
+
 def training_replacement(train, rest, cards, removed):
     """Choose a unique fleet ship below 120, preserving both floor rosters."""
     if not picker_drawn(cards):
         raise DormReadError('Training picker has not finished drawing')
-    occupied = [resident_card(ship, cards) for ship in train + rest]
-    if len({card.index for card in occupied}) != len(occupied):
-        raise DormReadError('Training: resident identities overlap')
-    expected = {resident_card(ship, cards).index for ship in train if ship is not removed}
-    if {card.index for card in cards if card.selected and not card.remove} != expected:
+    removed_card = resident_card(removed, cards)
+    if removed_card.selected:
+        raise DormReadError('Training: tapped resident is still selected')
+    retained = [ship for ship in train if ship is not removed]
+    selected = [card for card in cards if card.selected and not card.remove]
+    matches = [[ship for ship in retained if card.level in (0, ship.level)
+                and (same_name(card.name, ship.name)
+                     or clipped_resident_label(card.name, ship.name))] for card in selected]
+    if (len(selected) != len(retained) or any(len(found) != 1 for found in matches)
+            or len({id(found[0]) for found in matches}) != len(retained)):
         raise DormReadError('Training: selected cards do not match the unchanged residents')
-    occupied_indices = {card.index for card in occupied}
+    # Rest residents are excluded by identity, not their picker level: a thin
+    # leading 1 can disappear there too. Ambiguous prefixes exclude all variants.
+    if any(not any(could_be_resident(card, ship) for card in cards if not card.remove)
+           for ship in rest):
+        raise DormReadError('Training: rest-floor resident is missing from the picker')
     candidates = []
     for card in cards:
-        if (card.index in occupied_indices or card.remove or card.selected or card.submarine
+        if (card.remove or card.selected or card.submarine
                 or not card.fleet or not 1 <= card.level < TRAINING_GOAL):
             continue
+        if any(could_be_resident(card, ship) for ship in train + rest):
+            continue
         identity = boundary_identity(card.name)
-        if identity is None:
+        if identity not in ship_name_keys():
             continue
         # A same-name duplicate at any level makes a later name lookup unsafe.
         copies = [other for other in cards if not other.remove
@@ -124,6 +164,7 @@ class DormTraining(DormAwakening):
                 raise DormReadError('Training residents changed before opening the picker')
             self.picker_enter(place='train', slot=slot)
             picker_open = True
+            self._training_diagnostic('picker_initial')
             cards = self.picker_scan([ship.name for ship in train + rest])
             self._training_diagnostic('picker')
             replacement = training_replacement(train, rest, cards, removed)

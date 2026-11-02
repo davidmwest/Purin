@@ -65,6 +65,62 @@ def test_changed_selection_or_ambiguous_resident_aborts_before_mutation():
         training_replacement(train, rest, cards, train[1])
 
 
+def test_observed_selected_overlay_reads_do_not_block_an_unrelated_replacement():
+    # Actual Nov 2 scan: long selected names are clipped, the final glyph of
+    # Victorious becomes u, and the selected wash makes Vittorio's level unreadable.
+    train = [resident('Nana Astar Deviluke', 116), resident('Hiei', 113),
+             resident('Victorious META', 115), resident('Haruna', 108),
+             resident('Vittorio Cuniberti', 111), resident('London (Retrofit)', 120)]
+    rest = [resident('Azuchi', 125, 'rest')]
+    cards = [card(1, 'Nana Astar', 116, selected=True), card(2, 'Hiei', 113, selected=True),
+             card(3, 'Victoriousu', 115, selected=True), card(4, 'Haruna', 108, selected=True),
+             card(5, 'Vittorio Cu', 0, selected=True), card(6, 'London (Ret', 120),
+             card(7, 'Azuchi', 25, fleet=6), card(8, 'Dmitri Dons', 104, fleet=2)]
+    assert training_replacement(train, rest, cards, train[-1]) is cards[-1]
+
+
+@pytest.mark.parametrize('change', ['unselected', 'different_level', 'unrelated_name', 'ambiguous'])
+def test_clipped_existing_selection_still_needs_unique_resident_and_state(change):
+    train, rest, cards = roster()
+    train[0] = resident('Victorious META', 115)
+    cards[0] = card(0, 'Victoriousu', 115, selected=True)
+    if change == 'unselected':
+        cards[0].selected = False
+    elif change == 'different_level':
+        cards[0].level = 114
+    elif change == 'unrelated_name':
+        cards[0].name = 'Vittorio Cu'
+    else:
+        train.append(resident('Victorious', 115))
+        cards.append(card(5, 'Victorious', 115, selected=True))
+    with pytest.raises(DormReadError, match='selected cards'):
+        training_replacement(train, rest, cards, train[1])
+
+
+@pytest.mark.parametrize('label,level', [('Victorious', 115), ('Victoriousu', 0), ('Victoriousu', 115)])
+def test_existing_label_tolerance_cannot_choose_a_rest_resident(label, level):
+    train, _, cards = roster()
+    rest = [resident('Victorious META', 115, 'rest')]
+    cards[2] = card(2, label, level, fleet=1)
+    cards[3].level = 125
+    assert training_replacement(train, rest, cards, train[1]) is None
+
+
+def test_missing_rest_resident_or_still_selected_removal_cancels():
+    train, rest, cards = roster()
+    with pytest.raises(DormReadError, match='rest-floor resident is missing'):
+        training_replacement(train, rest, cards[:2] + cards[3:], train[1])
+    cards[1].selected = True
+    with pytest.raises(DormReadError, match='still selected'):
+        training_replacement(train, rest, cards, train[1])
+
+
+def test_selection_overlay_tolerance_does_not_relax_new_replacement_identity():
+    train, rest, cards = roster()
+    cards[3].name = 'Victoriousu'
+    assert training_replacement(train, rest, cards, train[1]) is None
+
+
 def test_missing_replacement_cancels_picker_and_does_not_confirm(monkeypatch):
     owner = DormTraining.__new__(DormTraining)
     train, rest, cards = roster()
