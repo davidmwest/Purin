@@ -152,7 +152,7 @@ class EventShopClerk(EventShopUI):
             return None
         return (DETECT_AREA[3] - DETECT_AREA[1]) * (total - button) / button
 
-    def scan_all(self):
+    def scan_all(self, max_pages=None, on_page=None):
         rows = []
 
         logger.hr('Event Shop Scan', level=2)
@@ -160,10 +160,16 @@ class EventShopClerk(EventShopUI):
         EVENT_SHOP_SCROLL.button_length = None
         EVENT_SHOP_SCROLL.set_top(main=self)
         at_end = False
+        pages = 0
         while 1:
+            if max_pages is not None and pages >= max_pages:
+                raise ItemNotFoundError(f'Event shop scan did not finish within {max_pages} pages')
             # Swipes of a scan going well are not a button clicked over and over
             self.device.click_record_clear()
             new_items = self.event_shop_get_items(scroll_pos=EVENT_SHOP_SCROLL.cal_position(main=self))
+            if on_page is not None:
+                on_page(pages, new_items)
+            pages += 1
             rows = self.merge_scanned_rows(rows, new_items, scroll_pixels=self.event_shop_scroll_pixels())
             if at_end:
                 logger.info('Event shop reach bottom')

@@ -431,7 +431,10 @@ class AzurLaneAutoScript:
 
     def event_shop(self):
         from module.shop_event.shop_event import EventShop
-        EventShop(config=self.config, device=self.device).run()
+        from module.shop_event.observation import EventShopObservation, observation_requested
+        # The durable request precedes enabling the task, so a reboot also preserves inspection-only mode.
+        shop = EventShopObservation if observation_requested(self.config.config_name) else EventShop
+        shop(config=self.config, device=self.device).run()
 
     def shipyard(self):
         from module.shipyard.shipyard_reward import RewardShipyard

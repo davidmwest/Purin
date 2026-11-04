@@ -164,6 +164,18 @@ def test_scan_all_reads_every_row_once(monkeypatch):
     assert shop.button_length is None
 
 
+def test_a_bounded_observation_stops_an_unresponsive_shop_scroll(monkeypatch):
+    shop = Shop([[make_item('a', 239)], [make_item('b', 463)]])
+    shop.at_bottom = lambda main: False
+    shop.next_page = lambda main, page: None
+    monkeypatch.setattr(clerk, 'EVENT_SHOP_SCROLL', shop)
+    captures = []
+
+    with pytest.raises(ItemNotFoundError, match='within 3 pages'):
+        EventShopClerk.scan_all(shop, max_pages=3, on_page=lambda page, items: captures.append(page))
+    assert captures == [0, 1, 2]
+
+
 def test_event_shop_get_items_does_not_reshoot_valid_scan():
     clerk, scanner = make_clerk([(1, 1)])
 
