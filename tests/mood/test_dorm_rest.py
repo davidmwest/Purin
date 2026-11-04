@@ -141,6 +141,34 @@ def test_current_selected_picker_levels_exclude_the_vertical_card_border():
     assert [card.selected for card in first[1:]] == [True] * 5 + [False]
 
 
+def test_current_selected_cards_all_have_positive_fleet_badges():
+    first = read_picker_row(load('picker_current_fleet_badges.png'), 76, 0)
+
+    assert first[0].remove
+    assert [item.name for item in first[1:]] == ['Gangut', 'Tirpitz', 'Hakuhou', 'Hamakaze', 'Isokaze', 'Tanikaze']
+    assert [item.fleet for item in first[1:]] == [1] * 6
+    assert [item.selected for item in first[1:]] == [False] + [True] * 5
+
+
+@pytest.mark.parametrize('fill', [0, 150, 255])
+def test_selected_card_without_badge_stays_unrecognized(fill):
+    from module.mood.dorm_rest import CARD_X, CARD_DELTA_X, read_fleet
+    image = load('picker_current_fleet_badges.png')
+    for col in (2, 6):
+        x = int(CARD_X + CARD_DELTA_X * col)
+        image[76 + 117:76 + 162, x:x + 35] = fill
+        assert read_fleet(image, x, 76, True) == 0
+
+
+def test_badge_label_without_the_number_cannot_establish_fleet_membership():
+    from module.mood.dorm_rest import CARD_X, CARD_DELTA_X, read_fleet
+    image = load('picker_current_fleet_badges.png')
+    for col in (2, 6):
+        x = int(CARD_X + CARD_DELTA_X * col)
+        image[76 + 139:76 + 162, x:x + 35] = (80, 180, 225)
+        assert read_fleet(image, x, 76, True) == 0
+
+
 def test_row_at_the_top_of_the_screen_is_the_first_of_the_list():
     first = [card(i, name) for i, name in enumerate(['Oite', 'Fusou META', 'Nevada META', 'Kawakaze ME', 'London',
                                                        'Hatakaze', 'Nana Astar'])]

@@ -233,6 +233,17 @@ def read_fleet(image, x, top, selected):
         similarity = float(cv2.matchTemplate(binary, template.image, cv2.TM_CCOEFF_NORMED).max())
         if similarity > best:
             fleet, best = number, similarity
+    if not fleet and selected:
+        # The selected overlay mixes with the portrait under the translucent badge.
+        # On the captured Tirpitz/Tanikaze cards, 205 keeps that background as text.
+        # A second fixed threshold may recover the white digit, but only with a
+        # much stronger, unambiguous match; it never overrides a recognized badge.
+        _, binary = cv2.threshold(area[:, :, 1], 220, 255, cv2.THRESH_BINARY)
+        binary = cv2.merge([binary, binary, binary])
+        scores = sorted((float(cv2.matchTemplate(binary, template.image, cv2.TM_CCOEFF_NORMED).max()), number)
+                        for number, template in enumerate(FLEET_TEMPLATES, start=1))
+        if scores[-1][0] >= 0.9 and scores[-1][0] - scores[-2][0] >= 0.15:
+            fleet = scores[-1][1]
     return fleet
 
 
