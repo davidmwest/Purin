@@ -848,6 +848,57 @@ def test_positive_submarine_identity_clears_surface_fleet_membership():
     assert moods.ships['Whydah'].fleet == 0
 
 
+def full_surface_fleet():
+    # Actual main fleet at the blocked Nov4 15:23 attempt: the seventh record was an old OCR alias.
+    names = ['Gangut', 'Tirpitz', 'Hakuhou', 'Hamakaze', 'Isokaze', 'Tanikaze']
+    moods = ShipMoods(Config())
+    for name in names:
+        moods.ships[name] = ShipMood(name, level=112, fleet=1, mood=150, place='rest', speed=50, time=NOW)
+    moods.ships['Tiroitz'] = ShipMood('Tiroitz', level=112, fleet=1, mood=126, time=NOW - timedelta(days=1))
+    moods.ships['Old boss record'] = ShipMood('Old boss record', level=112, fleet=2, time=NOW - timedelta(days=1))
+    cards = [card(index, name, fleet=1, level=112) for index, name in enumerate(names)]
+    dorm = [DormShip(place='rest', name=name, level=112, mood=150, speed=50) for name in names]
+    return moods, dorm, cards
+
+
+def test_six_fresh_positive_members_remove_a_seventh_stale_morale_alias():
+    moods, dorm, cards = full_surface_fleet()
+
+    update_moods(moods, dorm, cards, NOW)
+
+    assert set(moods.fleet(1)) == {ship.name for ship in dorm}
+    assert moods.ships['Tiroitz'].fleet == 0
+    assert moods.ships['Tiroitz'].mood == 126  # No invented recovery or deletion of history.
+    assert moods.ships['Old boss record'].fleet == 2
+
+
+@pytest.mark.parametrize('problem', ['incomplete', 'duplicate_slot', 'unknown_badge', 'unread_level',
+                                     'truncated', 'unknown_identity', 'same_timestamp'])
+def test_uncertain_fleet_census_cannot_remove_an_existing_member(problem):
+    from module.mood.dorm_rest import reconcile_full_fleets
+    moods, dorm, cards = full_surface_fleet()
+    for item in cards:
+        item.ship = item.name
+    if problem == 'incomplete':
+        cards.pop()
+    elif problem == 'duplicate_slot':
+        cards[-1].row, cards[-1].col = cards[0].row, cards[0].col
+    elif problem == 'unknown_badge':
+        cards[-1].fleet = 0
+    elif problem == 'unread_level':
+        cards[-1].level = 0
+    elif problem == 'truncated':
+        cards[-1].truncated = True
+    elif problem == 'unknown_identity':
+        cards[-1].name = 'Tanikaze unknown'
+    else:
+        moods.ships['Tiroitz'].time = NOW
+
+    reconcile_full_fleets(moods, cards, NOW)
+
+    assert moods.ships['Tiroitz'].fleet == 1
+
+
 def test_exact_picker_level_repairs_hakuhou_floor_digit_drop_without_losing_rest():
     moods = ShipMoods(Config())
     moods.ships['Hakuhou'] = ShipMood('Hakuhou', level=101, fleet=1, mood=145, time=NOW)

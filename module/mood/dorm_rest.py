@@ -595,6 +595,40 @@ def resident_level(moods, resident, cards, taken=()):
     return level
 
 
+def reconcile_full_fleets(moods, cards, now):
+    """Six positively identified current members disprove older extra fleet memberships.
+
+    Missing cards or an unmatched badge cannot establish that a ship left. A complete fleet is different:
+    the game holds at most six surface ships, so a seventh historical OCR alias cannot still belong to it.
+    Require six different physical cards, full canonical names, readable matching levels and positive badges.
+    This changes membership only; mood, portraits, history and stage-specific lineups are retained.
+    """
+    from module.leveling.plan import load_ship_data, name_key as canonical_key
+    canonical = {canonical_key(name) for name in load_ship_data()}
+    for fleet in range(1, 7):
+        observed = [card for card in cards if not card.remove and not card.submarine and card.fleet == fleet]
+        if len(observed) != 6 or len({card.index for card in observed}) != 6:
+            continue
+        members = []
+        for card in observed:
+            known = moods.ships.get(card.ship)
+            key = canonical_key(card.name)
+            if known is None or card.truncated or key not in canonical or key != canonical_key(known.name) \
+                    or not 1 <= card.level <= 125 or abs(card.level - known.level) > 1 \
+                    or known.fleet != fleet or known.time != now:
+                break
+            members.append(known.name)
+        if len(members) != 6 or len({canonical_key(name) for name in members}) != 6:
+            continue
+        stale = [ship for ship in moods.ships.values()
+                 if ship.fleet == fleet and ship.name not in members and ship.time < now]
+        for ship in stale:
+            ship.fleet = 0
+        if stale:
+            logger.info(f'Fleet {fleet}: six current ships verified; clear stale memberships '
+                        f'{[ship.name for ship in stale]}')
+
+
 def update_moods(moods, dorm, cards, now):
     """
     Remember what has been read.
@@ -681,6 +715,7 @@ def update_moods(moods, dorm, cards, now):
         known.level = max(known.level, card.level)
         known.sig = known.sig or card.sig
         known.card_sig = card.sig or known.card_sig
+    reconcile_full_fleets(moods, cards, now)
     # Those not followed yet, known by level and portrait
     learn_lineup_ships(moods, cards, now)
 
