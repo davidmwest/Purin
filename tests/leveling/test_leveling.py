@@ -32,7 +32,7 @@ def test_each_ship_comes_in_once_and_a_missing_one_is_not_tried_again():
         swaps.append((slot.fleet, slot.index, ship.ship))
         return True
 
-    leveling = SimpleNamespace(formation_goto_fleet=Mock(), fleet_swap=Mock(side_effect=fleet_swap))
+    leveling = leveling_with(fleet_swap=fleet_swap)
 
     assert Leveling.leveling_execute(leveling, plans) == 2
     assert swaps == [(1, 0, 'Hasty'), (2, 1, 'Vampire')]
@@ -52,7 +52,7 @@ def leveling_with(fleet_swap=None, prepare=None):
     """
     prepare(target, gear, level, spare) -> (gear record, level), as ship_prepare()
     """
-    def default(target, gear=True, level=None, spare=False):
+    def default(target, gear=True, level=None, spare=False, gear_transfer=True):
         return (gear_record(GEARED, checked=True) if gear else None), level
 
     return SimpleNamespace(formation_goto_fleet=Mock(), fleet_swap=Mock(side_effect=fleet_swap or (lambda s, t: True)),
@@ -75,7 +75,8 @@ def test_a_ship_comes_in_if_the_fleet_keeps_its_minimum():
     # Without Nicholas the others are at 471, Isokaze at 70 keeps the fleet above 85
     assert Leveling.leveling_execute(leveling, plans, slots, [], minimum=85) == 1
     assert (slots[5].name, slots[5].level) == ('Isokaze', 70)
-    leveling.ship_prepare.assert_not_called()
+    leveling.ship_prepare.assert_called_once_with(plans[0][1][0], gear=True, level=None, spare=False,
+                                                 gear_transfer=True)
 
 
 def test_a_ship_short_of_the_minimum_comes_in_raised_with_packs():
@@ -87,7 +88,7 @@ def test_a_ship_short_of_the_minimum_comes_in_raised_with_packs():
     # At 95 she has to be at 99 at least, and spare packs may take her to 100
     assert Leveling.leveling_execute(leveling, plans, slots, ships, minimum=95, use_packs=True) == 1
     leveling.ship_prepare.assert_called_once()
-    assert leveling.ship_prepare.call_args[1] == {'gear': False, 'level': 99, 'spare': True}
+    assert leveling.ship_prepare.call_args[1] == {'gear': True, 'level': 99, 'spare': True, 'gear_transfer': True}
     assert (slots[5].name, slots[5].level) == ('Isokaze', 99)
     assert ships[0]['level'] == 99
 
@@ -100,7 +101,8 @@ def test_a_ship_short_of_the_minimum_stays_out_without_packs():
     assert Leveling.leveling_execute(leveling, plans, slots, [], minimum=95) == 1
     # London at 118 keeps the minimum
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['London (Retrofit)']
-    leveling.ship_prepare.assert_not_called()
+    leveling.ship_prepare.assert_called_once_with(plans[0][1][1], gear=True, level=None, spare=False,
+                                                 gear_transfer=True)
 
 
 def test_packs_take_a_ship_to_100_at_most():
@@ -117,7 +119,7 @@ def test_packs_take_a_ship_to_100_at_most():
 def test_a_ship_the_packs_could_not_raise_stays_out():
     slots = mob_fleet()
     plans = [(slots[5], [target('Isokaze')])]
-    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False: (None, None))
+    leveling = leveling_with(prepare=lambda target, **kwargs: (None, None))
 
     assert Leveling.leveling_execute(leveling, plans, slots, [], minimum=95, use_packs=True) == 0
     leveling.fleet_swap.assert_not_called()
@@ -134,13 +136,58 @@ def test_a_ship_without_gear_gets_some_before_she_comes_in():
 
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Isokaze', 'Maury (Retrofit)']
     assert [(args[0].ship, kwargs) for args, kwargs in leveling.ship_prepare.call_args_list] == [
-        ('Isokaze', {'gear': True, 'level': None, 'spare': False}),
-        ('Maury (Retrofit)', {'gear': True, 'level': None, 'spare': False})]
+        ('Isokaze', {'gear': True, 'level': None, 'spare': False, 'gear_transfer': True}),
+        ('Maury (Retrofit)', {'gear': True, 'level': None, 'spare': False, 'gear_transfer': True})]
     # Her gear as read after it, checked against the policy
     assert ships[0]['gear_levels'] == GEARED[:5] and ships[0]['augment_level'] == 10
     assert ships[0]['gear_policy'] == GEAR_POLICY
     assert ships[1]['gear_levels'] == GEARED[:5]
     assert ships[0]['gear_tried']
+
+
+@pytest.mark.parametrize('fresh', [None, gear_record([0] * 6, checked=True),
+                                  gear_record([10] * 6, checked=False)])
+def test_old_gear_approval_cannot_authorize_a_swap_after_a_failed_fresh_check(fresh):
+    slot = Slot(1, 'vanguard', 0, 'Hasty', 110)
+    incoming = target('Cooper', level=110, geared=True)
+    record = dict(name='Cooper', index=0, **gear_record(GEARED, checked=True))
+    leveling = leveling_with(prepare=lambda target, **kwargs: (fresh, None))
+
+    assert Leveling.leveling_execute(leveling, [(slot, [incoming])], [slot], [record]) == 0
+    leveling.ship_prepare.assert_called_once()
+    leveling.fleet_swap.assert_not_called()
+    assert (slot.name, slot.level) == ('Hasty', 110)
+    assert not incoming.geared and not is_geared(record)
+
+
+def test_old_gear_approval_is_invalidated_before_a_check_that_crashes():
+    slot = Slot(1, 'vanguard', 0, 'Hasty', 110)
+    incoming = target('Cooper', level=110)
+    record = dict(name='Cooper', index=0, **gear_record(GEARED, checked=True))
+    persisted = []
+
+    def interrupted(target, **kwargs):
+        assert persisted and not is_geared(persisted[-1])
+        raise RuntimeError('equipment page interrupted')
+
+    leveling = leveling_with(prepare=interrupted)
+    with pytest.raises(RuntimeError, match='equipment page interrupted'):
+        Leveling.leveling_execute(leveling, [(slot, [incoming])], [slot], [record],
+                                  save=lambda: persisted.append(dict(record)))
+    leveling.fleet_swap.assert_not_called()
+    assert not incoming.geared and not is_geared(record)
+
+
+def test_successful_recent_gear_check_does_not_skip_fresh_verification():
+    slot = Slot(1, 'vanguard', 0, 'Hasty', 110)
+    incoming = target('Cooper', level=110)
+    record = dict(name='Cooper', index=0, gear_tried=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                  **gear_record(GEARED, checked=True))
+    leveling = leveling_with()
+
+    assert Leveling.leveling_execute(leveling, [(slot, [incoming])], [slot], [record]) == 1
+    leveling.ship_prepare.assert_called_once()
+    assert is_geared(record) and incoming.geared
 
 
 def test_a_ship_storage_can_not_gear_stays_out():
@@ -149,11 +196,11 @@ def test_a_ship_storage_can_not_gear_stays_out():
     ships = [{'name': 'Isokaze', 'index': 0}]
     plans = [(slots[0], [isokaze, hamakaze])]
     # Storage had gear at +10 for 2 slots, her own stays at +0
-    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False: (
-        gear_record([0, 0, 10, 10, 0, 0], checked=True), None))
+    leveling = leveling_with(prepare=lambda target, **kwargs: (
+        gear_record(GEARED if target.name == 'Hamakaze' else [0, 0, 10, 10, 0, 0], checked=True), None))
 
     assert Leveling.leveling_execute(leveling, plans, slots, ships) == 1
-    # Hamakaze has her gear
+    # Hamakaze's gear is freshly verified too.
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Hamakaze']
     # Not tried again for a day
     assert ships[0]['gear_levels'] == [0, 0, 10, 10, 0]
@@ -171,7 +218,7 @@ def test_gear_tried_is_written_before_the_trip_to_the_depot():
     events = []
     save = Mock(side_effect=lambda: events.append(('save', dict(ships[0]))))
 
-    def prepare(target, gear=True, level=None, spare=False):
+    def prepare(target, gear=True, level=None, spare=False, gear_transfer=True):
         events.append(('gear', dict(ships[0])))
         return gear_record(GEARED, checked=True), None
 
@@ -238,7 +285,8 @@ def test_spare_packs_take_a_ship_coming_in_to_100():
     plans = [(slots[5], [target('Isokaze')])]
     ships = [{'name': 'Isokaze', 'index': 0, 'level': 70}]
     # Storage spares the packs to 100
-    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False: (None, 100 if spare else None))
+    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False, gear_transfer=True: (
+        gear_record(GEARED, checked=True), 100 if spare else None))
 
     assert Leveling.leveling_execute(leveling, plans, slots, ships, minimum=95, use_packs=True) == 1
     assert (slots[5].name, slots[5].level) == ('Isokaze', 100)
@@ -251,7 +299,8 @@ def test_no_spare_packs_without_their_use():
     leveling = leveling_with()
 
     assert Leveling.leveling_execute(leveling, plans, slots, [], minimum=85) == 1
-    leveling.ship_prepare.assert_not_called()
+    assert leveling.ship_prepare.call_args[1]['spare'] is False
+    assert leveling.ship_prepare.call_args[1]['gear'] is True
 
 
 def test_without_gear_transfer_a_ship_without_gear_stays_out(monkeypatch):
@@ -262,7 +311,8 @@ def test_without_gear_transfer_a_ship_without_gear_stays_out(monkeypatch):
 
     assert Leveling.leveling_execute(leveling, plans, slots, []) == 1
     assert [args[1].ship for args, _ in leveling.fleet_swap.call_args_list] == ['Hamakaze']
-    leveling.ship_prepare.assert_not_called()
+    leveling.ship_prepare.assert_called_once_with(plans[0][1][1], gear=True, level=None, spare=False,
+                                                 gear_transfer=False)
 
 
 def dock_ship(name, level, geared=True, power=4000, index=0):
@@ -350,7 +400,7 @@ def test_a_ship_coming_in_has_her_gear_checked():
     record = cooper()
     target = leveling_queue([record])[0]
     # Storage could not replace her sonar, her gear does not pass
-    leveling = leveling_with(prepare=lambda target, gear=True, level=None, spare=False: (
+    leveling = leveling_with(prepare=lambda target, **kwargs: (
         gear_record([10] * 6, checked=False), None))
 
     assert Leveling.leveling_execute(leveling, [(slots[0], [target])], slots, [record], minimum=95) == 0

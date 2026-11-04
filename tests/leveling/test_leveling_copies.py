@@ -99,7 +99,9 @@ def test_a_copy_that_comes_in_is_seen_in_her_slot():
              dict(name='Cooper', index=0, level=70), dict(name='Cooper', index=1, level=110)]
     target = Target(name='Cooper', ship='Cooper', hull='DD', row='vanguard', rarity='Rare', level=110, goal=120,
                     chips=880, arrays=0, gain=0, tech=0, score=1, priority=1, geared=True, index=1)
-    leveling = SimpleNamespace(formation_goto_fleet=Mock(), fleet_swap=Mock(return_value=True))
+    leveling = SimpleNamespace(formation_goto_fleet=Mock(), fleet_swap=Mock(return_value=True), ui_ensure=Mock(),
+                               fleet_formation_ensure=Mock(),
+                               ship_prepare=Mock(return_value=(gear_record([10] * 6, checked=True), None)))
 
     assert Leveling.leveling_execute(leveling, [(slot, [target])], [slot], ships) == 1
 

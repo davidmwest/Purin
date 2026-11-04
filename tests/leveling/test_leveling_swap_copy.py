@@ -11,8 +11,9 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 from module.leveling.fleet import LevelingFleet
+from module.leveling.boost import LevelingBoost
 from module.leveling.leveling import Leveling
-from module.leveling.plan import Slot, Target
+from module.leveling.plan import Slot, Target, gear_record
 from module.retire.dock import CARD_GRIDS
 
 
@@ -34,8 +35,11 @@ def swap(actual_level, records=None):
     controller = SimpleNamespace(
         device=SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8), sleep=Mock(), screenshot=Mock()),
         formation_goto_fleet=Mock(), fleet_slot_enter=Mock(), dock_search=Mock(return_value=True),
-        dock_select_one=Mock(), dock_select_confirm=Mock(), ui_back=Mock(), ship_prepare=Mock(),
+        dock_select_one=Mock(), dock_select_confirm=Mock(), ui_back=Mock(), ui_ensure=Mock(),
+        fleet_formation_ensure=Mock(), ship_info_enter=Mock(),
+        gear_fill=Mock(return_value=gear_record([10] * 6, checked=True)),
     )
+    controller.ship_prepare = lambda t, **kwargs: LevelingBoost.ship_prepare(controller, t, **kwargs)
     controller.dock_find = lambda t: LevelingFleet.dock_find(controller, t)
     controller.fleet_swap = lambda s, t: LevelingFleet.fleet_swap(controller, s, t)
     with patch('module.leveling.fleet.ShipScanner') as scanner, patch('module.leveling.fleet.Ocr') as ocr:

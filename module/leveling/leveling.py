@@ -34,12 +34,12 @@ QUEUE_LOG = 8
 # Ships coming into the mob fleet in a run. The fleet changes one ship at a time, a fleet too weak shows
 # in a battle or two: two ships changed at once lost battles of the mobs of 12-4.
 MOB_SWAPS = 1
-# Trips to the detail page of a ship in a run for gear or EXP Data Packs, each takes a minute or so
+# Trips to the detail page of a ship in a run for fresh gear verification or EXP Data Packs
 GEAR_TRIES = 3
 # Gear from storage for ships without gear at +10 in all 6 slots, decent gear for the slot and the hull, the user's
 # rule of 2026-10-20, see module.leveling.policy: gold or better first, no sonar nor depth charges on 12-4, no AVI
 # but on carriers, no TRP on battleships and carriers, a Repair Toolkit on destroyers.
-# Off, a ship without gear at +10 in all 6 slots does not come in, ships of the fleets keep theirs.
+# Off, incoming ships still have their worn gear checked, but no equipment is transferred from storage.
 GEAR_TRANSFER = True
 # A ship storage could not gear well enough is tried again after this
 GEAR_RETRY = timedelta(days=1)
@@ -136,8 +136,8 @@ class Leveling(LevelingBoost):
             slots (list[Slot]): All the slots read. A slot whose ship changed takes the new one, for the plans after.
             ships (list[dict]): Ships of the inventory, their gear and level are written as they change
             limit (int): Ships to come in at most, None for all
-            save (callable): Writes the inventory, before a ship is given gear: if the trip to the depot ends in an
-                error, she is not taken there again and again
+            save (callable): Writes the inventory before a fresh gear check, invalidating the old approval first:
+                if the trip ends in an error, the old inventory cannot authorize an unchecked swap
             minimum (float): Average level the fleets of the plans keep, None for none
             use_packs (bool): If a ship short of the level the minimum takes is raised with EXP Data Packs,
                 and a ship below BOOST_CAP goes to it with spare packs, see module.leveling.boost
@@ -174,46 +174,50 @@ class Leveling(LevelingBoost):
                 spare = use_packs and 0 < target.level < BOOST_CAP
                 if not target.geared and not GEAR_TRANSFER:
                     continue
-                if not target.geared or boost is not None or spare:
-                    record = next((ship for ship in ships if ship.get('name') == target.name
-                                   and ship.get('index', -1) == target.index), None)
-                    if trips >= GEAR_TRIES:
-                        failed(slot, target, f'not tried, {GEAR_TRIES} trips to the dock this run already')
-                        continue
-                    if not target.geared and gear_tried_recently(record, datetime.now()):
-                        failed(slot, target, f'tried at {record.get("gear_tried")}, again a day after')
-                        continue
-                    trips += 1
-                    if record is not None and not target.geared:
-                        record['gear_tried'] = datetime.now().strftime(TIME_FORMAT)
-                        if save is not None:
-                            save()
-                    gear, level = self.ship_prepare(target, gear=not target.geared, level=boost, spare=spare)
-                    self.ui_ensure(page_fleet)
-                    self.fleet_formation_ensure()
-                    if record is not None and (gear is not None or level is not None):
-                        if gear is not None:
-                            record.update(gear)
-                        if level is not None:
-                            set_level(record, level)
-                        if save is not None:
-                            save()
-                    if not target.geared:
-                        # Gear at +10 that passes the policy, a sonar storage could not replace keeps her out
-                        if gear is None or not is_geared(gear):
-                            logger.info(f'{target.ship} can not be geared from storage, gear {gear}')
-                            failed(slot, target, 'not found in the dock or not geared from storage'
-                                   if gear is None else 'not geared from storage')
-                            missing.add(target.character)
-                            continue
-                        target.geared = True
-                    if boost is not None and (level is None or level < boost):
-                        logger.info(f'{target.ship} can not be raised to level {boost}, at {level}')
-                        failed(slot, target, f'not raised to level {boost}')
-                        missing.add(target.character)
-                        continue
+                # Even a previously approved ship can have lost her equipment since the inventory scan.
+                # Every incoming ship needs fresh gear proof, before EXP packs or a fleet change.
+                record = next((ship for ship in ships if ship.get('name') == target.name
+                               and ship.get('index', -1) == target.index), None)
+                if trips >= GEAR_TRIES:
+                    failed(slot, target, f'not tried, {GEAR_TRIES} trips to the dock this run already')
+                    continue
+                if not target.geared and gear_tried_recently(record, datetime.now()):
+                    failed(slot, target, f'tried at {record.get("gear_tried")}, again a day after')
+                    continue
+                trips += 1
+                target.geared = False
+                if record is not None:
+                    record['gear_policy'] = 0
+                    record['gear_tried'] = datetime.now().strftime(TIME_FORMAT)
+                    if save is not None:
+                        save()
+                logger.info(f'Verify current equipment of {target.ship} before leveling swap')
+                gear, level = self.ship_prepare(target, gear=True, level=boost, spare=spare,
+                                                gear_transfer=GEAR_TRANSFER)
+                self.ui_ensure(page_fleet)
+                self.fleet_formation_ensure()
+                if record is not None and (gear is not None or level is not None):
+                    if gear is not None:
+                        record.update(gear)
                     if level is not None:
-                        target.level = level
+                        set_level(record, level)
+                    if save is not None:
+                        save()
+                # Gear at +10 that passes the policy, a sonar storage could not replace keeps her out
+                if gear is None or not is_geared(gear):
+                    logger.info(f'{target.ship} can not be geared from storage, gear {gear}')
+                    failed(slot, target, 'not found in the dock or not geared from storage'
+                           if gear is None else 'not geared from storage')
+                    missing.add(target.character)
+                    continue
+                target.geared = True
+                if boost is not None and (level is None or level < boost):
+                    logger.info(f'{target.ship} can not be raised to level {boost}, at {level}')
+                    failed(slot, target, f'not raised to level {boost}')
+                    missing.add(target.character)
+                    continue
+                if level is not None:
+                    target.level = level
                 self.formation_goto_fleet(slot.fleet)
                 read_level = target.level
                 if self.fleet_swap(slot, target):

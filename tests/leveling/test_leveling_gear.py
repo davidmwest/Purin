@@ -560,3 +560,18 @@ def test_an_auxiliary_not_read_does_not_pass():
     gear, calls = gear_stubbed([10] * 6, ['gold'] * 5, {3: TOOLKIT}, lambda *args: None)
 
     assert not is_geared(gear.gear_fill(hull='DD'))
+
+
+@pytest.mark.parametrize('levels, worn, ready', [
+    ([10] * 6, {3: SEAL, 4: STEERING}, True),
+    ([10] * 5 + [0], {3: SEAL, 4: STEERING}, False),
+    ([10, 10, 10, 10, -1, 10], {3: SEAL}, False),
+    ([10] * 6, {3: gear_item('Advanced Sonar', {'ASW': 35}, 'gold', 10), 4: TOOLKIT}, False),
+    ([10] * 6, {3: SEAL}, False),
+])
+def test_verification_without_transfers_never_equips_or_fills_an_augment(levels, worn, ready):
+    gear, calls = gear_stubbed(levels, ['gold'] * 5, worn, lambda *args: TOOLKIT)
+    gear.gear_read = lambda: list(levels)
+
+    assert is_geared(gear.gear_fill(hull='DD', allow_transfer=False)) is ready
+    assert calls == []

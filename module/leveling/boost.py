@@ -340,7 +340,7 @@ class LevelingBoost(LevelingGear):
         logger.warning(f'Boost EXP: level {after} after it, the packs were not used')
         return None
 
-    def ship_prepare(self, target, gear=True, level=None, spare=False):
+    def ship_prepare(self, target, gear=True, level=None, spare=False, gear_transfer=True):
         """
         Find a ship in the dock, give her gear from storage and raise her level with EXP Data Packs.
 
@@ -349,6 +349,8 @@ class LevelingBoost(LevelingGear):
             gear (bool): If she gets gear, see gear_fill()
             level (int): Level she needs, None for none
             spare (bool): If spare packs take her to her level cap, see boost_to()
+            gear_transfer (bool): If a gear check may replace unsuitable equipment from storage.
+                False still verifies the worn gear and prevents packs when it fails.
 
         Returns:
             tuple[dict, int]: Her gear after it, as the inventory keeps it, see LevelingGear.gear_fill(), None if not
@@ -369,7 +371,7 @@ class LevelingBoost(LevelingGear):
                              skip_first_screenshot=False)
         record = None
         if gear:
-            record = self.gear_fill(hull=target.hull)
+            record = self.gear_fill(hull=target.hull, allow_transfer=gear_transfer)
             if record is None:
                 logger.warning(f'Gear of {target.ship} left unfinished')
                 self.ui_ensure(page_dock)

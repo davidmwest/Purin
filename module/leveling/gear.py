@@ -795,13 +795,14 @@ class LevelingGear(LevelingFleet):
         """
         return self.gear_read_info()[0]
 
-    def gear_fill(self, hull=None):
+    def gear_fill(self, hull=None, allow_transfer=True):
         """
         Gear from storage for the ship shown, by the choice of module.leveling.policy: weapons the policy does not
         keep, auxiliaries the worst first, and an augment below GEARED_LEVEL.
 
         Args:
             hull (str): Her hull type, 'DD'. None if unknown, auxiliaries go as for a hull of no list.
+            allow_transfer (bool): If unsuitable gear may be replaced from storage. False checks only what she wears.
 
         Returns:
             dict: Her gear after it, as the inventory keeps it, see module.leveling.plan.gear_record(): the
@@ -830,7 +831,7 @@ class LevelingGear(LevelingFleet):
                     worn[index].update(name=read['name'], stats=read['stats'])
                 logger.info(f'Slot {index}: {describe(worn[index])}')
 
-        for index in weapons:
+        for index in weapons if allow_transfer else ():
             put = self.gear_slot_fill(index, hull=hull, current=worn[index])
             if put is not None:
                 worn[index] = put
@@ -847,7 +848,7 @@ class LevelingGear(LevelingFleet):
 
         # The worst first: a destroyer without a Repair Toolkit has it in place of her worse auxiliary
         for index in sorted(AUX_SLOTS, key=badness, reverse=True):
-            if gear_good(index, hull, worn[index], other_of(index)):
+            if gear_good(index, hull, worn[index], other_of(index)) or not allow_transfer:
                 continue
             put = self.gear_slot_fill(index, hull=hull, current=worn[index], other=other_of(index))
             if put is not None:
@@ -855,7 +856,7 @@ class LevelingGear(LevelingFleet):
             if not self.gear_tab_ensure():
                 return None
 
-        if levels[AUGMENT_INDEX] < GEARED_LEVEL:
+        if allow_transfer and levels[AUGMENT_INDEX] < GEARED_LEVEL:
             self.augment_slot_fill(current=levels[AUGMENT_INDEX])
             if not self.gear_tab_ensure():
                 return None

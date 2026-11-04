@@ -8,8 +8,25 @@ import pytest
 
 import module.config.server as server
 from module.leveling.boost import LevelingBoost, parse_gain, parse_level
+from module.leveling.plan import gear_record
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
+
+
+@pytest.mark.parametrize('transfer', [True, False])
+@pytest.mark.parametrize('fresh', [None, gear_record([0] * 6, checked=True),
+                                  gear_record([10] * 6, checked=False)])
+def test_failed_fresh_gear_verification_prevents_exp_pack_spending(transfer, fresh):
+    controller = SimpleNamespace(
+        ui_ensure=Mock(), dock_search=Mock(return_value=True),
+        dock_find=Mock(return_value=SimpleNamespace(button='verified copy')),
+        ship_info_enter=Mock(), gear_fill=Mock(return_value=fresh), ui_back=Mock(), boost_to=Mock())
+    incoming = SimpleNamespace(ship='Cooper', hull='DD')
+
+    assert LevelingBoost.ship_prepare(controller, incoming, level=100, spare=True,
+                                     gear_transfer=transfer) == (fresh, None)
+    controller.gear_fill.assert_called_once_with(hull='DD', allow_transfer=transfer)
+    controller.boost_to.assert_not_called()
 
 
 @pytest.fixture(autouse=True)
