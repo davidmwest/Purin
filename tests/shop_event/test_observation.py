@@ -13,7 +13,7 @@ from module.shop_event.shop_event import EventShop
 
 def observer(monkeypatch, items=None, available=True):
     shop = EventShopObservation.__new__(EventShopObservation)
-    shop.config = SimpleNamespace(config_name='alas', cross_set=Mock(), task_delay=Mock())
+    shop.config = SimpleNamespace(config_name='alas', cross_set=Mock(), task_delay=Mock(), task_call=Mock())
     shop.device = SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8), screenshot=Mock())
     shop.event_shop_load_ensure = Mock()
     shop.ui_goto_main = Mock()
@@ -73,13 +73,25 @@ def test_incomplete_observation_stays_disabled_and_never_claims_stock_complete(m
         def changed():
             shop.pt += 1
         shop.get_current_pts.side_effect = changed
-    with pytest.raises(ScriptError):
-        shop.run(folder=tmp_path)
+    result = shop.run(folder=tmp_path)
     saved = json.loads((shop.observation_directory / 'stock.json').read_text())
     assert saved['status'] == 'blocked' and saved['purchases'] == 0
+    assert result == saved and saved['returned_main'] is True
+    shop.config.task_call.assert_not_called()
     shop.config.cross_set.assert_called_once_with('EventShop.Scheduler.Enable', False)
     shop.handle_items_related_with_urpt.assert_not_called()
     shop.handle_unobtained_items.assert_not_called()
+
+
+def test_blocked_audit_queues_game_restart_if_recognized_home_navigation_fails(monkeypatch, tmp_path):
+    shop = observer(monkeypatch, items=[])
+    shop.ui_goto_main.side_effect = ScriptError('page not recognized')
+
+    result = shop.run(folder=tmp_path)
+
+    assert result['status'] == 'blocked' and result['returned_main'] is False and result['purchases'] == 0
+    shop.config.task_call.assert_called_once_with('Restart')
+    shop.config.cross_set.assert_called_once_with('EventShop.Scheduler.Enable', False)
 
 
 @pytest.mark.parametrize('method', ['event_shop_buy_item', 'event_shop_buy_item_execute'])

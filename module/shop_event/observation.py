@@ -94,6 +94,19 @@ class EventShopObservation(EventShop):
             return self.observation
         except Exception as exc:
             self.observation.update(status='blocked', reason=str(exc), finished=datetime.now().isoformat())
-            self.observation['error_screen'] = self._capture_observation('blocked')
+            try:
+                self.observation['error_screen'] = self._capture_observation('blocked')
+            except Exception as capture_error:
+                self.observation['capture_error'] = str(capture_error)
             self._save_observation()
-            raise
+            # An unreadable stock counter is an incomplete audit, not a reason to stop the account.
+            # Keep the purchase task disabled and recover through recognized navigation or scheduled Restart.
+            try:
+                self.ui_goto_main()
+                self.observation['returned_main'] = True
+            except Exception as return_error:
+                self.observation.update(returned_main=False, return_error=str(return_error))
+                self.config.task_call('Restart')
+            self._save_observation()
+            logger.warning(f'Event-shop observation blocked: {exc}')
+            return self.observation
