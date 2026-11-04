@@ -266,6 +266,10 @@
       "name": "小游戏",
       "help": "游戏币不会溢出时自动领取游戏币，有游戏币且奖励没满时自动进行小游戏"
     },
+    "ArcadeTickets": {
+      "name": "Task.ArcadeTickets.name",
+      "help": "Task.ArcadeTickets.help"
+    },
     "PrivateQuarters": {
       "name": "宿舍计划",
       "help": ""
@@ -2601,6 +2605,25 @@
     "Collect": {
       "name": "启用",
       "help": ""
+    }
+  },
+  "Arcade": {
+    "_info": {
+      "name": "Arcade._info.name",
+      "help": "Arcade._info.help"
+    },
+    "ObserveOnly": {
+      "name": "Arcade.ObserveOnly.name",
+      "help": "Arcade.ObserveOnly.help"
+    },
+    "CreditsPerRound": {
+      "name": "Arcade.CreditsPerRound.name",
+      "help": "Arcade.CreditsPerRound.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5"
     }
   },
   "PrivateQuarters": {

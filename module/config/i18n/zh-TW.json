@@ -266,6 +266,10 @@
       "name": "小遊戲",
       "help": "遊戲幣不會溢出時自動領取遊戲幣，有遊戲幣且獎勵沒滿時自動進行小遊戲"
     },
+    "ArcadeTickets": {
+      "name": "Task.ArcadeTickets.name",
+      "help": "Task.ArcadeTickets.help"
+    },
     "PrivateQuarters": {
       "name": "宿舍計劃",
       "help": ""
@@ -2601,6 +2605,25 @@
     "Collect": {
       "name": "啟用",
       "help": ""
+    }
+  },
+  "Arcade": {
+    "_info": {
+      "name": "Arcade._info.name",
+      "help": "Arcade._info.help"
+    },
+    "ObserveOnly": {
+      "name": "Arcade.ObserveOnly.name",
+      "help": "Arcade.ObserveOnly.help"
+    },
+    "CreditsPerRound": {
+      "name": "Arcade.CreditsPerRound.name",
+      "help": "Arcade.CreditsPerRound.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5"
     }
   },
   "PrivateQuarters": {

@@ -2553,6 +2553,23 @@
       "Storage": {}
     }
   },
+  "ArcadeTickets": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "ArcadeTickets",
+      "SuccessInterval": 0,
+      "FailureInterval": 120,
+      "ServerUpdate": "00:00"
+    },
+    "Arcade": {
+      "ObserveOnly": true,
+      "CreditsPerRound": 5
+    },
+    "Storage": {
+      "Storage": {}
+    }
+  },
   "PrivateQuarters": {
     "Scheduler": {
       "Enable": false,

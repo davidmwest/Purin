@@ -266,6 +266,10 @@
       "name": "Minigame",
       "help": "Receive credits and spend them"
     },
+    "ArcadeTickets": {
+      "name": "Arcade Tickets",
+      "help": "Claim weekly free arcade credits and convert owned credits into tickets by idling in the shooting game. Never buys credits or prize-shop items."
+    },
     "PrivateQuarters": {
       "name": "Private Quarters",
       "help": ""
@@ -2601,6 +2605,25 @@
     "Collect": {
       "name": "Enable",
       "help": ""
+    }
+  },
+  "Arcade": {
+    "_info": {
+      "name": "Weekly Arcade Tickets",
+      "help": "Uses owned arcade credits only. Idle shooting earns 180 tickets per credit; the game enforces its monthly and storage caps."
+    },
+    "ObserveOnly": {
+      "name": "Inspect Only",
+      "help": "Capture the arcade and game-list screens without claiming or spending credits. Disables the inspection job after it returns home."
+    },
+    "CreditsPerRound": {
+      "name": "Credits per round",
+      "help": "Batch up to five owned credits into each idle shooting round.",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5"
     }
   },
   "PrivateQuarters": {

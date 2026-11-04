@@ -266,6 +266,10 @@
       "name": "Task.Minigame.name",
       "help": ""
     },
+    "ArcadeTickets": {
+      "name": "Task.ArcadeTickets.name",
+      "help": "Task.ArcadeTickets.help"
+    },
     "PrivateQuarters": {
       "name": "Task.PrivateQuarters.name",
       "help": "Task.PrivateQuarters.help"
@@ -2601,6 +2605,25 @@
     "Collect": {
       "name": "Minigame.Collect.name",
       "help": "Minigame.Collect.help"
+    }
+  },
+  "Arcade": {
+    "_info": {
+      "name": "Arcade._info.name",
+      "help": "Arcade._info.help"
+    },
+    "ObserveOnly": {
+      "name": "Arcade.ObserveOnly.name",
+      "help": "Arcade.ObserveOnly.help"
+    },
+    "CreditsPerRound": {
+      "name": "Arcade.CreditsPerRound.name",
+      "help": "Arcade.CreditsPerRound.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5"
     }
   },
   "PrivateQuarters": {

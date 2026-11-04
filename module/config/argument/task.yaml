@@ -361,6 +361,9 @@ DailyMission:
       - SupplyPack
     Minigame:
       - Scheduler
+    ArcadeTickets:
+      - Scheduler
+      - Arcade
     PrivateQuarters:
       - Scheduler
       - PrivateQuarters

@@ -421,6 +421,10 @@ class GeneratedConfig:
     # Group `Minigame`
     Minigame_Collect = False
 
+    # Group `Arcade`
+    Arcade_ObserveOnly = True
+    Arcade_CreditsPerRound = 5  # 1, 2, 3, 4, 5
+
     # Group `PrivateQuarters`
     PrivateQuarters_BuyRoses = True
     PrivateQuarters_BuyCake = False
