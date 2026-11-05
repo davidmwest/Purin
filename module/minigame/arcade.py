@@ -17,6 +17,14 @@ ARCADE_TITLE = Button(area=(123, 12, 272, 44), color=(112, 110, 140), button=(12
                       file='./assets/en/minigame/arcade_room.png', name='ARCADE_TITLE')
 ARCADE_START = Button(area=(1050, 604, 1198, 661), color=(123, 129, 203), button=(1050, 604, 1198, 661),
                       file='./assets/en/minigame/arcade_room.png', name='ARCADE_GAME_LIST')
+ARCADE_ROOM_TUTORIAL = Button(area=(254, 128, 550, 208), color=(), button=(254, 128, 550, 208),
+                             file='./assets/en/minigame/arcade_room_tutorial.png', name='ARCADE_ROOM_TUTORIAL')
+ARCADE_CREDIT_TUTORIAL = Button(area=(588, 132, 919, 231), color=(), button=(588, 132, 889, 221),
+                               file='./assets/en/minigame/arcade_credit_tutorial.png', name='ARCADE_CREDIT_TUTORIAL')
+ARCADE_CREDIT_LABEL = Button(area=(557, 333, 648, 358), color=(), button=(557, 333, 648, 358),
+                            file='./assets/en/minigame/arcade_credit_tutorial.png', name='ARCADE_CREDIT_LABEL')
+ARCADE_PREP_BACK = Button(area=(23, 34, 180, 92), color=(), button=(40, 40, 160, 85),
+                         file='./assets/en/minigame/arcade_credit_tutorial.png', name='ARCADE_PREP_BACK')
 
 
 def next_week(now=None):
@@ -47,13 +55,19 @@ class ArcadeTickets(UI):
 
     def open_games(self):
         for _ in self.loop(skip_first=False, timeout=20):
+            if self.appear_then_click(ARCADE_ROOM_TUTORIAL, offset=(2, 2), similarity=.97, interval=3) \
+                    or self.appear_then_click(ARCADE_CREDIT_TUTORIAL, offset=(2, 2), similarity=.97, interval=3):
+                continue
             if self.appear(GAME_ROOM_CHECK, offset=(5, 5)) and MINIGAME_SCROLL.appear(main=self):
                 return
             if self.match_template_color(ARCADE_TITLE, offset=(2, 2), similarity=.95, threshold=10) \
                     and self.match_template_color(ARCADE_START, offset=(2, 2), similarity=.95, threshold=10, interval=4):
                 self.device.click(ARCADE_START)
                 continue
-            if self.appear_then_click(GOTO_CHOOSE_GAME, offset=(5, 5), interval=4):
+            # The first-visit guide may open the tower game. Leave its verified
+            # preparation page without pressing Start or changing its credit count.
+            if self.appear(ARCADE_CREDIT_LABEL, offset=(2, 2), similarity=.98) \
+                    and self.appear_then_click(ARCADE_PREP_BACK, offset=(2, 2), similarity=.98, interval=3):
                 continue
         raise ScriptError('Arcade game list not recognized')
 

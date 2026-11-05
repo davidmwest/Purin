@@ -19,6 +19,18 @@ def test_current_scaled_arcade_room_controls_reject_dimmed_background():
         assert not control.match_template_color((image * .5).astype('uint8'), offset=(2, 2), similarity=.95, threshold=10)
 
 
+def test_captured_credit_guide_is_distinct_from_the_room_and_does_not_cover_start_input():
+    from module.base.utils import load_image
+    from module.minigame.arcade import ARCADE_CREDIT_TUTORIAL, ARCADE_ROOM_TUTORIAL, ARCADE_TITLE
+    room = load_image('assets/en/minigame/arcade_room_tutorial.png')
+    credits = load_image('assets/en/minigame/arcade_credit_tutorial.png')
+    assert ARCADE_ROOM_TUTORIAL.match(room, offset=(2, 2), similarity=.97)
+    assert ARCADE_CREDIT_TUTORIAL.match(credits, offset=(2, 2), similarity=.97)
+    assert not ARCADE_CREDIT_TUTORIAL.match(room, offset=(2, 2), similarity=.97)
+    assert not ARCADE_TITLE.match_template_color(room, offset=(2, 2), similarity=.95, threshold=10)
+    assert ARCADE_CREDIT_TUTORIAL.button[3] < 300  # The game's Start button is below y380.
+
+
 def test_arcade_defaults_disabled_and_keeps_farming_and_other_minigame_settings():
     old = {'Main': {'Campaign': {'Name': '12-4'}, 'StopCondition': {'OilLimit': 5000}},
            'Minigame': {'Scheduler': {'Enable': False}}}
