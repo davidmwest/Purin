@@ -36,18 +36,19 @@ def test_override_still_pulls_in_a_run_scheduled_too_far_ahead():
     assert config.data['Commission']['Scheduler']['NextRun'] <= datetime.now()
 
 
-def test_override_keeps_the_weekly_scan_of_the_dock_a_week_away():
+@pytest.mark.parametrize('weekly_task', ['Inventory', 'ArcadeTickets'])
+def test_override_keeps_weekly_jobs_a_week_away(weekly_task):
     # Pulled in to now every time the config was read again, the scan of an hour ran back to back
     now = datetime.now().replace(microsecond=0)
     week = now + timedelta(days=7)
-    data = {'Inventory': {'Scheduler': {'Enable': True, 'NextRun': week}},
+    data = {weekly_task: {'Scheduler': {'Enable': True, 'NextRun': week}},
             'Commission': {'Scheduler': {'Enable': True, 'NextRun': week}}}
     config = SimpleNamespace(data=data, modified={}, overridden={}, args={task: {} for task in data})
     config.is_task_enabled = lambda task: data[task]['Scheduler']['Enable']
 
     AzurLaneConfig.override(config)
 
-    assert data['Inventory']['Scheduler']['NextRun'] == week
+    assert data[weekly_task]['Scheduler']['NextRun'] == week
     # Other tasks are still kept within a day
     assert data['Commission']['Scheduler']['NextRun'] <= datetime.now()
 

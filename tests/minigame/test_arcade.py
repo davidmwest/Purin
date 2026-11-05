@@ -197,7 +197,8 @@ def test_uncertain_round_receipt_durably_blocks_a_second_start(tmp_path):
     assert pending['start_clicks'] == 1 and pending['receipt_candidate']['sha256']
 
 
-def test_real_ticket_then_zero_score_result_acknowledges_once_before_finishing(tmp_path):
+@pytest.mark.parametrize('result_fixture', ['arcade_shooting_result.png', 'arcade_shooting_result_native.png'])
+def test_real_ticket_then_zero_score_result_acknowledges_once_before_finishing(tmp_path, result_fixture):
     from pathlib import Path
     from PIL import Image
     from module.base.utils import load_image
@@ -205,7 +206,7 @@ def test_real_ticket_then_zero_score_result_acknowledges_once_before_finishing(t
     from module.minigame.arcade_state import ArcadeJournal
     prepare = load_image('assets/en/minigame/arcade_shooting_prepare.png')
     award = load_image('assets/en/minigame/arcade_ticket_receipt.png')
-    result = load_image('assets/en/minigame/arcade_shooting_result.png')
+    result = load_image('assets/en/minigame/' + result_fixture)
     job = task(False)
     job.device = SimpleNamespace(image=prepare, click=Mock())
     job.journal = ArcadeJournal('arcade-test', tmp_path / 'state')
@@ -227,6 +228,22 @@ def test_real_ticket_then_zero_score_result_acknowledges_once_before_finishing(t
     job.dismiss_receipt.assert_called_once()
     row = ArcadeJournal('arcade-test', tmp_path / 'state').data['rounds'][0]
     assert row['status'] == 'complete' and row['result_ack_clicks'] == 1 and row['tickets'] == 900
+
+
+@pytest.mark.parametrize('result_fixture', ['arcade_shooting_result.png', 'arcade_shooting_result_native.png'])
+def test_result_requires_the_zero_score_and_visible_acknowledgement(result_fixture):
+    from module.base.utils import load_image
+    image = load_image('assets/en/minigame/' + result_fixture)
+    job = task(False)
+    job.device = SimpleNamespace(image=image)
+    assert job.shooting_result()
+    job.device.image = (image * .5).astype('uint8')
+    assert not job.shooting_result()
+    for box in ((642, 312, 835, 343), (371, 279, 588, 386), (568, 442, 712, 477)):
+        job.device.image = image.copy()
+        x, y, x2, y2 = box
+        job.device.image[y:y2, x:x2] = 0
+        assert not job.shooting_result()
 
 
 def test_higher_priority_work_yields_after_one_verified_round():

@@ -325,6 +325,9 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         # to now by the limit of a day below as soon as the config was read again: scans of an hour back to back.
         # Its interval may be set up to 7 days, with some slack for a config read right after it was set.
         limit_next_run(["Inventory"], limit=now + timedelta(days=7, hours=1))
+        # The weekly arcade reset can also be more than a day away. Include the
+        # local DST hour so a legitimate Monday reset is not pulled in to now.
+        limit_next_run(["ArcadeTickets"], limit=now + timedelta(days=7, hours=1))
         limit_next_run(self.args.keys(), limit=now + timedelta(hours=24, seconds=-1))
 
         """

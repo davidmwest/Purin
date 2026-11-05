@@ -67,6 +67,8 @@ SHOOTING_RESULT = Button(area=(371, 279, 588, 386), color=(206, 160, 140), butto
                         file='./assets/en/minigame/arcade_shooting_result.png', name='SHOOTING_VICTORY_RESULT')
 SHOOTING_RESULT_SCORE = Button(area=(642, 312, 835, 343), color=(197, 179, 161), button=(642, 312, 835, 343),
                               file='./assets/en/minigame/arcade_shooting_result.png', name='SHOOTING_ZERO_SCORE')
+SHOOTING_RESULT_SCORE_NATIVE = Button(area=(642, 312, 835, 343), color=(194, 180, 162), button=(642, 312, 835, 343),
+                                     file='./assets/en/minigame/arcade_shooting_result_native.png', name='SHOOTING_ZERO_SCORE_NATIVE')
 SHOOTING_RESULT_OK = Button(area=(568, 442, 712, 477), color=(74, 81, 84), button=(585, 447, 697, 473),
                            file='./assets/en/minigame/arcade_shooting_result.png', name='SHOOTING_RESULT_OK')
 
@@ -161,6 +163,10 @@ class ArcadeTickets(UI):
 
     def preparing(self):
         return self.matches(SHOOTING_TITLE) and self.matches(SHOOTING_START)
+
+    def shooting_result(self):
+        return self.matches(SHOOTING_RESULT) and self.matches(SHOOTING_RESULT_OK) \
+            and (self.matches(SHOOTING_RESULT_SCORE) or self.matches(SHOOTING_RESULT_SCORE_NATIVE))
 
     def game_list(self):
         # Returning from a game keeps the list visible but the client labels it
@@ -317,8 +323,7 @@ class ArcadeTickets(UI):
                 return remaining
             if receipt is not None:
                 result_frames += 1
-                if result_frames >= 2 and self.matches(SHOOTING_RESULT) and self.matches(SHOOTING_RESULT_SCORE) \
-                        and self.matches(SHOOTING_RESULT_OK) and not row.get('result_ack_clicks'):
+                if result_frames >= 2 and self.shooting_result() and not row.get('result_ack_clicks'):
                     row['result_screen'] = self.capture('round_' + row['id'] + '_result')
                     row['result_ack_clicks'] = 1
                     self.journal.save()
