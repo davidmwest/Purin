@@ -124,6 +124,19 @@ def test_room_scrollbar_like_pixels_do_not_establish_the_game_selection_page():
                                                      offset=(3, 3), similarity=.92, threshold=18)
 
 
+def test_returned_list_with_arcade_title_is_a_list_only_with_the_shooting_card():
+    from module.base.utils import load_image
+    job = task()
+    for name in ('arcade_games.png', 'arcade_return_list.png'):
+        job.device = SimpleNamespace(image=load_image('assets/en/minigame/' + name))
+        assert job.game_list()
+    job.device.image = load_image('assets/en/minigame/arcade_room.png')
+    assert not job.game_list()
+    job.device.image = load_image('assets/en/minigame/arcade_return_list.png')
+    job.device.image[439:474, 242:502] = 0
+    assert not job.game_list()
+
+
 def test_actual_idle_round_award_is_nine_hundred_tickets_not_the_credit_grant():
     from module.base.utils import load_image
     from module.minigame.arcade import ticket_receipt
