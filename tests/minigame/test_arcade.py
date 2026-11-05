@@ -64,7 +64,7 @@ def test_weekly_schedule_uses_fixed_en_server_reset_across_local_dst(now, expect
 def task(observe=True):
     job = ArcadeTickets.__new__(ArcadeTickets)
     job.config = SimpleNamespace(Arcade_ObserveOnly=observe, cross_set=Mock(), task_call=Mock(), task_delay=Mock())
-    for method in ('enter_arcade', 'open_games', 'capture', 'ui_goto_main'):
+    for method in ('enter_arcade', 'open_games', 'capture', 'ui_goto_main', 'inspect_shooting'):
         setattr(job, method, Mock())
     return job
 

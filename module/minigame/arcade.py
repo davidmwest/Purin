@@ -27,6 +27,8 @@ ARCADE_CREDIT_LABEL = Button(area=(557, 333, 648, 358), color=(), button=(557, 3
                             file='./assets/en/minigame/arcade_credit_tutorial.png', name='ARCADE_CREDIT_LABEL')
 ARCADE_PREP_BACK = Button(area=(23, 34, 180, 92), color=(), button=(40, 40, 160, 85),
                          file='./assets/en/minigame/arcade_credit_tutorial.png', name='ARCADE_PREP_BACK')
+SHOOTING_CARD = Button(area=(242, 439, 502, 474), color=(), button=(260, 445, 500, 475),
+                       file='./assets/en/minigame/arcade_games.png', name='ARCADE_SHOOTING_GAME')
 
 
 def next_week(now=None):
@@ -81,6 +83,7 @@ class ArcadeTickets(UI):
             self.open_games()
             self.capture('games')
             if self.config.Arcade_ObserveOnly:
+                self.inspect_shooting()
                 # A one-shot, purchase-free screen inspection used to validate a client layout.
                 self.config.cross_set('ArcadeTickets.Scheduler.Enable', False)
                 self.ui_goto_main()
@@ -92,3 +95,21 @@ class ArcadeTickets(UI):
             logger.warning(f'Arcade deferred: {exc}')
             self.config.task_call('Restart')
             self.config.task_delay(minute=60)
+
+    def inspect_shooting(self):
+        MINIGAME_SCROLL.set_top(main=self)
+        for _ in self.loop(skip_first=False, timeout=12):
+            if self.appear(SHOOTING_CARD, offset=(4, 500), similarity=.93):
+                self.device.click(SHOOTING_CARD)
+                break
+        else:
+            raise ScriptError('Shooting-game card not recognized')
+        for _ in self.loop(skip_first=False, timeout=10):
+            if self.appear(ARCADE_CREDIT_LABEL, offset=(5, 50), similarity=.97):
+                self.capture('shooting_prepare')
+                # Source-verified: this exact game opens its preparation mask and
+                # Back closes it. No Start has been issued, so this cannot abandon a round.
+                self.device.adb_shell(['input', 'keyevent', '4'])
+                return
+        self.capture('shooting_unrecognized')
+        raise ScriptError('Shooting preparation not recognized')
