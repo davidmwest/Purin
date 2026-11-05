@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from module.base.utils import save_image
+from module.base.button import Button
 from module.config.utils import server_timezone
 from module.exception import ScriptError
 from module.logger import logger
@@ -11,6 +12,11 @@ from module.minigame.minigame import MINIGAME_SCROLL
 from module.ui.assets import ACADEMY_GOTO_GAME_ROOM, GAME_ROOM_CHECK
 from module.ui.page import page_academy, page_game_room
 from module.ui.ui import UI
+
+ARCADE_TITLE = Button(area=(123, 12, 272, 44), color=(112, 110, 140), button=(123, 12, 272, 44),
+                      file='./assets/en/minigame/arcade_room.png', name='ARCADE_TITLE')
+ARCADE_START = Button(area=(1050, 604, 1198, 661), color=(123, 129, 203), button=(1050, 604, 1198, 661),
+                      file='./assets/en/minigame/arcade_room.png', name='ARCADE_GAME_LIST')
 
 
 def next_week(now=None):
@@ -43,6 +49,10 @@ class ArcadeTickets(UI):
         for _ in self.loop(skip_first=False, timeout=20):
             if self.appear(GAME_ROOM_CHECK, offset=(5, 5)) and MINIGAME_SCROLL.appear(main=self):
                 return
+            if self.match_template_color(ARCADE_TITLE, offset=(2, 2), similarity=.95, threshold=10) \
+                    and self.match_template_color(ARCADE_START, offset=(2, 2), similarity=.95, threshold=10, interval=4):
+                self.device.click(ARCADE_START)
+                continue
             if self.appear_then_click(GOTO_CHOOSE_GAME, offset=(5, 5), interval=4):
                 continue
         raise ScriptError('Arcade game list not recognized')

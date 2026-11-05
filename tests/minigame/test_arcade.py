@@ -10,6 +10,15 @@ from module.exception import ScriptError
 from module.minigame.arcade import ArcadeTickets, next_week
 
 
+def test_current_scaled_arcade_room_controls_reject_dimmed_background():
+    from module.base.utils import load_image
+    from module.minigame.arcade import ARCADE_START, ARCADE_TITLE
+    image = load_image('assets/en/minigame/arcade_room.png')
+    for control in (ARCADE_TITLE, ARCADE_START):
+        assert control.match_template_color(image, offset=(2, 2), similarity=.95, threshold=10)
+        assert not control.match_template_color((image * .5).astype('uint8'), offset=(2, 2), similarity=.95, threshold=10)
+
+
 def test_arcade_defaults_disabled_and_keeps_farming_and_other_minigame_settings():
     old = {'Main': {'Campaign': {'Name': '12-4'}, 'StopCondition': {'OilLimit': 5000}},
            'Minigame': {'Scheduler': {'Enable': False}}}
