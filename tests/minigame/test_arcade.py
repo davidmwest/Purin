@@ -10,6 +10,14 @@ from module.exception import ScriptError
 from module.minigame.arcade import ArcadeTickets, next_week
 
 
+@pytest.fixture(autouse=True)
+def en_server():
+    previous = server.server
+    server.set_server('en')
+    yield
+    server.set_server(previous)
+
+
 def test_current_scaled_arcade_room_controls_reject_dimmed_background():
     from module.base.utils import load_image
     from module.minigame.arcade import ARCADE_START, ARCADE_TITLE
@@ -113,6 +121,25 @@ def test_room_scrollbar_like_pixels_do_not_establish_the_game_selection_page():
                                                  offset=(3, 3), similarity=.92, threshold=18)
     assert not ARCADE_LIST_TITLE.match_template_color(load_image('assets/en/minigame/arcade_room.png'),
                                                      offset=(3, 3), similarity=.92, threshold=18)
+
+
+def test_actual_idle_round_award_is_nine_hundred_tickets_not_the_credit_grant():
+    from module.base.utils import load_image
+    from module.minigame.arcade import ticket_receipt
+    assert ticket_receipt(load_image('assets/en/minigame/arcade_ticket_receipt.png')) == 900
+    assert ticket_receipt(load_image('assets/en/minigame/arcade_credit_receipt.png')) is None
+
+
+def test_missing_ticket_amount_or_wrong_currency_icon_cannot_verify_a_round():
+    from module.base.utils import load_image
+    from module.minigame.arcade import ticket_receipt
+    image = load_image('assets/en/minigame/arcade_ticket_receipt.png')
+    image[371:393, 641:687] = 0
+    assert ticket_receipt(image) is None
+    image = load_image('assets/en/minigame/arcade_ticket_receipt.png')
+    credit = load_image('assets/en/minigame/arcade_credit_receipt.png')
+    image[304:368, 596:684] = credit[304:368, 596:684]
+    assert ticket_receipt(image) is None
 
 
 @pytest.mark.parametrize('text,kind', [

@@ -57,6 +57,10 @@ HEADER_CREDITS = Ocr(Button(area=(1093, 24, 1138, 53), color=(), button=(1093, 2
 SELECTED_CREDITS = Ocr(Button(area=(659, 343, 734, 376), color=(), button=(659, 343, 734, 376)),
                        lang='azur_lane', letter=(33, 28, 49), threshold=128, name='ARCADE_SELECTED_CREDITS')
 CAP_TEXT_AREA = Button(area=(240, 215, 1040, 440), color=(), button=(240, 215, 1040, 440))
+ARCADE_TICKET_ICON = Button(area=(596, 304, 684, 368), color=(140, 159, 206), button=(596, 304, 684, 368),
+                           file='./assets/en/minigame/arcade_ticket_receipt.png', name='ARCADE_TICKET_RECEIPT')
+TICKET_AMOUNT = Ocr(Button(area=(641, 371, 687, 393), color=(), button=(641, 371, 687, 393)),
+                    lang='azur_lane', letter=(255, 255, 255), threshold=128, name='ARCADE_TICKETS_EARNED')
 
 
 def cap_kind(text):
@@ -76,8 +80,12 @@ def next_month(now=None):
 
 
 def ticket_receipt(image):
-    """Unknown ticket artwork cannot authorize a completed round."""
-    return None
+    """The actual single-item Game Ticket award; never credits or unrelated receipts."""
+    if image.shape[:2] != (720, 1280) or not GET_ITEMS_1.match(image, offset=(20, 20), similarity=.85) \
+            or not ARCADE_TICKET_ICON.match_template_color(image, offset=(2, 2), similarity=.94, threshold=15):
+        return None
+    count = parse_count(TICKET_AMOUNT.ocr(image), maximum=900)
+    return count if count is not None and count > 0 else None
 
 
 def next_week(now=None):
@@ -239,6 +247,7 @@ class ArcadeTickets(UI):
         self.device.click(SHOOTING_START)
         logger.info(f'Arcade idle shooting: one Start, {count} owned credits, no aim or fire inputs')
         receipt = None
+        result_frames = 0
         for _ in self.loop(skip_first=False, timeout=45):
             if self.credit_receipt():
                 path = self.save_round_candidate(row)
@@ -253,6 +262,12 @@ class ArcadeTickets(UI):
                 if receipt < count * 180:
                     self.capped = True
                 return remaining
+            if receipt is not None:
+                result_frames += 1
+                if result_frames >= 3:
+                    row['result_screen'] = self.capture('round_' + row['id'] + '_result')
+                    self.journal.save()
+                    raise ScriptError('Shooting result dialog retained for exact recognition')
         self.capture('round_' + row['id'] + '_result_unrecognized')
         raise ScriptError('Arcade round result not verified; do not replay Start')
 
