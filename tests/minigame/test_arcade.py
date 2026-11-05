@@ -7,6 +7,7 @@ import pytest
 import module.config.server as server
 from module.config.config_updater import ConfigUpdater
 from module.exception import ScriptError
+from module.combat.assets import GET_ITEMS_1
 from module.minigame.arcade import ArcadeTickets, next_week
 
 
@@ -47,7 +48,7 @@ def test_arcade_defaults_disabled_and_keeps_farming_and_other_minigame_settings(
            'Minigame': {'Scheduler': {'Enable': False}}}
     new = ConfigUpdater().config_update(old)
     assert new['ArcadeTickets']['Scheduler']['Enable'] is False
-    assert new['ArcadeTickets']['Arcade'] == {'ObserveOnly': True, 'CreditsPerRound': 5}
+    assert new['ArcadeTickets']['Arcade'] == {'ObserveOnly': False, 'CreditsPerRound': 5}
     assert new['Main']['Campaign']['Name'] == '12-4'
     assert new['Main']['StopCondition']['OilLimit'] == 5000
     assert not new['Minigame']['Scheduler']['Enable']
@@ -181,3 +182,74 @@ def test_uncertain_round_receipt_durably_blocks_a_second_start(tmp_path):
     job.dismiss_receipt.assert_not_called()
     pending = ArcadeJournal('arcade-test', tmp_path / 'state').pending()
     assert pending['start_clicks'] == 1 and pending['receipt_candidate']['sha256']
+
+
+def test_real_ticket_then_zero_score_result_acknowledges_once_before_finishing(tmp_path):
+    from pathlib import Path
+    from PIL import Image
+    from module.base.utils import load_image
+    from module.minigame.arcade import SHOOTING_START, SHOOTING_RESULT_OK
+    from module.minigame.arcade_state import ArcadeJournal
+    prepare = load_image('assets/en/minigame/arcade_shooting_prepare.png')
+    award = load_image('assets/en/minigame/arcade_ticket_receipt.png')
+    result = load_image('assets/en/minigame/arcade_shooting_result.png')
+    job = task(False)
+    job.device = SimpleNamespace(image=prepare, click=Mock())
+    job.journal = ArcadeJournal('arcade-test', tmp_path / 'state')
+    job.select_credits = Mock(return_value=5)
+    job.stable_credits = Mock(side_effect=[(5, 15), (5, 10)])
+    job.dismiss_receipt = Mock()
+    job.credit_receipt = lambda: GET_ITEMS_1.match(job.device.image, offset=(20, 20), similarity=.85)
+    def frames(**kwargs):
+        for frame in (award, award, result, result, result, prepare):
+            job.device.image = frame
+            yield frame
+    def capture(label):
+        path = tmp_path / (label + '.png')
+        Image.fromarray(job.device.image).save(str(path))
+        return str(path)
+    job.loop, job.capture = frames, capture
+    assert job.idle_round(15) == 10
+    assert [call.args[0] for call in job.device.click.call_args_list] == [SHOOTING_START, SHOOTING_RESULT_OK]
+    job.dismiss_receipt.assert_called_once()
+    row = ArcadeJournal('arcade-test', tmp_path / 'state').data['rounds'][0]
+    assert row['status'] == 'complete' and row['result_ack_clicks'] == 1 and row['tickets'] == 900
+
+
+def test_higher_priority_work_yields_after_one_verified_round():
+    job = task(False)
+    job.rounds, job.yielded, job.capped = 0, False, False
+    job.open_shooting = Mock()
+    job.idle_round = Mock(return_value=5)
+    job.stable_credits = Mock(return_value=5)
+    job.config.task_switched = Mock(return_value=True)
+    assert job.play_to(10, 0) == 5
+    assert job.yielded and job.rounds == 1
+    job.idle_round.assert_called_once_with(10)
+
+
+def test_unknown_or_blank_modal_cannot_be_acknowledged_as_a_cap(monkeypatch):
+    import numpy as np
+    job = task(False)
+    job.device = SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8), display_scale=2)
+    job.appear = Mock(return_value=True)
+    job.handle_popup_confirm = Mock()
+    assert not job.handle_cap_warning()
+    job.handle_popup_confirm.assert_not_called()
+
+
+def test_hitting_ticket_cap_while_freeing_credit_space_still_claims_weekly_grant():
+    job = task(False)
+    job.stable_credits = Mock(return_value=35)
+    job.matches = Mock(return_value=True)
+    job.finish_pending = Mock()
+    def make_space(credits, target):
+        assert (credits, target) == (35, 30)
+        job.capped = True
+        return 30
+    job.play_to = Mock(side_effect=make_space)
+    job.collect_weekly = Mock(return_value=40)
+    job.run()
+    job.collect_weekly.assert_called_once_with(30)
+    job.play_to.assert_called_once_with(35, 30)
+    job.config.task_call.assert_not_called()

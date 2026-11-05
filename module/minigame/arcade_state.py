@@ -48,16 +48,33 @@ class ArcadeJournal:
                 or any(not isinstance(row, dict) for row in self.data['rounds']):
             raise ScriptError('Invalid arcade receipt journal')
         for row in self.data['rounds']:
-            if row.get('status') not in ('started', 'complete') or row.get('start_clicks') != 1 \
+            if row.get('status') not in ('started', 'complete') or type(row.get('start_clicks')) is not int \
+                    or row.get('start_clicks') != 1 or not re.fullmatch('[0-9a-f]{32}', str(row.get('id', ''))) \
                     or type(row.get('credits_before')) is not int or not 1 <= row['credits_before'] <= 40 \
                     or type(row.get('credits_used')) is not int \
                     or not 1 <= row['credits_used'] <= min(5, row['credits_before']):
                 raise ScriptError('Invalid arcade round receipt')
+            try:
+                if datetime.fromisoformat(row['started']).tzinfo is not None:
+                    raise ValueError('Expected local receipt time')
+                datetime.strptime(row['month'], '%Y-%m')
+            except (KeyError, TypeError, ValueError):
+                raise ScriptError('Invalid arcade round period')
+            if row['status'] == 'complete' and (type(row.get('credits_after')) is not int
+                    or row['credits_after'] != row['credits_before'] - row['credits_used']
+                    or type(row.get('tickets')) is not int or not 1 <= row['tickets'] <= row['credits_used'] * 180
+                    or not row.get('receipt')):
+                raise ScriptError('Invalid completed arcade round')
+        if sum(row['status'] == 'started' for row in self.data['rounds']) > 1:
+            raise ScriptError('Conflicting unfinished arcade rounds')
         for row in self.data['claims'].values():
             if not isinstance(row, dict) or row.get('status') not in ('requested', 'complete') \
-                    or row.get('clicks') != 1 or type(row.get('credits_before')) is not int \
+                    or type(row.get('clicks')) is not int or row.get('clicks') != 1 or type(row.get('credits_before')) is not int \
                     or not 0 <= row['credits_before'] <= 30:
                 raise ScriptError('Invalid arcade credit receipt')
+            if row['status'] == 'complete' and (type(row.get('credits_after')) is not int
+                    or row['credits_after'] != row['credits_before'] + 10 or not row.get('receipt')):
+                raise ScriptError('Invalid completed arcade credit claim')
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)

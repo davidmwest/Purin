@@ -4,6 +4,9 @@ import hashlib
 import re
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 from module.base.utils import save_image, load_image
 from module.base.button import Button
 from module.config.utils import server_timezone
@@ -56,11 +59,38 @@ HEADER_CREDITS = Ocr(Button(area=(1093, 24, 1138, 53), color=(), button=(1093, 2
                      lang='azur_lane', letter=(255, 235, 115), threshold=128, name='ARCADE_CREDITS')
 SELECTED_CREDITS = Ocr(Button(area=(659, 343, 734, 376), color=(), button=(659, 343, 734, 376)),
                        lang='azur_lane', letter=(33, 28, 49), threshold=128, name='ARCADE_SELECTED_CREDITS')
-CAP_TEXT_AREA = Button(area=(240, 215, 1040, 440), color=(), button=(240, 215, 1040, 440))
 ARCADE_TICKET_ICON = Button(area=(596, 304, 684, 368), color=(140, 159, 206), button=(596, 304, 684, 368),
                            file='./assets/en/minigame/arcade_ticket_receipt.png', name='ARCADE_TICKET_RECEIPT')
 TICKET_AMOUNT = Ocr(Button(area=(641, 371, 687, 393), color=(), button=(641, 371, 687, 393)),
                     lang='azur_lane', letter=(255, 255, 255), threshold=128, name='ARCADE_TICKETS_EARNED')
+SHOOTING_RESULT = Button(area=(371, 279, 588, 386), color=(206, 160, 140), button=(371, 279, 588, 386),
+                        file='./assets/en/minigame/arcade_shooting_result.png', name='SHOOTING_VICTORY_RESULT')
+SHOOTING_RESULT_SCORE = Button(area=(642, 312, 835, 343), color=(197, 179, 161), button=(642, 312, 835, 343),
+                              file='./assets/en/minigame/arcade_shooting_result.png', name='SHOOTING_ZERO_SCORE')
+SHOOTING_RESULT_OK = Button(area=(568, 442, 712, 477), color=(74, 81, 84), button=(585, 447, 697, 473),
+                           file='./assets/en/minigame/arcade_shooting_result.png', name='SHOOTING_RESULT_OK')
+
+
+def cap_message(image, letter):
+    """Split only the modal message into single text lines for Alas's line OCR."""
+    x1, y1, x2, y2 = 250, 260, 1030, 444
+    area = image[y1:y2, x1:x2]
+    mask = np.max(np.abs(area.astype(np.int16) - np.array(letter)), axis=2) < 55
+    counts = mask.sum(axis=1)
+    rows = np.flatnonzero((counts > 6) & (counts < (x2 - x1) * .75))
+    bands = []
+    for y in rows:
+        if bands and y - bands[-1][-1] <= 3:
+            bands[-1].append(int(y))
+        else:
+            bands.append([int(y)])
+    bands = [band for band in bands if 8 <= band[-1] - band[0] + 1 <= 36]
+    if not 2 <= len(bands) <= 7:
+        return ''
+    boxes = [Button(area=(x1, y1 + band[0] - 3, x2, y1 + band[-1] + 4), color=(), button=(x1, y1, x2, y2))
+             for band in bands]
+    lines = Ocr(boxes, lang='cnocr', letter=letter, threshold=128, name='ARCADE_CAP_LINES').ocr(image)
+    return ' '.join(lines)
 
 
 def cap_kind(text):
@@ -110,10 +140,11 @@ class ArcadeTickets(UI):
         return button.match_template_color(self.device.image, offset=(3, 3), similarity=.92, threshold=18)
 
     def handle_cap_warning(self):
-        if not self.appear(POPUP_CANCEL, offset=(30, 30)) or not self.appear(POPUP_CONFIRM, offset=(30, 30)):
+        if not self.appear(POPUP_CANCEL, offset=(30, 30), similarity=self.text_similarity):
+            self._cap_previous = None
             return False
         for letter in ((255, 255, 255), (60, 60, 60)):
-            text = Ocr(CAP_TEXT_AREA, lang='cnocr', letter=letter, threshold=128, name='ARCADE_CAP_TEXT').ocr(self.device.image)
+            text = cap_message(self.device.image, letter)
             kind = cap_kind(text)
             if kind:
                 if getattr(self, '_cap_previous', None) != kind:
@@ -125,6 +156,7 @@ class ArcadeTickets(UI):
                 if self.handle_popup_confirm('ARCADE_EXACT_TICKET_CAP'):
                     self._cap_acknowledged = True
                 return True
+        self._cap_previous = None
         return False
 
     def preparing(self):
@@ -233,6 +265,10 @@ class ArcadeTickets(UI):
         row = self.journal.pending()
         if row is None:
             return
+        _, month = server_period()
+        age = datetime.now() - datetime.fromisoformat(row['started'])
+        if row['month'] != month or not timedelta(0) <= age <= timedelta(hours=24):
+            raise ScriptError('An old unresolved arcade round requires review; no replay')
         tickets = self.retained_ticket_receipt(row)
         if tickets is None:
             raise ScriptError('Unresolved arcade round: no verified retained ticket receipt; no replay')
@@ -247,13 +283,23 @@ class ArcadeTickets(UI):
         self.device.click(SHOOTING_START)
         logger.info(f'Arcade idle shooting: one Start, {count} owned credits, no aim or fire inputs')
         receipt = None
+        previous_receipt = None
+        unknown_receipt_frames = 0
         result_frames = 0
         for _ in self.loop(skip_first=False, timeout=45):
             if self.credit_receipt():
                 path = self.save_round_candidate(row)
-                receipt = ticket_receipt(self.device.image)
-                if receipt is None:
-                    raise ScriptError('Arcade ticket receipt retained for exact recognition; do not replay Start')
+                current_receipt = ticket_receipt(self.device.image)
+                if current_receipt is None:
+                    unknown_receipt_frames += 1
+                    if unknown_receipt_frames >= 6:
+                        raise ScriptError('Arcade ticket receipt retained for exact recognition; do not replay Start')
+                    continue
+                unknown_receipt_frames = 0
+                if current_receipt != previous_receipt:
+                    previous_receipt = current_receipt
+                    continue
+                receipt = current_receipt
                 self.dismiss_receipt()
                 continue
             if receipt is not None and self.preparing():
@@ -264,10 +310,13 @@ class ArcadeTickets(UI):
                 return remaining
             if receipt is not None:
                 result_frames += 1
-                if result_frames >= 3:
+                if result_frames >= 2 and self.matches(SHOOTING_RESULT) and self.matches(SHOOTING_RESULT_SCORE) \
+                        and self.matches(SHOOTING_RESULT_OK) and not row.get('result_ack_clicks'):
                     row['result_screen'] = self.capture('round_' + row['id'] + '_result')
+                    row['result_ack_clicks'] = 1
                     self.journal.save()
-                    raise ScriptError('Shooting result dialog retained for exact recognition')
+                    self.device.click(SHOOTING_RESULT_OK)
+                    continue
         self.capture('round_' + row['id'] + '_result_unrecognized')
         raise ScriptError('Arcade round result not verified; do not replay Start')
 
@@ -339,9 +388,10 @@ class ArcadeTickets(UI):
             self.finish_pending(credits)
             if credits > 30 and self.matches(ARCADE_FREE):
                 credits = self.play_to(credits, 30)
-            if not self.yielded and not self.capped:
+            if not self.yielded:
                 credits = self.collect_weekly(credits)
-                credits = self.play_to(credits, 0)
+                if not self.capped:
+                    credits = self.play_to(credits, 0)
             self.ui_goto_main()
             if self.capped:
                 self.config.task_delay(target=min(next_week(), next_month()))
@@ -352,8 +402,11 @@ class ArcadeTickets(UI):
             logger.info(f'Arcade finished: {self.rounds} verified idle rounds, {credits} credits left')
         except ArcadeTicketCap as exc:
             self.capture('ticket_cap')
-            self.to_room()
-            self.ui_goto_main()
+            try:
+                self.to_room()
+                self.ui_goto_main()
+            except ScriptError:
+                self.config.task_call('Restart')
             self.config.task_delay(target=min(next_week(), next_month()))
             logger.info(f'Arcade stopped at ticket cap without another Start: {exc}')
         except ScriptError as exc:

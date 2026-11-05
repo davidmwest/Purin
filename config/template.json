@@ -2563,7 +2563,7 @@
       "ServerUpdate": "00:00"
     },
     "Arcade": {
-      "ObserveOnly": true,
+      "ObserveOnly": false,
       "CreditsPerRound": 5
     },
     "Storage": {
