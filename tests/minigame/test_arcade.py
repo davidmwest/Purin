@@ -63,8 +63,9 @@ def test_weekly_schedule_uses_fixed_en_server_reset_across_local_dst(now, expect
 
 def task(observe=True):
     job = ArcadeTickets.__new__(ArcadeTickets)
-    job.config = SimpleNamespace(Arcade_ObserveOnly=observe, cross_set=Mock(), task_call=Mock(), task_delay=Mock())
-    for method in ('enter_arcade', 'open_games', 'capture', 'ui_goto_main', 'inspect_shooting'):
+    job.config = SimpleNamespace(config_name='arcade-test', Arcade_ObserveOnly=observe, cross_set=Mock(),
+                                 task_call=Mock(), task_delay=Mock())
+    for method in ('enter_arcade', 'open_games', 'capture', 'ui_goto_main', 'inspect_shooting', 'to_room'):
         setattr(job, method, Mock())
     return job
 
@@ -80,6 +81,67 @@ def test_observation_does_not_leave_a_repeat_job_enabled():
 def test_unknown_arcade_layout_defers_and_queues_normal_game_restart():
     job = task()
     job.open_games.side_effect = ScriptError('unknown game list')
+    job.to_room.side_effect = ScriptError('return not recognized')
     job.run()
     job.config.task_call.assert_called_once_with('Restart')
     job.config.task_delay.assert_called_once_with(minute=60)
+
+
+def test_unreadable_arcade_counter_can_return_home_without_restarting_the_game():
+    job = task()
+    job.open_games.side_effect = ScriptError('unreadable list')
+    job.run()
+    job.config.task_call.assert_not_called()
+    job.ui_goto_main.assert_called_once()
+    job.config.task_delay.assert_called_once_with(minute=60)
+
+
+def test_captured_preparation_reads_the_whole_owned_credit_fraction():
+    from module.base.utils import load_image
+    from module.minigame.arcade import SHOOTING_START, SHOOTING_TITLE, SHOOTING_PLUS, SELECTED_CREDITS
+    from module.minigame.arcade_state import parse_selection
+    image = load_image('assets/en/minigame/arcade_shooting_prepare.png')
+    for control in (SHOOTING_TITLE, SHOOTING_START, SHOOTING_PLUS):
+        assert control.match_template_color(image, offset=(3, 3), similarity=.92, threshold=18)
+    assert parse_selection(SELECTED_CREDITS.ocr(image)) == (1, 10)
+
+
+@pytest.mark.parametrize('text,kind', [
+    ("You've reached your monthly limit of Game Tickets, and will not be able to earn any more. Continue playing the minigame?", 'monthly'),
+    ("You've reached the maximum number of Game Tickets, and will not be able to earn any more. Continue playing the minigame?", 'storage'),
+    ('Monthly limit reached. Buy more Credits?', None),
+    ('Continue playing the minigame?', None),
+    ('You have enough coins. Continue?', None),
+])
+def test_only_the_full_source_verified_ticket_cap_notice_can_be_acknowledged(text, kind):
+    from module.minigame.arcade import cap_kind
+    assert cap_kind(text) == kind
+
+
+def test_uncertain_round_receipt_durably_blocks_a_second_start(tmp_path):
+    import numpy as np
+    from PIL import Image
+    from module.minigame.arcade import SHOOTING_START
+    from module.minigame.arcade_state import ArcadeJournal
+    job = task(False)
+    job.journal = ArcadeJournal('arcade-test', tmp_path / 'state')
+    job.device = SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8), click=Mock())
+    job.select_credits = Mock(return_value=5)
+    job.stable_credits = Mock(return_value=(5, 10))
+    job.preparing = Mock(return_value=True)
+    job.loop = lambda **kwargs: iter([None])
+    job.credit_receipt = Mock(return_value=True)
+    job.dismiss_receipt = Mock()
+    def capture(label):
+        path = tmp_path / (label + '.png')
+        Image.fromarray(job.device.image).save(str(path))
+        return str(path)
+    job.capture = capture
+    with pytest.raises(ScriptError):
+        job.idle_round(10)
+    with pytest.raises(ScriptError):
+        job.idle_round(10)
+    job.device.click.assert_called_once_with(SHOOTING_START)
+    job.dismiss_receipt.assert_not_called()
+    pending = ArcadeJournal('arcade-test', tmp_path / 'state').pending()
+    assert pending['start_clicks'] == 1 and pending['receipt_candidate']['sha256']
