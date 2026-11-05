@@ -21,6 +21,8 @@ ARCADE_ROOM_TUTORIAL = Button(area=(254, 128, 550, 208), color=(), button=(254, 
                              file='./assets/en/minigame/arcade_room_tutorial.png', name='ARCADE_ROOM_TUTORIAL')
 ARCADE_CREDIT_TUTORIAL = Button(area=(588, 132, 919, 231), color=(), button=(588, 132, 889, 221),
                                file='./assets/en/minigame/arcade_credit_tutorial.png', name='ARCADE_CREDIT_TUTORIAL')
+ARCADE_PRIZE_TUTORIAL = Button(area=(109, 384, 422, 442), color=(), button=(109, 384, 422, 442),
+                              file='./assets/en/minigame/arcade_prize_tutorial.png', name='ARCADE_PRIZE_TUTORIAL')
 ARCADE_CREDIT_LABEL = Button(area=(557, 333, 648, 358), color=(), button=(557, 333, 648, 358),
                             file='./assets/en/minigame/arcade_credit_tutorial.png', name='ARCADE_CREDIT_LABEL')
 ARCADE_PREP_BACK = Button(area=(23, 34, 180, 92), color=(), button=(40, 40, 160, 85),
@@ -56,7 +58,8 @@ class ArcadeTickets(UI):
     def open_games(self):
         for _ in self.loop(skip_first=False, timeout=20):
             if self.appear_then_click(ARCADE_ROOM_TUTORIAL, offset=(2, 2), similarity=.97, interval=3) \
-                    or self.appear_then_click(ARCADE_CREDIT_TUTORIAL, offset=(2, 2), similarity=.97, interval=3):
+                    or self.appear_then_click(ARCADE_CREDIT_TUTORIAL, offset=(2, 2), similarity=.97, interval=3) \
+                    or self.appear_then_click(ARCADE_PRIZE_TUTORIAL, offset=(2, 2), similarity=.97, interval=3):
                 continue
             if self.appear(GAME_ROOM_CHECK, offset=(5, 5)) and MINIGAME_SCROLL.appear(main=self):
                 return

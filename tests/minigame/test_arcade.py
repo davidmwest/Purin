@@ -21,13 +21,16 @@ def test_current_scaled_arcade_room_controls_reject_dimmed_background():
 
 def test_captured_credit_guide_is_distinct_from_the_room_and_does_not_cover_start_input():
     from module.base.utils import load_image
-    from module.minigame.arcade import ARCADE_CREDIT_TUTORIAL, ARCADE_ROOM_TUTORIAL, ARCADE_TITLE
+    from module.minigame.arcade import ARCADE_CREDIT_TUTORIAL, ARCADE_ROOM_TUTORIAL, ARCADE_PRIZE_TUTORIAL, ARCADE_TITLE
     room = load_image('assets/en/minigame/arcade_room_tutorial.png')
     credits = load_image('assets/en/minigame/arcade_credit_tutorial.png')
     assert ARCADE_ROOM_TUTORIAL.match(room, offset=(2, 2), similarity=.97)
     assert ARCADE_CREDIT_TUTORIAL.match(credits, offset=(2, 2), similarity=.97)
     assert not ARCADE_CREDIT_TUTORIAL.match(room, offset=(2, 2), similarity=.97)
     assert not ARCADE_TITLE.match_template_color(room, offset=(2, 2), similarity=.95, threshold=10)
+    prize = load_image('assets/en/minigame/arcade_prize_tutorial.png')
+    assert ARCADE_PRIZE_TUTORIAL.match(prize, offset=(2, 2), similarity=.97)
+    assert not ARCADE_PRIZE_TUTORIAL.match(room, offset=(2, 2), similarity=.97)
     assert ARCADE_CREDIT_TUTORIAL.button[3] < 300  # The game's Start button is below y380.
 
 
