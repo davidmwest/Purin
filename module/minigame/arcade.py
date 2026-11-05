@@ -291,7 +291,7 @@ class ArcadeTickets(UI):
                     or self.appear_then_click(ARCADE_CREDIT_TUTORIAL, offset=(2, 2), similarity=.97, interval=3) \
                     or self.appear_then_click(ARCADE_PRIZE_TUTORIAL, offset=(2, 2), similarity=.97, interval=3):
                 continue
-            if self.appear(GAME_ROOM_CHECK, offset=(5, 5)) and MINIGAME_SCROLL.appear(main=self):
+            if self.matches(ARCADE_LIST_TITLE) and MINIGAME_SCROLL.appear(main=self):
                 return
             if self.match_template_color(ARCADE_TITLE, offset=(2, 2), similarity=.95, threshold=10) \
                     and self.match_template_color(ARCADE_START, offset=(2, 2), similarity=.95, threshold=10, interval=4):
@@ -357,6 +357,8 @@ class ArcadeTickets(UI):
         self.to_room()
 
     def open_shooting(self):
+        if not self.matches(ARCADE_LIST_TITLE):
+            raise ScriptError('Shooting selection requires the verified Game Selection title')
         MINIGAME_SCROLL.set_top(main=self)
         for _ in self.loop(skip_first=False, timeout=12):
             if self.appear(SHOOTING_CARD, offset=(4, 500), similarity=.93):

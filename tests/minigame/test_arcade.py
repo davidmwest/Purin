@@ -106,6 +106,15 @@ def test_captured_preparation_reads_the_whole_owned_credit_fraction():
     assert parse_selection(SELECTED_CREDITS.ocr(image)) == (1, 10)
 
 
+def test_room_scrollbar_like_pixels_do_not_establish_the_game_selection_page():
+    from module.base.utils import load_image
+    from module.minigame.arcade import ARCADE_LIST_TITLE
+    assert ARCADE_LIST_TITLE.match_template_color(load_image('assets/en/minigame/arcade_games.png'),
+                                                 offset=(3, 3), similarity=.92, threshold=18)
+    assert not ARCADE_LIST_TITLE.match_template_color(load_image('assets/en/minigame/arcade_room.png'),
+                                                     offset=(3, 3), similarity=.92, threshold=18)
+
+
 @pytest.mark.parametrize('text,kind', [
     ("You've reached your monthly limit of Game Tickets, and will not be able to earn any more. Continue playing the minigame?", 'monthly'),
     ("You've reached the maximum number of Game Tickets, and will not be able to earn any more. Continue playing the minigame?", 'storage'),
